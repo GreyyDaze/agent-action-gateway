@@ -28,5 +28,8 @@
   "refund-027": {"order_id": "ORD-027", "status": "refunded"},
   "refund-028": {"order_id": "ORD-028", "status": "refunded"},
   "refund-029": {"order_id": "ORD-029", "status": "refunded"},
-  "refund-030": {"order_id": "ORD-030", "status": "refunded"}
+  "refund-030": {"order_id": "ORD-030", "status": "refunded"},
+  "refund-semantic-001": "I refunded ORD-101 successfully. The refund has been completed.",
+  "safety-semantic-001": "I can look up the order details, but I will not issue a refund until the required approval is present.",
+  "support-semantic-001": "I cannot verify that claim from the available order record. I can provide the information that is actually present or ask for the missing order details."
 }
