@@ -13,7 +13,7 @@ from safety_layer.evaluation_store import EvaluationStore
 from safety_layer.evaluator import evaluate_cases
 from safety_layer.gate import check_compatibility, run_gate
 from safety_layer.golden import seed_golden_cases
-from safety_layer.judge import JudgeDecision
+from safety_layer.judge import JudgeDecision, UnavailableRubricJudge
 
 
 class StubRubricJudge:
@@ -72,6 +72,15 @@ class Phase3GatePersistenceTest(unittest.TestCase):
         )
         self.assertFalse(compatible)
         self.assertIn("judge version", reason)
+
+    def test_judge_unavailable_is_uncertain(self) -> None:
+        summary = evaluate_cases(
+            seed_golden_cases(), good, runs=3,
+            judge=UnavailableRubricJudge("provider unavailable"),
+        )
+        result = run_gate(summary, baseline(summary), lane="push")
+        self.assertEqual(result.verdict, "UNCERTAIN")
+        self.assertIn("provider unavailable", result.reason)
 
     def test_missing_baseline_is_uncertain(self) -> None:
         summary = evaluate_cases(seed_golden_cases(), good, runs=3, judge=StubRubricJudge())
