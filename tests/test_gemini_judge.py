@@ -48,6 +48,7 @@ class GeminiJudgeAdapterTest(unittest.TestCase):
 
         self.assertEqual(request.get_header("X-goog-api-key"), "test-key")
         self.assertIn(DEFAULT_GEMINI_MODEL, request.full_url)
+        self.assertEqual(DEFAULT_GEMINI_MODEL, "gemini-3.5-flash-lite")
         self.assertEqual(
             body["generationConfig"]["responseMimeType"],
             "application/json",
