@@ -13,6 +13,7 @@ from safety_layer.evaluation_store import EvaluationStore
 from safety_layer.evaluator import evaluate_cases
 from safety_layer.gate import check_compatibility, run_gate
 from safety_layer.golden import seed_golden_cases
+from safety_layer.judge import JudgeDecision
 
 
 class StubRubricJudge:
