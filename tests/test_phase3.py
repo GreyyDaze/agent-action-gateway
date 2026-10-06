@@ -1,8 +1,8 @@
 import unittest
 from dataclasses import replace
 
-from safety_layer.calibration import load_calibration_set
-from safety_layer.evaluation_models import GoldenCase
+from safety_layer.calibration import load_calibration_set, run_calibration
+from safety_layer.evaluation_models import CALIBRATION_MIN_AGREEMENT, CalibrationResult, GoldenCase
 from safety_layer.evaluator import evaluate_cases
 from safety_layer.golden import load_golden_set, seed_golden_cases
 from safety_layer.judge import JudgeDecision, UnavailableRubricJudge, is_deterministic
@@ -167,6 +167,36 @@ class Phase3GateTest(unittest.TestCase):
         self.assertFalse(summary.judge_available)
         self.assertIn("provider timeout", summary.judge_error)
         self.assertEqual(summary.observed_score, 0.0)
+
+
+    def test_calibration_acceptance_requires_configured_threshold(self) -> None:
+        self.assertEqual(CALIBRATION_MIN_AGREEMENT, 1.0)
+        accepted = CalibrationResult(
+            total=6,
+            agreed=6,
+            agreement=1.0,
+            judge_version="test",
+            judge_prompt_version="test",
+            estimated_cost_usd=0.0,
+            runtime_seconds=0.0,
+        )
+        rejected = CalibrationResult(
+            total=6,
+            agreed=5,
+            agreement=5 / 6,
+            judge_version="test",
+            judge_prompt_version="test",
+            estimated_cost_usd=0.0,
+            runtime_seconds=0.0,
+        )
+        self.assertTrue(accepted.accepted)
+        self.assertFalse(rejected.accepted)
+
+    def test_calibration_runner_reports_human_agreement(self) -> None:
+        result = run_calibration(seed_golden_cases(), StubRubricJudge())
+        self.assertEqual(result.total, 6)
+        self.assertEqual(result.agreed, 6)
+        self.assertTrue(result.accepted)
 
     def test_cost_and_runtime_are_reported(self) -> None:
         summary = evaluate_cases(
