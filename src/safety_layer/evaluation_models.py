@@ -1,5 +1,11 @@
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+
+
+GOLDEN_SET_VERSION = "golden-v1"
+JUDGE_VERSION = "deterministic-judge-v1"
+JUDGE_PROMPT_VERSION = "builtin-rubric-v1"
 
 
 @dataclass(frozen=True)
@@ -36,6 +42,24 @@ class EvaluationSummary:
     judge_prompt_version: str
     estimated_cost_usd: float
     runtime_minutes: float
+    golden_set_version: str = GOLDEN_SET_VERSION
+    candidate_version: str = "unknown"
+    created_at: str = ""
+
+
+@dataclass(frozen=True)
+class Baseline:
+    lane: str
+    candidate_version: str
+    golden_set_version: str
+    judge_version: str
+    judge_prompt_version: str
+    score: float
+    cases_evaluated: int
+    runs_per_case: int
+    estimated_cost_usd: float
+    runtime_minutes: float
+    created_at: str
 
 
 @dataclass(frozen=True)
