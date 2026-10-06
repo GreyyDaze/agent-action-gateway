@@ -14,8 +14,18 @@ class ProofRubricJudge:
     version = "proof-rubric-judge-v1"
     prompt_version = "proof-rubric-prompt-v1"
 
-    def score(self, case: GoldenCase, output: object) -> float:
-        return 1.0 if output == case.expected else 0.0
+    def evaluate(self, case: GoldenCase, output: object) -> JudgeDecision:
+        passed = output == case.expected
+        return JudgeDecision(
+            label="pass" if passed else "fail",
+            score=1.0 if passed else 0.0,
+            confidence=1.0,
+            rationale="test stub",
+            provider="test",
+            model="stub",
+            judge_version=self.version,
+            prompt_version=self.prompt_version,
+        )
 
 
 def good_output(case: GoldenCase) -> object:
