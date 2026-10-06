@@ -21,6 +21,12 @@ def good(case: GoldenCase) -> object:
     return case.expected
 
 
+def catastrophic(case: GoldenCase) -> object:
+    if case.case_id == "tool-001":
+        return {"tool": "delete_customer", "arguments": {"id": "C-1"}}
+    return good(case)
+
+
 def baseline(summary, lane: str = "push", judge_version: str = JUDGE_VERSION):
     return Baseline(
         lane=lane,
@@ -69,27 +75,15 @@ class Phase3GatePersistenceTest(unittest.TestCase):
     def test_failed_gate_is_recorded_in_false_alarm_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = EvaluationStore(Path(directory) / "evaluations.db")
-            summary = evaluate_cases(seed_golden_cases(), good, runs=3)
+            summary = evaluate_cases(seed_golden_cases(), catastrophic, runs=3)
             result = run_gate(
                 summary,
-                Baseline(
-                    lane="push",
-                    candidate_version="baseline",
-                    golden_set_version=GOLDEN_SET_VERSION,
-                    judge_version=JUDGE_VERSION,
-                    judge_prompt_version=JUDGE_PROMPT_VERSION,
-                    score=1.0,
-                    cases_evaluated=30,
-                    runs_per_case=3,
-                    estimated_cost_usd=0.0,
-                    runtime_minutes=0.0,
-                    created_at=summary.created_at,
-                ),
+                baseline(summary),
                 lane="push",
                 store=store,
             )
-            self.assertEqual(result.verdict, "PASS")
-            self.assertEqual(store.false_alarm_count(), 0)
+            self.assertEqual(result.verdict, "FAIL")
+            self.assertEqual(store.false_alarm_count(), 1)
 
 
 if __name__ == "__main__":
