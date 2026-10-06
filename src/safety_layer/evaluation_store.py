@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+from .evaluation_models import Baseline, EvaluationSummary, GateResult
+
+
+class EvaluationStore:
+    """Durable local history for evaluation runs and false-alarm evidence."""
+
+    def __init__(self, path: str | Path = "data/evaluations.db") -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=30)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=30000")
+        return connection
+
+    def _init_db(self) -> None:
+        with self._connect() as connection:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS evaluation_runs (
+                    evaluation_id TEXT PRIMARY KEY,
+                    candidate_version TEXT NOT NULL,
+                    golden_set_version TEXT NOT NULL,
+                    lane TEXT NOT NULL,
+                    judge_version TEXT NOT NULL,
+                    judge_prompt_version TEXT NOT NULL,
+                    baseline_score REAL NOT NULL,
+                    observed_score REAL NOT NULL,
+                    noise_estimate REAL NOT NULL,
+                    verdict TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    cases_evaluated INTEGER NOT NULL,
+                    runs_per_case INTEGER NOT NULL,
+                    estimated_cost_usd REAL NOT NULL,
+                    runtime_minutes REAL NOT NULL,
+                    reason TEXT NOT NULL,
+                    catastrophic_failure INTEGER NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS false_alarm_ledger (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    evaluation_id TEXT NOT NULL,
+                    candidate_version TEXT NOT NULL,
+                    lane TEXT NOT NULL,
+                    verdict TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS baselines (
+                    lane TEXT PRIMARY KEY,
+                    candidate_version TEXT NOT NULL,
+                    golden_set_version TEXT NOT NULL,
+                    judge_version TEXT NOT NULL,
+                    judge_prompt_version TEXT NOT NULL,
+                    score REAL NOT NULL,
+                    cases_evaluated INTEGER NOT NULL,
+                    runs_per_case INTEGER NOT NULL,
+                    estimated_cost_usd REAL NOT NULL,
+                    runtime_minutes REAL NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_evaluation_runs_created
+                    ON evaluation_runs(created_at);
+                CREATE INDEX IF NOT EXISTS idx_false_alarm_created
+                    ON false_alarm_ledger(created_at);
+                """
+            )
+
+    def record(self, evaluation_id: str, summary: EvaluationSummary, result: GateResult) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO evaluation_runs (
+                    evaluation_id, candidate_version, golden_set_version,
+                    lane, judge_version, judge_prompt_version,
+                    baseline_score, observed_score, noise_estimate,
+                    verdict, confidence, cases_evaluated, runs_per_case,
+                    estimated_cost_usd, runtime_minutes, reason,
+                    catastrophic_failure
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evaluation_id,
+                    summary.candidate_version,
+                    summary.golden_set_version,
+                    result.lane,
+                    result.judge_version,
+                    result.judge_prompt_version,
+                    result.baseline_score,
+                    result.observed_score,
+                    result.noise_estimate,
+                    result.verdict,
+                    result.confidence,
+                    result.cases_evaluated,
+                    result.runs_per_case,
+                    result.estimated_cost_usd,
+                    result.runtime_minutes,
+                    result.reason,
+                    int(result.catastrophic_failure),
+                ),
+            )
+
+    def record_false_alarm(self, evaluation_id: str, summary: EvaluationSummary, result: GateResult) -> None:
+        if result.verdict != "FAIL":
+            return
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO false_alarm_ledger (
+                    evaluation_id, candidate_version, lane, verdict, reason
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    evaluation_id,
+                    summary.candidate_version,
+                    result.lane,
+                    result.verdict,
+                    result.reason,
+                ),
+            )
+
+    def false_alarm_count(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM false_alarm_ledger"
+            ).fetchone()
+        assert row is not None
+        return int(row["count"])
+
+    def save_baseline(self, baseline: Baseline) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO baselines (
+                    lane, candidate_version, golden_set_version,
+                    judge_version, judge_prompt_version, score,
+                    cases_evaluated, runs_per_case,
+                    estimated_cost_usd, runtime_minutes, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(lane) DO UPDATE SET
+                    candidate_version=excluded.candidate_version,
+                    golden_set_version=excluded.golden_set_version,
+                    judge_version=excluded.judge_version,
+                    judge_prompt_version=excluded.judge_prompt_version,
+                    score=excluded.score,
+                    cases_evaluated=excluded.cases_evaluated,
+                    runs_per_case=excluded.runs_per_case,
+                    estimated_cost_usd=excluded.estimated_cost_usd,
+                    runtime_minutes=excluded.runtime_minutes,
+                    created_at=excluded.created_at
+                """,
+                (
+                    baseline.lane,
+                    baseline.candidate_version,
+                    baseline.golden_set_version,
+                    baseline.judge_version,
+                    baseline.judge_prompt_version,
+                    baseline.score,
+                    baseline.cases_evaluated,
+                    baseline.runs_per_case,
+                    baseline.estimated_cost_usd,
+                    baseline.runtime_minutes,
+                    baseline.created_at,
+                ),
+            )
+
+    def get_baseline(self, lane: str) -> Baseline | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM baselines WHERE lane = ?", (lane,)
+            ).fetchone()
+        if row is None:
+            return None
+        return Baseline(
+            lane=row["lane"],
+            candidate_version=row["candidate_version"],
+            golden_set_version=row["golden_set_version"],
+            judge_version=row["judge_version"],
+            judge_prompt_version=row["judge_prompt_version"],
+            score=row["score"],
+            cases_evaluated=row["cases_evaluated"],
+            runs_per_case=row["runs_per_case"],
+            estimated_cost_usd=row["estimated_cost_usd"],
+            runtime_minutes=row["runtime_minutes"],
+            created_at=row["created_at"],
+        )
