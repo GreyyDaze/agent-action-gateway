@@ -103,6 +103,19 @@ def is_deterministic(case: GoldenCase) -> bool:
     return case.check_type in DETERMINISTIC_CHECK_TYPES
 
     
+class UnavailableRubricJudge:
+    """Fail-closed judge used when provider configuration is unavailable."""
+
+    version = "judge-unavailable-v1"
+    prompt_version = "not-run"
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    def evaluate(self, case: GoldenCase, output: object) -> JudgeDecision:
+        raise JudgeUnavailableError(self.reason)
+
+
 class RubricJudgeProvider(Protocol):
     provider: str
     model: str
