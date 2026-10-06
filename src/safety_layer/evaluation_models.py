@@ -59,6 +59,8 @@ class EvaluationSummary:
     golden_set_version: str = GOLDEN_SET_VERSION
     candidate_version: str = "unknown"
     created_at: str = ""
+    judge_available: bool = True
+    judge_error: str = ""
 
 
 @dataclass(frozen=True)
