@@ -130,6 +130,14 @@ class EvaluationStore:
                 ),
             )
 
+    def evaluation_count(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM evaluation_runs"
+            ).fetchone()
+        assert row is not None
+        return int(row["count"])
+
     def false_alarm_count(self) -> int:
         with self._connect() as connection:
             row = connection.execute(
