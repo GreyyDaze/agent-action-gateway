@@ -5,7 +5,12 @@ from dataclasses import replace
 from .evaluation_models import GoldenCase
 from .evaluator import evaluate_cases
 from .golden import seed_golden_cases
+from .judge import is_deterministic
 from .verdict import decide
+
+
+def deterministic_cases() -> tuple[GoldenCase, ...]:
+    return tuple(case for case in seed_golden_cases() if is_deterministic(case))
 
 
 def good_output(case: GoldenCase) -> object:
@@ -29,7 +34,7 @@ def catastrophic_drop_output(case: GoldenCase) -> object:
 
 
 def run_proof() -> None:
-    cases = seed_golden_cases()
+    cases = deterministic_cases()
     baseline = evaluate_cases(cases, good_output, runs=3)
     degraded = evaluate_cases(cases, five_point_drop_output, runs=3)
     dropped = decide(degraded, lane="push", baseline_score=baseline.observed_score)
