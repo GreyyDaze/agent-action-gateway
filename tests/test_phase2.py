@@ -33,6 +33,67 @@ class Phase2LocksTest(unittest.TestCase):
         )
         return record.approval_id
 
+    def test_approval_request_starts_pending_with_exact_raw_payload(self) -> None:
+        record = self.approvals.request(
+            "refund",
+            {"order_id": "ORD-100", "amount": 400},
+            datetime.now(timezone.utc) + timedelta(days=1),
+        )
+        self.assertEqual(record.decision, "pending")
+        self.assertEqual(record.arguments, {"order_id": "ORD-100", "amount": 400})
+        self.assertIsNone(record.approver)
+
+    def test_pending_approval_cannot_execute_before_human_approval(self) -> None:
+        record = self.approvals.request(
+            "refund",
+            {"order_id": "ORD-100", "amount": 400},
+            datetime.now(timezone.utc) + timedelta(days=1),
+        )
+        with self.assertRaises(SafetyBlockedError):
+            check_action(
+                self.approvals,
+                self.registry,
+                "refund",
+                record.arguments,
+                approval_id=record.approval_id,
+            )
+
+    def test_human_approval_enables_exact_action(self) -> None:
+        record = self.approvals.request(
+            "refund",
+            {"order_id": "ORD-100", "amount": 400},
+            datetime.now(timezone.utc) + timedelta(days=1),
+        )
+        approved = self.approvals.approve(record.approval_id, "human-1")
+        self.assertEqual(approved.decision, "approved")
+        self.assertEqual(approved.approver, "human-1")
+        self.assertEqual(
+            check_action(
+                self.approvals,
+                self.registry,
+                "refund",
+                record.arguments,
+                approval_id=record.approval_id,
+            ),
+            "destructive",
+        )
+
+    def test_human_denial_blocks_action(self) -> None:
+        record = self.approvals.request(
+            "refund",
+            {"order_id": "ORD-100", "amount": 400},
+            datetime.now(timezone.utc) + timedelta(days=1),
+        )
+        self.approvals.deny(record.approval_id, "human-1")
+        with self.assertRaises(SafetyBlockedError):
+            check_action(
+                self.approvals,
+                self.registry,
+                "refund",
+                record.arguments,
+                approval_id=record.approval_id,
+            )
+
     def test_unapproved_destructive_is_blocked(self) -> None:
         provider = MockPaymentProvider(dedupe=True)
         with self.assertRaises(SafetyBlockedError):
