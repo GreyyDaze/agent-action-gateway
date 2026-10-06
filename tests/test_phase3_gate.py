@@ -54,6 +54,8 @@ def baseline(summary, lane: str = "push", judge_version: str | None = None):
         judge_version=judge_version or summary.judge_version,
         judge_prompt_version=summary.judge_prompt_version,
         score=summary.observed_score,
+        judge_provider=judge_version or summary.judge_provider,
+        judge_model=summary.judge_model,
         cases_evaluated=summary.cases_evaluated,
         runs_per_case=summary.runs_per_case,
         estimated_cost_usd=summary.estimated_cost_usd,
@@ -72,6 +74,33 @@ class Phase3GatePersistenceTest(unittest.TestCase):
         )
         self.assertFalse(compatible)
         self.assertIn("judge version", reason)
+
+    def test_incompatible_judge_model_refuses_comparison(self) -> None:
+        summary = evaluate_cases(seed_golden_cases(), good, runs=3, judge=StubRubricJudge())
+        compatible, reason = check_compatibility(
+            baseline(summary, judge_version=summary.judge_version),
+            summary,
+            lane="push",
+        )
+        self.assertTrue(compatible)
+        incompatible = Baseline(
+            lane="push",
+            candidate_version="baseline",
+            golden_set_version=summary.golden_set_version,
+            judge_version=summary.judge_version,
+            judge_prompt_version=summary.judge_prompt_version,
+            score=summary.observed_score,
+            cases_evaluated=summary.cases_evaluated,
+            runs_per_case=summary.runs_per_case,
+            estimated_cost_usd=summary.estimated_cost_usd,
+            runtime_minutes=summary.runtime_minutes,
+            created_at=summary.created_at,
+            judge_provider=summary.judge_provider,
+            judge_model="different-model",
+        )
+        compatible, reason = check_compatibility(incompatible, summary, lane="push")
+        self.assertFalse(compatible)
+        self.assertIn("judge model", reason)
 
     def test_judge_unavailable_is_uncertain(self) -> None:
         summary = evaluate_cases(
@@ -100,6 +129,10 @@ class Phase3GatePersistenceTest(unittest.TestCase):
             self.assertEqual(result.verdict, "PASS")
             self.assertEqual(store.evaluation_count(), 1)
             self.assertEqual(store.false_alarm_count(), 0)
+            stored = store.get_baseline("push")
+            self.assertIsNotNone(stored)
+            self.assertEqual(stored.judge_provider, summary.judge_provider)
+            self.assertEqual(stored.judge_model, summary.judge_model)
 
     def test_failed_gate_is_recorded_in_false_alarm_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
