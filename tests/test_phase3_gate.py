@@ -54,7 +54,7 @@ def baseline(summary, lane: str = "push", judge_version: str | None = None):
         judge_version=judge_version or summary.judge_version,
         judge_prompt_version=summary.judge_prompt_version,
         score=summary.observed_score,
-        judge_provider=judge_version or summary.judge_provider,
+        judge_provider=summary.judge_provider,
         judge_model=summary.judge_model,
         cases_evaluated=summary.cases_evaluated,
         runs_per_case=summary.runs_per_case,
