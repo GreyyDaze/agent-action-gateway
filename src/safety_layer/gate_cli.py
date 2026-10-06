@@ -70,8 +70,8 @@ def run_check(args: argparse.Namespace) -> int:
         store=store,
     )
     print(
-        "{} | lane={} | score={:.4f} | baseline={:.4f} | noise={:.4f} | "
-        "cost=$" + "{:.4f} | runtime={:.4f} min | reason={}".format(
+        "{} | lane={} | score={:.4f} | baseline={:.4f} | noise={:.4f} | cost=$ {:.4f} | "
+        "runtime={:.4f} min | reason={}".format(
             result.verdict,
             result.lane,
             result.observed_score,
