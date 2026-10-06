@@ -98,6 +98,7 @@ class Phase3GatePersistenceTest(unittest.TestCase):
                 store=store,
             )
             self.assertEqual(result.verdict, "PASS")
+            self.assertEqual(store.evaluation_count(), 1)
             self.assertEqual(store.false_alarm_count(), 0)
 
     def test_failed_gate_is_recorded_in_false_alarm_ledger(self) -> None:
