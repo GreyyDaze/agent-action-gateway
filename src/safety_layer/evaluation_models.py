@@ -79,6 +79,18 @@ class Baseline:
 
 
 @dataclass(frozen=True)
+@dataclass(frozen=True)
+class CalibrationResult:
+    total: int
+    agreed: int
+    agreement: float
+    judge_version: str
+    judge_prompt_version: str
+    estimated_cost_usd: float
+    runtime_seconds: float
+
+
+@dataclass(frozen=True)
 class GateResult:
     verdict: str
     lane: str
