@@ -5,6 +5,7 @@ from dataclasses import replace
 from .evaluation_models import GoldenCase
 from .evaluator import evaluate_cases
 from .golden import seed_golden_cases
+from .judge import JudgeDecision
 from .verdict import decide
 
 
