@@ -81,6 +81,7 @@ class Phase3GatePersistenceTest(unittest.TestCase):
                 baseline(summary),
                 lane="push",
                 store=store,
+                unchanged=True,
             )
             self.assertEqual(result.verdict, "FAIL")
             self.assertEqual(store.false_alarm_count(), 1)
