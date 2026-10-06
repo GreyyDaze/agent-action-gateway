@@ -3,6 +3,7 @@ from dataclasses import replace
 
 from safety_layer.calibration import load_calibration_set
 from safety_layer.evaluation_models import GoldenCase
+from safety_layer.judge import JudgeDecision
 from safety_layer.evaluator import evaluate_cases
 from safety_layer.golden import load_golden_set, seed_golden_cases
 from safety_layer.judge import is_deterministic
@@ -17,8 +18,18 @@ class StubRubricJudge:
     version = "test-rubric-judge-v1"
     prompt_version = "test-rubric-prompt-v1"
 
-    def score(self, case: GoldenCase, output: object) -> float:
-        return 1.0 if output == case.expected else 0.0
+    def evaluate(self, case: GoldenCase, output: object) -> JudgeDecision:
+        passed = output == case.expected
+        return JudgeDecision(
+            label="pass" if passed else "fail",
+            score=1.0 if passed else 0.0,
+            confidence=1.0,
+            rationale="test stub",
+            provider="test",
+            model="stub",
+            judge_version=self.version,
+            prompt_version=self.prompt_version,
+        )
 
 
 def good(case: GoldenCase) -> object:
