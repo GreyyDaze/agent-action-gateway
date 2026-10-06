@@ -18,3 +18,15 @@ class GateVerdict:
     verdict: str
     score: float
     threshold: float
+
+
+@dataclass(frozen=True)
+class Receipt:
+    receipt_id: int
+    run_id: str
+    step_id: str
+    intent_key: str
+    action: str
+    arguments: dict[str, Any]
+    state: str
+    provider_ref: str | None
