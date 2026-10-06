@@ -39,9 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--candidate-file", required=True)
     check.add_argument("--db", default="data/evaluations.db")
     check.add_argument("--record-baseline", action="store_true")
-    check.add_argument("--judge-model", default="gemini-2.5-flash-lite")
+    check.add_argument("--judge-model", default="gemini-3.5-flash-lite")
     calibrate = subparsers.add_parser("calibrate", help="run the human-labeled judge calibration set")
-    calibrate.add_argument("--judge-model", default="gemini-2.5-flash-lite")
+    calibrate.add_argument("--judge-model", default="gemini-3.5-flash-lite")
     check.add_argument(
         "--unchanged",
         action="store_true",
