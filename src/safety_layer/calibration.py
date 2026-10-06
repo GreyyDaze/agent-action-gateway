@@ -100,3 +100,36 @@ def calibration_case_ids(
     path: str | Path = DEFAULT_CALIBRATION_SET_PATH,
 ) -> tuple[str, ...]:
     return tuple(dict.fromkeys(example.case_id for example in load_calibration_set(path)))
+
+
+
+def run_calibration(cases, judge):
+    """Compare the configured judge with the six human-labeled calibration examples."""
+    from time import perf_counter
+    from .evaluation_models import CalibrationResult
+    from .judge import JudgeUnavailableError
+
+    by_id = {case.case_id: case for case in cases}
+    examples = load_calibration_set()
+    started = perf_counter()
+    agreed = 0
+    cost = 0.0
+    for example in examples:
+        case = by_id.get(example.case_id)
+        if case is None:
+            raise ValueError(f"calibration case missing from golden set: {example.case_id}")
+        try:
+            decision = judge.evaluate(case, example.output)
+        except JudgeUnavailableError:
+            raise
+        agreed += decision.label == example.label
+        cost += decision.estimated_cost_usd
+    return CalibrationResult(
+        total=len(examples),
+        agreed=agreed,
+        agreement=agreed / len(examples),
+        judge_version=judge.version,
+        judge_prompt_version=judge.prompt_version,
+        estimated_cost_usd=cost,
+        runtime_seconds=perf_counter() - started,
+    )
