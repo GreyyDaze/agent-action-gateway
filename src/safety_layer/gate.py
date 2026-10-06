@@ -43,6 +43,10 @@ def check_compatibility(
         mismatches.append("judge version")
     if baseline.judge_prompt_version != summary.judge_prompt_version:
         mismatches.append("judge prompt version")
+    if baseline.judge_provider != summary.judge_provider:
+        mismatches.append("judge provider")
+    if baseline.judge_model != summary.judge_model:
+        mismatches.append("judge model")
 
     if mismatches:
         return False, "baseline incompatible: " + ", ".join(mismatches)
