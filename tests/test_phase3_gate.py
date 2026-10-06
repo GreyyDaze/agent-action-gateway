@@ -15,6 +15,14 @@ from safety_layer.gate import check_compatibility, run_gate
 from safety_layer.golden import seed_golden_cases
 
 
+class StubRubricJudge:
+    version = "test-rubric-judge-v1"
+    prompt_version = "test-rubric-prompt-v1"
+
+    def score(self, case: GoldenCase, output: object) -> float:
+        return 1.0 if output == case.expected else 0.0
+
+
 def good(case: GoldenCase) -> object:
     if case.check_type == "regex":
         return "refunded successfully"
@@ -27,13 +35,13 @@ def catastrophic(case: GoldenCase) -> object:
     return good(case)
 
 
-def baseline(summary, lane: str = "push", judge_version: str = JUDGE_VERSION):
+def baseline(summary, lane: str = "push", judge_version: str | None = None):
     return Baseline(
         lane=lane,
         candidate_version="baseline",
         golden_set_version=GOLDEN_SET_VERSION,
-        judge_version=judge_version,
-        judge_prompt_version=JUDGE_PROMPT_VERSION,
+        judge_version=judge_version or summary.judge_version,
+        judge_prompt_version=summary.judge_prompt_version,
         score=summary.observed_score,
         cases_evaluated=summary.cases_evaluated,
         runs_per_case=summary.runs_per_case,
@@ -45,7 +53,7 @@ def baseline(summary, lane: str = "push", judge_version: str = JUDGE_VERSION):
 
 class Phase3GatePersistenceTest(unittest.TestCase):
     def test_incompatible_judge_version_refuses_comparison(self) -> None:
-        summary = evaluate_cases(seed_golden_cases(), good, runs=3)
+        summary = evaluate_cases(seed_golden_cases(), good, runs=3, judge=StubRubricJudge())
         compatible, reason = check_compatibility(
             baseline(summary, judge_version="old-judge"),
             summary,
@@ -55,14 +63,14 @@ class Phase3GatePersistenceTest(unittest.TestCase):
         self.assertIn("judge version", reason)
 
     def test_missing_baseline_is_uncertain(self) -> None:
-        summary = evaluate_cases(seed_golden_cases(), good, runs=3)
+        summary = evaluate_cases(seed_golden_cases(), good, runs=3, judge=StubRubricJudge())
         result = run_gate(summary, None, lane="push")
         self.assertEqual(result.verdict, "UNCERTAIN")
 
     def test_evaluation_and_false_alarm_are_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = EvaluationStore(Path(directory) / "evaluations.db")
-            summary = evaluate_cases(seed_golden_cases(), good, runs=3)
+            summary = evaluate_cases(seed_golden_cases(), good, runs=3, judge=StubRubricJudge())
             result = run_gate(
                 summary,
                 baseline(summary),
@@ -75,7 +83,7 @@ class Phase3GatePersistenceTest(unittest.TestCase):
     def test_failed_gate_is_recorded_in_false_alarm_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = EvaluationStore(Path(directory) / "evaluations.db")
-            summary = evaluate_cases(seed_golden_cases(), catastrophic, runs=3)
+            summary = evaluate_cases(seed_golden_cases(), catastrophic, runs=3, judge=StubRubricJudge())
             result = run_gate(
                 summary,
                 baseline(summary),
