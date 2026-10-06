@@ -5,12 +5,17 @@ from dataclasses import replace
 from .evaluation_models import GoldenCase
 from .evaluator import evaluate_cases
 from .golden import seed_golden_cases
-from .judge import is_deterministic
 from .verdict import decide
 
 
-def deterministic_cases() -> tuple[GoldenCase, ...]:
-    return tuple(case for case in seed_golden_cases() if is_deterministic(case))
+class ProofRubricJudge:
+    """Test-only rubric judge used to keep the Phase 3 proof offline."""
+
+    version = "proof-rubric-judge-v1"
+    prompt_version = "proof-rubric-prompt-v1"
+
+    def score(self, case: GoldenCase, output: object) -> float:
+        return 1.0 if output == case.expected else 0.0
 
 
 def good_output(case: GoldenCase) -> object:
@@ -34,21 +39,22 @@ def catastrophic_drop_output(case: GoldenCase) -> object:
 
 
 def run_proof() -> None:
-    cases = deterministic_cases()
-    baseline = evaluate_cases(cases, good_output, runs=3)
-    degraded = evaluate_cases(cases, five_point_drop_output, runs=3)
+    cases = seed_golden_cases()
+    judge = ProofRubricJudge()
+    baseline = evaluate_cases(cases, good_output, runs=3, judge=judge)
+    degraded = evaluate_cases(cases, five_point_drop_output, runs=3, judge=judge)
     dropped = decide(degraded, lane="push", baseline_score=baseline.observed_score)
 
     unchanged_results = [
         decide(
-            evaluate_cases(cases, good_output, runs=10),
+            evaluate_cases(cases, good_output, runs=10, judge=judge),
             lane="full",
             baseline_score=baseline.observed_score,
         )
         for _ in range(10)
     ]
 
-    catastrophic = evaluate_cases(cases, catastrophic_drop_output, runs=3)
+    catastrophic = evaluate_cases(cases, catastrophic_drop_output, runs=3, judge=judge)
     catastrophic = replace(catastrophic, observed_score=baseline.observed_score)
     catastrophic_result = decide(
         catastrophic,
