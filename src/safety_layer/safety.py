@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Any
 
-from .locks import ApprovalError, ApprovalStore, RiskRegistry, authorize
+from .locks import ApprovalStore, RiskRegistry, authorize
 
 
 class SafetyBlockedError(RuntimeError):
@@ -15,6 +16,7 @@ def check_action(
     *,
     approval_id: str | None = None,
     current_state: Any | None = None,
+    now: datetime | None = None,
 ) -> str:
     try:
         return authorize(
@@ -24,6 +26,7 @@ def check_action(
             arguments,
             approval_id=approval_id,
             current_state=current_state,
+            now=now,
         )
     except Exception as exc:
         raise SafetyBlockedError(str(exc)) from exc
