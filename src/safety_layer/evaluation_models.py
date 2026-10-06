@@ -4,6 +4,7 @@ from typing import Any
 
 GOLDEN_SET_VERSION = "golden-v1"
 CALIBRATION_SET_VERSION = "calibration-v1"
+CALIBRATION_MIN_AGREEMENT = 1.0
 JUDGE_VERSION = "deterministic-judge-v1"
 JUDGE_PROMPT_VERSION = "builtin-rubric-v1"
 
@@ -87,6 +88,10 @@ class CalibrationResult:
     judge_prompt_version: str
     estimated_cost_usd: float
     runtime_seconds: float
+
+    @property
+    def accepted(self) -> bool:
+        return self.agreement >= CALIBRATION_MIN_AGREEMENT
 
 
 @dataclass(frozen=True)
