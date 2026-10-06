@@ -3,8 +3,9 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from safety_layer.locks import ApprovalError, ApprovalStore, RiskRegistry
+from safety_layer.locks import ApprovalStore, RiskRegistry
 from safety_layer.mock_provider import MockPaymentProvider
+from safety_layer.runtime import dispatch_external_action
 from safety_layer.safety import SafetyBlockedError, check_action
 from safety_layer.store import TraceStore
 
@@ -33,8 +34,14 @@ class Phase2LocksTest(unittest.TestCase):
         return record.approval_id
 
     def test_unapproved_destructive_is_blocked(self) -> None:
+        provider = MockPaymentProvider(dedupe=True)
         with self.assertRaises(SafetyBlockedError):
-            check_action(self.approvals, self.registry, "refund", {"order_id": "ORD-100", "amount": 400})
+            dispatch_external_action(
+                self.store, provider, "run-1", "step-1",
+                {"order_id": "ORD-100", "amount": 400}, "ORD-100",
+                registry=self.registry, approval_store=self.approvals,
+            )
+        self.assertEqual(len(provider.refunds), 0)
 
     def test_unknown_action_defaults_to_destructive(self) -> None:
         with self.assertRaises(SafetyBlockedError):
@@ -44,82 +51,68 @@ class Phase2LocksTest(unittest.TestCase):
         approval_id = self.approval()
         with self.assertRaises(SafetyBlockedError):
             check_action(
-                self.approvals,
-                self.registry,
-                "refund",
+                self.approvals, self.registry, "refund",
                 {"order_id": "ORD-100", "amount": 401},
                 approval_id=approval_id,
             )
 
     def test_expired_approval_is_blocked(self) -> None:
-        approval = self.approvals.create(
-            "refund",
-            {"order_id": "ORD-100", "amount": 400},
-            "human-1",
-            datetime.now(timezone.utc) + timedelta(seconds=1),
-        )
+        approval_id = self.approval()
         with self.assertRaises(SafetyBlockedError):
             check_action(
-                self.approvals,
-                self.registry,
-                "refund",
+                self.approvals, self.registry, "refund",
                 {"order_id": "ORD-100", "amount": 400},
-                approval_id=approval.approval_id,
-                current_state=None,
+                approval_id=approval_id,
+                now=datetime.now(timezone.utc) + timedelta(days=2),
             )
 
     def test_state_change_invalidates_approval(self) -> None:
         approval_id = self.approval(state={"order_status": "open"})
         with self.assertRaises(SafetyBlockedError):
             check_action(
-                self.approvals,
-                self.registry,
-                "refund",
+                self.approvals, self.registry, "refund",
                 {"order_id": "ORD-100", "amount": 400},
                 approval_id=approval_id,
                 current_state={"order_status": "cancelled"},
             )
 
-    def test_valid_fresh_approval_allows(self) -> None:
+    def test_valid_fresh_approval_allows_external_action(self) -> None:
         approval_id = self.approval(state={"order_status": "open"})
-        self.assertEqual(
+        provider = MockPaymentProvider(dedupe=True)
+        result = dispatch_external_action(
+            self.store, provider, "run-1", "step-1",
+            {"order_id": "ORD-100", "amount": 400}, "ORD-100",
+            registry=self.registry, approval_store=self.approvals,
+            approval_id=approval_id, current_state={"order_status": "open"},
+        )
+        self.assertEqual(len(provider.refunds), 1)
+        self.assertTrue(result.startswith("mock-"))
+
+    def test_approval_is_single_use(self) -> None:
+        approval_id = self.approval()
+        check_action(
+            self.approvals, self.registry, "refund",
+            {"order_id": "ORD-100", "amount": 400},
+            approval_id=approval_id,
+        )
+        with self.assertRaises(SafetyBlockedError):
             check_action(
-                self.approvals,
-                self.registry,
-                "refund",
+                self.approvals, self.registry, "refund",
                 {"order_id": "ORD-100", "amount": 400},
                 approval_id=approval_id,
-                current_state={"order_status": "open"},
-            ),
-            "destructive",
-        )
+            )
 
     def test_safety_unavailable_fails_closed_for_write_and_destructive(self) -> None:
         self.approvals.available = False
-        with self.assertRaises(ApprovalError):
-            check_action(
-                self.approvals,
-                self.registry,
-                "update_note",
-                {"id": "N-1"},
-            )
-        with self.assertRaises(ApprovalError):
-            check_action(
-                self.approvals,
-                self.registry,
-                "refund",
-                {"order_id": "ORD-100"},
-            )
+        with self.assertRaises(SafetyBlockedError):
+            check_action(self.approvals, self.registry, "update_note", {"id": "N-1"})
+        with self.assertRaises(SafetyBlockedError):
+            check_action(self.approvals, self.registry, "refund", {"order_id": "ORD-100"})
 
     def test_read_still_works_when_safety_service_is_unavailable(self) -> None:
         self.approvals.available = False
         self.assertEqual(
-            check_action(
-                self.approvals,
-                self.registry,
-                "lookup_order",
-                {"customer": "Ava"},
-            ),
+            check_action(self.approvals, self.registry, "lookup_order", {"customer": "Ava"}),
             "read",
         )
 
