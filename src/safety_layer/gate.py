@@ -55,6 +55,7 @@ def run_gate(
     *,
     lane: str,
     store: EvaluationStore | None = None,
+    unchanged: bool = False,
 ) -> GateResult:
     if baseline is None:
         result = GateResult(
@@ -98,6 +99,7 @@ def run_gate(
     if store is not None:
         evaluation_id = str(uuid.uuid4())
         store.record(evaluation_id, summary, result)
-        store.record_false_alarm(evaluation_id, summary, result)
+        if unchanged:
+            store.record_false_alarm(evaluation_id, summary, result)
 
     return result
