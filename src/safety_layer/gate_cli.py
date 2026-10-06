@@ -80,6 +80,10 @@ def run_check(args: argparse.Namespace) -> int:
         judge=judge, candidate_version=args.candidate_version,
     )
 
+    if args.record_baseline and not summary.judge_available:
+        print("UNCERTAIN | baseline not saved because semantic judge is unavailable")
+        return 1
+
     if args.record_baseline:
         store.save_baseline(
             Baseline(
