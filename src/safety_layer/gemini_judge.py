@@ -9,7 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .evaluation_models import GoldenCase
-from .judge import JudgeDecision
+from .judge import JudgeDecision, JudgeUnavailableError
 
 
 GEMINI_PROVIDER = "gemini"
@@ -23,7 +23,7 @@ DEFAULT_INPUT_PRICE_USD_PER_MILLION = 0.10
 DEFAULT_OUTPUT_PRICE_USD_PER_MILLION = 0.40
 
 
-class GeminiJudgeError(RuntimeError):
+class GeminiJudgeError(JudgeUnavailableError):
     """Raised when the configured Gemini judge cannot produce a valid decision."""
 
 
