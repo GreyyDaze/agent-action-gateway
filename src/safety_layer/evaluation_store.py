@@ -112,7 +112,7 @@ class EvaluationStore:
                     verdict, confidence, cases_evaluated, runs_per_case,
                     estimated_cost_usd, runtime_minutes, reason,
                     catastrophic_failure
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     evaluation_id,
