@@ -3,10 +3,9 @@ from dataclasses import replace
 
 from safety_layer.calibration import load_calibration_set
 from safety_layer.evaluation_models import GoldenCase
-from safety_layer.judge import JudgeDecision
 from safety_layer.evaluator import evaluate_cases
 from safety_layer.golden import load_golden_set, seed_golden_cases
-from safety_layer.judge import is_deterministic
+from safety_layer.judge import JudgeDecision, is_deterministic
 from safety_layer.verdict import decide
 
 
@@ -80,7 +79,7 @@ class Phase3GateTest(unittest.TestCase):
             version = "should-not-run"
             prompt_version = "should-not-run"
 
-            def score(self, case: GoldenCase, output: object) -> float:
+            def evaluate(self, case: GoldenCase, output: object) -> JudgeDecision:
                 raise AssertionError("deterministic case reached the optional judge")
 
         summary = evaluate_cases(
@@ -163,10 +162,9 @@ class Phase3GateTest(unittest.TestCase):
             deterministic_cases(),
             good,
             runs=3,
-            estimated_cost_per_sample=0.01,
         )
         result = decide(summary, lane="push", baseline_score=1.0)
-        self.assertEqual(result.estimated_cost_usd, 0.81)
+        self.assertEqual(result.estimated_cost_usd, 0.0)
         self.assertGreaterEqual(result.runtime_minutes, 0.0)
 
 
