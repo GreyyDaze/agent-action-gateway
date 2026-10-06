@@ -5,7 +5,7 @@ from typing import Any
 GOLDEN_SET_VERSION = "golden-v1"
 CALIBRATION_SET_VERSION = "calibration-v1"
 CALIBRATION_MIN_AGREEMENT = 1.0
-JUDGE_VERSION = "deterministic-judge-v1"
+JUDGE_VERSION = "deterministic-judge-v2"
 JUDGE_PROMPT_VERSION = "builtin-rubric-v1"
 
 
