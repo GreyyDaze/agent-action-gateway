@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from .evaluation_models import CALIBRATION_SET_VERSION, CalibrationExample
+
+
+DEFAULT_CALIBRATION_SET_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "calibration"
+    / "calibration-v1.json"
+)
+
+
+def load_calibration_set(
+    path: str | Path = DEFAULT_CALIBRATION_SET_PATH,
+) -> tuple[CalibrationExample, ...]:
+    artifact_path = Path(path)
+    try:
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"calibration set not found: {artifact_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"calibration set is not valid JSON: {artifact_path}"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("calibration set must be a JSON object")
+    if payload.get("version") != CALIBRATION_SET_VERSION:
+        raise ValueError(
+            f"unsupported calibration set version: {payload.get('version')!r}; "
+            f"expected {CALIBRATION_SET_VERSION!r}"
+        )
+
+    raw_examples = payload.get("examples")
+    if not isinstance(raw_examples, list) or not raw_examples:
+        raise ValueError("calibration set must contain a non-empty examples array")
+
+    examples: list[CalibrationExample] = []
+    seen_ids: set[str] = set()
+    seen_pairs: set[tuple[str, str]] = set()
+
+    for raw in raw_examples:
+        if not isinstance(raw, dict):
+            raise ValueError("each calibration example must be a JSON object")
+
+        required = ("example_id", "case_id", "output", "label", "rationale")
+        missing = [field for field in required if field not in raw]
+        if missing:
+            raise ValueError(
+                f"calibration example missing fields: {', '.join(missing)}"
+            )
+
+        example_id = raw["example_id"]
+        case_id = raw["case_id"]
+        label = raw["label"]
+        rationale = raw["rationale"]
+
+        if not isinstance(example_id, str) or not example_id:
+            raise ValueError("calibration example_id must be a non-empty string")
+        if example_id in seen_ids:
+            raise ValueError(f"duplicate calibration example_id: {example_id}")
+        if not isinstance(case_id, str) or not case_id:
+            raise ValueError("calibration case_id must be a non-empty string")
+        if label not in {"pass", "fail"}:
+            raise ValueError(
+                f"calibration label must be 'pass' or 'fail': {example_id}"
+            )
+        if not isinstance(rationale, str) or not rationale:
+            raise ValueError(
+                f"calibration rationale must be a non-empty string: {example_id}"
+            )
+
+        pair = (case_id, label)
+        if pair in seen_pairs:
+            raise ValueError(
+                f"duplicate calibration label for case: {case_id} ({label})"
+            )
+
+        seen_ids.add(example_id)
+        seen_pairs.add(pair)
+        examples.append(
+            CalibrationExample(
+                example_id=example_id,
+                case_id=case_id,
+                output=raw["output"],
+                label=label,
+                rationale=rationale,
+            )
+        )
+
+    return tuple(examples)
+
+
+def calibration_case_ids(
+    path: str | Path = DEFAULT_CALIBRATION_SET_PATH,
+) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(example.case_id for example in load_calibration_set(path)))
