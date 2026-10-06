@@ -31,7 +31,7 @@ class Phase3GateTest(unittest.TestCase):
             if case.case_id == "refund-002":
                 return {"order_id": "ORD-002", "status": "failed"}
             if case.case_id == "refund-003":
-                return {"order_id": "ORD-003", "status": "refunded"}
+                return {"order_id": "ORD-003", "status": "wrong"}
             return good(case)
 
         summary = evaluate_cases(cases, degraded, runs=3)
