@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .evaluation_models import CALIBRATION_SET_VERSION, CalibrationExample
+from .evaluation_models import CALIBRATION_MIN_AGREEMENT, CALIBRATION_SET_VERSION, CalibrationExample
 
 
 DEFAULT_CALIBRATION_SET_PATH = (
@@ -102,9 +102,8 @@ def calibration_case_ids(
     return tuple(dict.fromkeys(example.case_id for example in load_calibration_set(path)))
 
 
-
 def run_calibration(cases, judge):
-    """Compare the configured judge with the six human-labeled calibration examples."""
+    """Compare the configured judge with human-labeled calibration examples."""
     from time import perf_counter
     from .evaluation_models import CalibrationResult
     from .judge import JudgeUnavailableError
@@ -114,6 +113,7 @@ def run_calibration(cases, judge):
     started = perf_counter()
     agreed = 0
     cost = 0.0
+
     for example in examples:
         case = by_id.get(example.case_id)
         if case is None:
@@ -124,7 +124,8 @@ def run_calibration(cases, judge):
             raise
         agreed += decision.label == example.label
         cost += decision.estimated_cost_usd
-    return CalibrationResult(
+
+    result = CalibrationResult(
         total=len(examples),
         agreed=agreed,
         agreement=agreed / len(examples),
@@ -133,3 +134,4 @@ def run_calibration(cases, judge):
         estimated_cost_usd=cost,
         runtime_seconds=perf_counter() - started,
     )
+    return result
