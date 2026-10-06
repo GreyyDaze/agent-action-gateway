@@ -79,7 +79,6 @@ class Baseline:
 
 
 @dataclass(frozen=True)
-@dataclass(frozen=True)
 class CalibrationResult:
     total: int
     agreed: int
