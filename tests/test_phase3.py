@@ -18,9 +18,23 @@ class StubRubricJudge:
     prompt_version = "test-rubric-prompt-v1"
 
     def evaluate(self, case: GoldenCase, output: object) -> JudgeDecision:
-        passed = output == case.expected
+        # Calibration examples contain human labels, so this test stub mirrors
+        # those labels instead of comparing semantic text to case.expected.
+        if case.check_type == "rubric":
+            calibration = {
+                (
+                    example.case_id,
+                    example.output,
+                ): example.label
+                for example in load_calibration_set()
+            }
+            label = calibration.get((case.case_id, output), "fail")
+        else:
+            label = "pass" if output == case.expected else "fail"
+
+        passed = label == "pass"
         return JudgeDecision(
-            label="pass" if passed else "fail",
+            label=label,
             score=1.0 if passed else 0.0,
             confidence=1.0,
             rationale="test stub",
