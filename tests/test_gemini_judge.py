@@ -1,5 +1,7 @@
 import json
 import unittest
+from io import BytesIO
+from urllib.error import HTTPError
 from urllib.request import Request
 
 from safety_layer.evaluation_models import GoldenCase
@@ -108,6 +110,38 @@ class GeminiJudgeAdapterTest(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(GeminiJudgeError, "no candidate"):
+            ProductControlledJudge(provider).evaluate(CASE, "anything")
+
+    def test_http_error_exposes_provider_reason_and_model(self) -> None:
+        def failing_transport(request: Request, _timeout: float) -> bytes:
+            raise HTTPError(
+                request.full_url,
+                404,
+                "Not Found",
+                hdrs=None,
+                fp=BytesIO(
+                    json.dumps(
+                        {
+                            "error": {
+                                "code": 404,
+                                "message": "Model not found or not accessible",
+                                "status": "NOT_FOUND",
+                            }
+                        }
+                    ).encode("utf-8")
+                ),
+            )
+
+        provider = GeminiRubricJudgeProvider(
+            api_key="test-key",
+            model="test-model",
+            transport=failing_transport,
+        )
+
+        with self.assertRaisesRegex(
+            GeminiJudgeError,
+            r"HTTP 404.*Model not found or not accessible.*test-model",
+        ):
             ProductControlledJudge(provider).evaluate(CASE, "anything")
 
     def test_provider_failure_does_not_fabricate_decision(self) -> None:
