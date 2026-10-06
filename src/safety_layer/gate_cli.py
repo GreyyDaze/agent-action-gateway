@@ -64,8 +64,9 @@ def run_calibrate(args: argparse.Namespace) -> int:
     except Exception as exc:
         print("UNCERTAIN | calibration unavailable: {}".format(exc))
         return 1
-    print("CALIBRATION | agreed={}/{} | agreement={:.1%} | cost=$ {:.4f} | runtime={:.3f}s".format(result.agreed, result.total, result.agreement, result.estimated_cost_usd, result.runtime_seconds))
-    return 0
+    status = "ACCEPTED" if result.accepted else "REJECTED"
+    print("CALIBRATION | {} | agreed={}/{} | agreement={:.1%} | threshold={:.1%} | cost=$ {:.4f} | runtime={:.3f}s".format(status, result.agreed, result.total, result.agreement, 1.0, result.estimated_cost_usd, result.runtime_seconds))
+    return 0 if result.accepted else 1
 
 
 def run_check(args: argparse.Namespace) -> int:
