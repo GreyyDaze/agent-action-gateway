@@ -13,7 +13,7 @@ from .judge import JudgeDecision, JudgeUnavailableError
 
 
 GEMINI_PROVIDER = "gemini"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 GEMINI_JUDGE_VERSION = "rubric-judge-v1"
 GEMINI_PROMPT_VERSION = "rubric-json-v1"
 DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta"
