@@ -21,11 +21,14 @@ class ApprovalUnavailableError(ApprovalError):
 class Approval:
     approval_id: str
     action: str
+    arguments: dict[str, Any]
     payload_hash: str
-    approver: str
+    approver: str | None
     created_at: str
     expires_at: str
     state_hash: str | None
+    decision: str
+    decided_at: str | None
     consumed_at: str | None
 
 
@@ -59,23 +62,40 @@ class ApprovalStore:
                     CREATE TABLE approvals (
                         approval_id TEXT PRIMARY KEY,
                         action TEXT NOT NULL,
+                        arguments_json TEXT NOT NULL,
                         payload_hash TEXT NOT NULL,
-                        approver TEXT NOT NULL,
+                        approver TEXT,
                         created_at TEXT NOT NULL,
                         expires_at TEXT NOT NULL,
                         state_hash TEXT,
+                        decision TEXT NOT NULL,
+                        decided_at TEXT,
                         consumed_at TEXT
                     )
                     """
                 )
-            elif "consumed_at" not in columns:
-                connection.execute("ALTER TABLE approvals ADD COLUMN consumed_at TEXT")
+            else:
+                migrations = {
+                    "arguments_json": "ALTER TABLE approvals ADD COLUMN arguments_json TEXT",
+                    "decision": "ALTER TABLE approvals ADD COLUMN decision TEXT NOT NULL DEFAULT 'approved'",
+                    "decided_at": "ALTER TABLE approvals ADD COLUMN decided_at TEXT",
+                    "approver": "ALTER TABLE approvals ADD COLUMN approver TEXT",
+                }
+                for name, statement in migrations.items():
+                    if name not in columns:
+                        connection.execute(statement)
+                if "arguments_json" not in columns:
+                    rows = connection.execute("SELECT approval_id, action, payload_hash FROM approvals").fetchall()
+                    for row in rows:
+                        connection.execute(
+                            "UPDATE approvals SET arguments_json=? WHERE approval_id=?",
+                            (json.dumps({"_legacy": row["payload_hash"]}, sort_keys=True), row["approval_id"]),
+                        )
 
-    def create(
+    def request(
         self,
         action: str,
         arguments: dict[str, Any],
-        approver: str,
         expires_at: datetime,
         current_state: Any | None = None,
     ) -> Approval:
@@ -86,28 +106,93 @@ class ApprovalStore:
         approval = Approval(
             approval_id=str(uuid4()),
             action=action,
+            arguments=dict(arguments),
             payload_hash=payload_hash(action, arguments),
-            approver=approver,
+            approver=None,
             created_at=now.isoformat(),
             expires_at=expires_at.astimezone(timezone.utc).isoformat(),
             state_hash=None if current_state is None else state_hash(current_state),
+            decision="pending",
+            decided_at=None,
             consumed_at=None,
         )
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO approvals(approval_id, action, payload_hash, approver, created_at, expires_at, state_hash, consumed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO approvals(
+                    approval_id, action, arguments_json, payload_hash, approver,
+                    created_at, expires_at, state_hash, decision, decided_at, consumed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     approval.approval_id,
                     approval.action,
+                    json.dumps(approval.arguments, sort_keys=True, separators=(",", ":")),
                     approval.payload_hash,
                     approval.approver,
                     approval.created_at,
                     approval.expires_at,
                     approval.state_hash,
+                    approval.decision,
+                    approval.decided_at,
                     approval.consumed_at,
                 ),
             )
         return approval
+
+    def approve(self, approval_id: str, approver: str) -> Approval:
+        self._require_available()
+        if not approver.strip():
+            raise ApprovalError("approver is required")
+        approval = self.get(approval_id)
+        if approval.decision != "pending":
+            raise ApprovalError(f"approval is already {approval.decision}")
+        if datetime.now(timezone.utc) >= datetime.fromisoformat(approval.expires_at):
+            raise ApprovalError("approval expired")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE approvals
+                SET decision='approved', approver=?, decided_at=?
+                WHERE approval_id=? AND decision='pending'
+                """,
+                (approver, datetime.now(timezone.utc).isoformat(), approval_id),
+            )
+            if cursor.rowcount != 1:
+                raise ApprovalError("approval is no longer pending")
+        return self.get(approval_id)
+
+    def deny(self, approval_id: str, approver: str) -> Approval:
+        self._require_available()
+        if not approver.strip():
+            raise ApprovalError("approver is required")
+        approval = self.get(approval_id)
+        if approval.decision != "pending":
+            raise ApprovalError(f"approval is already {approval.decision}")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE approvals
+                SET decision='denied', approver=?, decided_at=?
+                WHERE approval_id=? AND decision='pending'
+                """,
+                (approver, datetime.now(timezone.utc).isoformat(), approval_id),
+            )
+            if cursor.rowcount != 1:
+                raise ApprovalError("approval is no longer pending")
+        return self.get(approval_id)
+
+    def create(
+        self,
+        action: str,
+        arguments: dict[str, Any],
+        approver: str,
+        expires_at: datetime,
+        current_state: Any | None = None,
+    ) -> Approval:
+        """Compatibility helper for tests: request and immediately approve."""
+        approval = self.request(action, arguments, expires_at, current_state)
+        return self.approve(approval.approval_id, approver)
 
     def get(self, approval_id: str) -> Approval:
         self._require_available()
@@ -117,27 +202,43 @@ class ApprovalStore:
             raise ApprovalError("approval not found")
         return self._from_row(row)
 
+    def pending(self) -> list[Approval]:
+        self._require_available()
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM approvals WHERE decision='pending' ORDER BY created_at"
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
     def consume(self, approval_id: str) -> None:
         self._require_available()
         consumed_at = datetime.now(timezone.utc).isoformat()
         with self._connect() as connection:
             cursor = connection.execute(
-                "UPDATE approvals SET consumed_at=? WHERE approval_id=? AND consumed_at IS NULL",
+                "UPDATE approvals SET consumed_at=? WHERE approval_id=? AND consumed_at IS NULL AND decision='approved'",
                 (consumed_at, approval_id),
             )
             if cursor.rowcount != 1:
-                raise ApprovalError("approval already used")
+                raise ApprovalError("approval already used or not approved")
 
     @staticmethod
     def _from_row(row: sqlite3.Row) -> Approval:
+        raw_arguments = row["arguments_json"]
+        try:
+            arguments = json.loads(raw_arguments) if raw_arguments else {}
+        except json.JSONDecodeError:
+            arguments = {}
         return Approval(
             approval_id=row["approval_id"],
             action=row["action"],
+            arguments=arguments,
             payload_hash=row["payload_hash"],
             approver=row["approver"],
             created_at=row["created_at"],
             expires_at=row["expires_at"],
             state_hash=row["state_hash"],
+            decision=row["decision"],
+            decided_at=row["decided_at"],
             consumed_at=row["consumed_at"],
         )
 
@@ -185,6 +286,8 @@ def authorize(
         return risk
 
     approval = approval_store.get(approval_id)
+    if approval.decision != "approved":
+        raise ApprovalError("approval is not approved")
     current_time = now or datetime.now(timezone.utc)
     if current_time >= datetime.fromisoformat(approval.expires_at):
         raise ApprovalError("approval expired")
