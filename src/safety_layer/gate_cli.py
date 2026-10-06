@@ -26,6 +26,11 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--candidate-version", default="local")
     check.add_argument("--db", default="data/evaluations.db")
     check.add_argument("--record-baseline", action="store_true")
+    check.add_argument(
+        "--unchanged",
+        action="store_true",
+        help="treat this run as unchanged-code evidence for the false-alarm ledger",
+    )
     return parser
 
 
@@ -68,6 +73,7 @@ def run_check(args: argparse.Namespace) -> int:
         store.get_baseline(args.lane),
         lane=args.lane,
         store=store,
+        unchanged=args.unchanged,
     )
     print(
         "{} | lane={} | score={:.4f} | baseline={:.4f} | noise={:.4f} | cost=$ {:.4f} | "
