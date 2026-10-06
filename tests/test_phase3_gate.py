@@ -133,9 +133,11 @@ class Phase3GatePersistenceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = EvaluationStore(Path(directory) / "evaluations.db")
             summary = evaluate_cases(seed_golden_cases(), good, runs=3, judge=StubRubricJudge())
+            stored_baseline = baseline(summary)
+            store.save_baseline(stored_baseline)
             result = run_gate(
                 summary,
-                baseline(summary),
+                stored_baseline,
                 lane="push",
                 store=store,
             )
