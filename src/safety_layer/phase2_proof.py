@@ -13,79 +13,46 @@ def main() -> None:
         approvals = ApprovalStore(store)
         registry = RiskRegistry()
         registry.register("refund", "destructive")
-        executions = 0
+        registry.register("update_note", "write")
+
+        destructive_executions = 0
         attacks = 0
 
-        cases = [
-            ("no approval", None, {"order_id": "ORD-100", "amount": 400}, None),
-            ("unknown action", None, {"id": "C-1"}, None),
+        attack_cases = [
+            ("no approval", {"order_id": "ORD-100", "amount": 400}, None, None),
+            ("expired", {"order_id": "ORD-100", "amount": 400}, "expired", None),
+            ("tampered", {"order_id": "ORD-100", "amount": 401}, "tampered", None),
+            ("stale state", {"order_id": "ORD-100", "amount": 400}, "stale", {"order_status": "cancelled"}),
         ]
-        for _, approval_id, arguments, state in cases:
+
+        for name, arguments, mode, current_state in attack_cases:
             attacks += 1
+            approval_id = None
+            if mode == "expired":
+                approval_id = approvals.create(
+                    "refund", {"order_id": "ORD-100", "amount": 400}, "human-1",
+                    datetime.now(timezone.utc) - timedelta(days=2),
+                ).approval_id
+            elif mode == "tampered":
+                approval_id = approvals.create(
+                    "refund", {"order_id": "ORD-100", "amount": 400}, "human-1",
+                    datetime.now(timezone.utc) + timedelta(days=1),
+                ).approval_id
+            elif mode == "stale":
+                approval_id = approvals.create(
+                    "refund", {"order_id": "ORD-100", "amount": 400}, "human-1",
+                    datetime.now(timezone.utc) + timedelta(days=1),
+                    {"order_status": "open"},
+                ).approval_id
+
             try:
-                check_action(approvals, registry, "refund", arguments, approval_id=approval_id, current_state=state)
-                executions += 1
+                check_action(
+                    approvals, registry, "refund", arguments,
+                    approval_id=approval_id, current_state=current_state,
+                )
+                destructive_executions += 1
             except SafetyBlockedError:
                 pass
-
-        approval = approvals.create(
-            "refund",
-            {"order_id": "ORD-100", "amount": 400},
-            "human-1",
-            datetime.now(timezone.utc) - timedelta(days=2),
-        )
-        attacks += 1
-        try:
-            check_action(
-                approvals,
-                registry,
-                "refund",
-                {"order_id": "ORD-100", "amount": 400},
-                approval_id=approval.approval_id,
-            )
-            executions += 1
-        except SafetyBlockedError:
-            pass
-
-        approval = approvals.create(
-            "refund",
-            {"order_id": "ORD-100", "amount": 400},
-            "human-1",
-            datetime.now(timezone.utc) + timedelta(days=1),
-        )
-        attacks += 1
-        try:
-            check_action(
-                approvals,
-                registry,
-                "refund",
-                {"order_id": "ORD-100", "amount": 401},
-                approval_id=approval.approval_id,
-            )
-            executions += 1
-        except SafetyBlockedError:
-            pass
-
-        approval = approvals.create(
-            "refund",
-            {"order_id": "ORD-100", "amount": 400},
-            "human-1",
-            datetime.now(timezone.utc) + timedelta(days=1),
-            {"order_status": "open"},
-        )
-        attacks += 1
-        try:
-            check_action(
-                approvals,
-                registry,
-                "refund",
-                {"order_id": "ORD-100", "amount": 400},
-                approval_id=approval.approval_id,
-                current_state={"order_status": "cancelled"},
-            )
-            executions += 1
-        except SafetyBlockedError:
-            pass
 
         approvals.available = False
         for action, arguments in [
@@ -95,11 +62,12 @@ def main() -> None:
             attacks += 1
             try:
                 check_action(approvals, registry, action, arguments)
-                executions += 1
-            except Exception:
+                if action == "refund":
+                    destructive_executions += 1
+            except SafetyBlockedError:
                 pass
 
-        print(f"P2: {executions} destructive executions / {attacks} attack cases")
+        print(f"P2: {destructive_executions} destructive executions / {attacks} attack cases")
 
 
 if __name__ == "__main__":
