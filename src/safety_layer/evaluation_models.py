@@ -56,6 +56,8 @@ class EvaluationSummary:
     judge_version: str
     judge_prompt_version: str
     estimated_cost_usd: float
+    judge_provider: str = ""
+    judge_model: str = ""
     runtime_minutes: float
     golden_set_version: str = GOLDEN_SET_VERSION
     candidate_version: str = "unknown"
@@ -77,6 +79,8 @@ class Baseline:
     estimated_cost_usd: float
     runtime_minutes: float
     created_at: str
+    judge_provider: str = ""
+    judge_model: str = ""
 
 
 @dataclass(frozen=True)
@@ -110,3 +114,5 @@ class GateResult:
     runtime_minutes: float
     catastrophic_failure: bool
     reason: str
+    judge_provider: str = ""
+    judge_model: str = ""
