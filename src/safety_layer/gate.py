@@ -57,7 +57,19 @@ def run_gate(
     store: EvaluationStore | None = None,
     unchanged: bool = False,
 ) -> GateResult:
-    if baseline is None:
+    if not summary.judge_available:
+        result = GateResult(
+            verdict="UNCERTAIN", lane=lane,
+            baseline_score=baseline.score if baseline is not None else 0.0,
+            observed_score=summary.observed_score, noise_estimate=summary.noise_estimate,
+            confidence=0.0, cases_evaluated=summary.cases_evaluated,
+            runs_per_case=summary.runs_per_case, judge_version=summary.judge_version,
+            judge_prompt_version=summary.judge_prompt_version,
+            estimated_cost_usd=summary.estimated_cost_usd, runtime_minutes=summary.runtime_minutes,
+            catastrophic_failure=False,
+            reason="semantic judge unavailable: " + summary.judge_error,
+        )
+    elif baseline is None:
         result = GateResult(
             verdict="UNCERTAIN",
             lane=lane,
