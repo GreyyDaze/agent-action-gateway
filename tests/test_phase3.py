@@ -13,6 +13,14 @@ def deterministic_cases() -> tuple[GoldenCase, ...]:
     return tuple(case for case in seed_golden_cases() if is_deterministic(case))
 
 
+class StubRubricJudge:
+    version = "test-rubric-judge-v1"
+    prompt_version = "test-rubric-prompt-v1"
+
+    def score(self, case: GoldenCase, output: object) -> float:
+        return 1.0 if output == case.expected else 0.0
+
+
 def good(case: GoldenCase) -> object:
     if case.check_type == "regex":
         return "refunded successfully"
@@ -84,13 +92,6 @@ class Phase3GateTest(unittest.TestCase):
             evaluate_cases((case,), lambda _: "acceptable", runs=1)
 
     def test_rubric_case_uses_supplied_judge(self) -> None:
-        class StubJudge:
-            version = "rubric-judge-test"
-            prompt_version = "rubric-prompt-test"
-
-            def score(self, case: GoldenCase, output: object) -> float:
-                return 1.0 if output == "acceptable" else 0.0
-
         case = GoldenCase(
             "rubric-001",
             "Assess the response",
@@ -102,13 +103,13 @@ class Phase3GateTest(unittest.TestCase):
             (case,),
             lambda _: "acceptable",
             runs=1,
-            judge=StubJudge(),
+            judge=StubRubricJudge(),
         )
         self.assertEqual(summary.observed_score, 1.0)
-        self.assertEqual(summary.judge_version, "rubric-judge-test")
+        self.assertEqual(summary.judge_version, "test-rubric-judge-v1")
 
     def test_injected_five_point_drop_fails(self) -> None:
-        cases = deterministic_cases()
+        cases = seed_golden_cases()
 
         def degraded(case: GoldenCase) -> object:
             if case.case_id == "refund-002":
@@ -117,20 +118,20 @@ class Phase3GateTest(unittest.TestCase):
                 return {"order_id": "ORD-006", "status": "wrong"}
             return good(case)
 
-        summary = evaluate_cases(cases, degraded, runs=3)
+        summary = evaluate_cases(cases, degraded, runs=3, judge=StubRubricJudge())
         result = decide(summary, lane="push", baseline_score=1.0)
         self.assertAlmostEqual((1.0 - summary.observed_score) * 100, 5.0)
         self.assertEqual(result.verdict, "FAIL")
 
     def test_catastrophic_failure_is_red_even_when_average_is_flat(self) -> None:
-        cases = deterministic_cases()
+        cases = seed_golden_cases()
 
         def catastrophic(case: GoldenCase) -> object:
             if case.case_id == "tool-001":
                 return {"tool": "delete_customer", "arguments": {"id": "C-1"}}
             return good(case)
 
-        summary = evaluate_cases(cases, catastrophic, runs=3)
+        summary = evaluate_cases(cases, catastrophic, runs=3, judge=StubRubricJudge())
         summary = replace(summary, observed_score=1.0)
         result = decide(summary, lane="push", baseline_score=1.0)
         self.assertEqual(result.verdict, "FAIL")
