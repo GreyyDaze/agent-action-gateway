@@ -3,7 +3,7 @@ from dataclasses import replace
 
 from safety_layer.evaluation_models import GoldenCase
 from safety_layer.evaluator import evaluate_cases
-from safety_layer.golden import seed_golden_cases
+from safety_layer.golden import load_golden_set, seed_golden_cases
 from safety_layer.verdict import decide
 
 
@@ -14,15 +14,67 @@ def good(case: GoldenCase) -> object:
 
 
 class Phase3GateTest(unittest.TestCase):
+    def test_canonical_golden_set_is_versioned_and_validated(self) -> None:
+        cases = load_golden_set()
+        self.assertEqual(len(cases), 30)
+        self.assertTrue(any(case.catastrophic for case in cases))
+        self.assertEqual(cases[0].case_id, "refund-001")
+
     def test_seed_contains_thirty_cases_and_catastrophic_case(self) -> None:
         cases = seed_golden_cases()
         self.assertEqual(len(cases), 30)
         self.assertTrue(any(case.catastrophic for case in cases))
 
-    def test_deterministic_checks_produce_stable_baseline(self) -> None:
-        summary = evaluate_cases(seed_golden_cases(), good, runs=3)
+    def test_deterministic_checks_do_not_call_optional_judge(self) -> None:
+        class ExplodingJudge:
+            version = "should-not-run"
+            prompt_version = "should-not-run"
+
+            def score(self, case: GoldenCase, output: object) -> float:
+                raise AssertionError("deterministic case reached the optional judge")
+
+        summary = evaluate_cases(
+            seed_golden_cases(),
+            good,
+            runs=1,
+            judge=ExplodingJudge(),
+        )
         self.assertEqual(summary.observed_score, 1.0)
-        self.assertEqual(summary.noise_estimate, 0.0)
+
+    def test_rubric_case_requires_explicit_judge(self) -> None:
+        case = GoldenCase(
+            "rubric-001",
+            "Assess the response",
+            "acceptable",
+            "rubric",
+            "test",
+        )
+        with self.assertRaisesRegex(ValueError, "require an explicit"):
+            evaluate_cases((case,), lambda _: "acceptable", runs=1)
+
+    def test_rubric_case_uses_supplied_judge(self) -> None:
+        class StubJudge:
+            version = "rubric-judge-test"
+            prompt_version = "rubric-prompt-test"
+
+            def score(self, case: GoldenCase, output: object) -> float:
+                return 1.0 if output == "acceptable" else 0.0
+
+        case = GoldenCase(
+            "rubric-001",
+            "Assess the response",
+            "acceptable",
+            "rubric",
+            "test",
+        )
+        summary = evaluate_cases(
+            (case,),
+            lambda _: "acceptable",
+            runs=1,
+            judge=StubJudge(),
+        )
+        self.assertEqual(summary.observed_score, 1.0)
+        self.assertEqual(summary.judge_version, "rubric-judge-test")
 
     def test_injected_five_point_drop_fails(self) -> None:
         cases = seed_golden_cases()
