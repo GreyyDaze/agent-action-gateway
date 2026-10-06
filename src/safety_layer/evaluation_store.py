@@ -32,6 +32,8 @@ class EvaluationStore:
                     lane TEXT NOT NULL,
                     judge_version TEXT NOT NULL,
                     judge_prompt_version TEXT NOT NULL,
+                    judge_provider TEXT NOT NULL DEFAULT '',
+                    judge_model TEXT NOT NULL DEFAULT '',
                     baseline_score REAL NOT NULL,
                     observed_score REAL NOT NULL,
                     noise_estimate REAL NOT NULL,
@@ -62,6 +64,8 @@ class EvaluationStore:
                     golden_set_version TEXT NOT NULL,
                     judge_version TEXT NOT NULL,
                     judge_prompt_version TEXT NOT NULL,
+                    judge_provider TEXT NOT NULL DEFAULT '',
+                    judge_model TEXT NOT NULL DEFAULT '',
                     score REAL NOT NULL,
                     cases_evaluated INTEGER NOT NULL,
                     runs_per_case INTEGER NOT NULL,
@@ -69,6 +73,26 @@ class EvaluationStore:
                     runtime_minutes REAL NOT NULL,
                     created_at TEXT NOT NULL
                 );
+
+            for table, columns in {
+                "evaluation_runs": {
+                    "judge_provider": "TEXT NOT NULL DEFAULT ''",
+                    "judge_model": "TEXT NOT NULL DEFAULT ''",
+                },
+                "baselines": {
+                    "judge_provider": "TEXT NOT NULL DEFAULT ''",
+                    "judge_model": "TEXT NOT NULL DEFAULT ''",
+                },
+            }.items():
+                existing = {
+                    row["name"]
+                    for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+                }
+                for name, definition in columns.items():
+                    if name not in existing:
+                        connection.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
+                        )
 
                 CREATE INDEX IF NOT EXISTS idx_evaluation_runs_created
                     ON evaluation_runs(created_at);
@@ -84,6 +108,7 @@ class EvaluationStore:
                 INSERT INTO evaluation_runs (
                     evaluation_id, candidate_version, golden_set_version,
                     lane, judge_version, judge_prompt_version,
+                    judge_provider, judge_model,
                     baseline_score, observed_score, noise_estimate,
                     verdict, confidence, cases_evaluated, runs_per_case,
                     estimated_cost_usd, runtime_minutes, reason,
@@ -97,6 +122,8 @@ class EvaluationStore:
                     result.lane,
                     result.judge_version,
                     result.judge_prompt_version,
+                    summary.judge_provider,
+                    summary.judge_model,
                     result.baseline_score,
                     result.observed_score,
                     result.noise_estimate,
@@ -152,7 +179,7 @@ class EvaluationStore:
                 """
                 INSERT INTO baselines (
                     lane, candidate_version, golden_set_version,
-                    judge_version, judge_prompt_version, score,
+                    judge_version, judge_prompt_version, judge_provider, judge_model, score,
                     cases_evaluated, runs_per_case,
                     estimated_cost_usd, runtime_minutes, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -174,6 +201,8 @@ class EvaluationStore:
                     baseline.golden_set_version,
                     baseline.judge_version,
                     baseline.judge_prompt_version,
+                    baseline.judge_provider,
+                    baseline.judge_model,
                     baseline.score,
                     baseline.cases_evaluated,
                     baseline.runs_per_case,
