@@ -35,6 +35,10 @@ class JudgeDecision:
             raise ValueError("judge rationale must be non-empty")
 
 
+class JudgeUnavailableError(RuntimeError):
+    """The configured semantic judge could not produce a trustworthy decision."""
+
+
 class Judge(Protocol):
     version: str
     prompt_version: str
