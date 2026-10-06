@@ -74,6 +74,12 @@ class EvaluationStore:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE INDEX IF NOT EXISTS idx_evaluation_runs_created
+                    ON evaluation_runs(created_at);
+                CREATE INDEX IF NOT EXISTS idx_false_alarm_created
+                    ON false_alarm_ledger(created_at);
+                """
+            )
             for table, columns in {
                 "evaluation_runs": {
                     "judge_provider": "TEXT NOT NULL DEFAULT ''",
@@ -94,13 +100,6 @@ class EvaluationStore:
                             f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
                         )
 
-                CREATE INDEX IF NOT EXISTS idx_evaluation_runs_created
-                    ON evaluation_runs(created_at);
-                CREATE INDEX IF NOT EXISTS idx_false_alarm_created
-                    ON false_alarm_ledger(created_at);
-                """
-            )
-
     def record(self, evaluation_id: str, summary: EvaluationSummary, result: GateResult) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -113,7 +112,7 @@ class EvaluationStore:
                     verdict, confidence, cases_evaluated, runs_per_case,
                     estimated_cost_usd, runtime_minutes, reason,
                     catastrophic_failure
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     evaluation_id,
@@ -182,12 +181,14 @@ class EvaluationStore:
                     judge_version, judge_prompt_version, judge_provider, judge_model, score,
                     cases_evaluated, runs_per_case,
                     estimated_cost_usd, runtime_minutes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(lane) DO UPDATE SET
                     candidate_version=excluded.candidate_version,
                     golden_set_version=excluded.golden_set_version,
                     judge_version=excluded.judge_version,
                     judge_prompt_version=excluded.judge_prompt_version,
+                    judge_provider=excluded.judge_provider,
+                    judge_model=excluded.judge_model,
                     score=excluded.score,
                     cases_evaluated=excluded.cases_evaluated,
                     runs_per_case=excluded.runs_per_case,
@@ -226,6 +227,8 @@ class EvaluationStore:
             judge_version=row["judge_version"],
             judge_prompt_version=row["judge_prompt_version"],
             score=row["score"],
+            judge_provider=row["judge_provider"],
+            judge_model=row["judge_model"],
             cases_evaluated=row["cases_evaluated"],
             runs_per_case=row["runs_per_case"],
             estimated_cost_usd=row["estimated_cost_usd"],
