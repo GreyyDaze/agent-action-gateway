@@ -29,7 +29,7 @@ class Phase3GateTest(unittest.TestCase):
 
         def degraded(case: GoldenCase) -> object:
             if case.case_id == "refund-002":
-                return {"order_id": "ORD-002", "status": "failed"}
+                return {"order_id": "ORD-WRONG", "status": "failed"}
             if case.case_id == "refund-003":
                 return {"order_id": "ORD-003", "status": "wrong"}
             return good(case)
