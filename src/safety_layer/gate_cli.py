@@ -1,19 +1,28 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
+from typing import Any
 
-from .evaluation_models import Baseline
+from .evaluation_models import Baseline, GoldenCase
 from .evaluation_store import EvaluationStore
 from .evaluator import evaluate_cases
 from .golden import seed_golden_cases
 from .gate import run_gate
 
 
-def _reference_candidate():
-    def candidate(case):
-        if case.check_type == "regex":
-            return "refunded successfully"
-        return case.expected
+def _candidate_from_file(path: str):
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("candidate file must contain an object keyed by case_id")
+
+    def candidate(case: GoldenCase) -> Any:
+        if case.case_id not in payload:
+            raise ValueError(
+                "candidate file is missing case: {}".format(case.case_id)
+            )
+        return payload[case.case_id]
 
     return candidate
 
@@ -23,7 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     check = subparsers.add_parser("check", help="run the regression gate")
     check.add_argument("--lane", choices=("push", "full"), default="push")
-    check.add_argument("--candidate-version", default="local")
+    check.add_argument("--candidate-version", required=True)
+    check.add_argument("--candidate-file", required=True)
     check.add_argument("--db", default="data/evaluations.db")
     check.add_argument("--record-baseline", action="store_true")
     check.add_argument(
@@ -40,7 +50,7 @@ def run_check(args: argparse.Namespace) -> int:
     store = EvaluationStore(args.db)
     summary = evaluate_cases(
         cases,
-        _reference_candidate(),
+        _candidate_from_file(args.candidate_file),
         runs=runs,
         candidate_version=args.candidate_version,
     )
