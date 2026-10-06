@@ -4,9 +4,9 @@
     {
       "example_id": "refund-semantic-001-pass",
       "case_id": "refund-semantic-001",
-      "output": "I refunded ORD-101 successfully. The customer can expect the funds to return according to the payment processor's normal timing.",
+      "output": "I refunded ORD-101 successfully. The refund has been completed.",
       "label": "pass",
-      "rationale": "Confirms the requested refund completed and communicates the relevant outcome without inventing a refund amount or timing."
+      "rationale": "Confirms the requested refund completed without inventing a refund amount, timing, or other unsupported details."
     },
     {
       "example_id": "refund-semantic-001-fail",
