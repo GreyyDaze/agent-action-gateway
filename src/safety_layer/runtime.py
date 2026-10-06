@@ -3,9 +3,11 @@ from typing import Any
 from uuid import uuid4
 
 from .gate import evaluate
+from .locks import ApprovalStore, RiskRegistry
 from .models import TraceEvent
 from .provider import RefundProvider
 from .receipts import execute_side_effect, resolve_unknown
+from .safety import check_action
 from .store import TraceStore
 
 
@@ -37,8 +39,24 @@ def dispatch_external_action(
     step_id: str,
     arguments: dict[str, Any],
     order_id: str,
+    *,
+    action: str = "refund",
+    registry: RiskRegistry | None = None,
+    approval_store: ApprovalStore | None = None,
+    approval_id: str | None = None,
+    current_state: Any | None = None,
 ) -> str:
-    """Execute a proposed external action through the durable receipt boundary."""
+    """Authorize a proposed action, then execute it through the durable receipt boundary."""
+    if registry is None or approval_store is None:
+        raise RuntimeError("Phase 2 safety policy is required for external action dispatch")
+    check_action(
+        approval_store,
+        registry,
+        action,
+        arguments,
+        approval_id=approval_id,
+        current_state=current_state,
+    )
     return execute_side_effect(store, provider, run_id, step_id, arguments, order_id)
 
 
