@@ -26,6 +26,7 @@ class Approval:
     created_at: str
     expires_at: str
     state_hash: str | None
+    consumed_at: str | None
 
 
 def payload_hash(action: str, arguments: dict[str, Any]) -> str:
@@ -60,7 +61,8 @@ class ApprovalStore:
                     approver TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
-                    state_hash TEXT
+                    state_hash TEXT,
+                    consumed_at TEXT
                 )
                 """
             )
@@ -85,10 +87,11 @@ class ApprovalStore:
             created_at=now.isoformat(),
             expires_at=expires_at.astimezone(timezone.utc).isoformat(),
             state_hash=None if current_state is None else state_hash(current_state),
+            consumed_at=None,
         )
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO approvals(approval_id, action, payload_hash, approver, created_at, expires_at, state_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO approvals(approval_id, action, payload_hash, approver, created_at, expires_at, state_hash, consumed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     approval.approval_id,
                     approval.action,
@@ -97,6 +100,7 @@ class ApprovalStore:
                     approval.created_at,
                     approval.expires_at,
                     approval.state_hash,
+                    approval.consumed_at,
                 ),
             )
         return approval
@@ -109,6 +113,21 @@ class ApprovalStore:
             ).fetchone()
         if row is None:
             raise ApprovalError("approval not found")
+        return self._from_row(row)
+
+    def consume(self, approval_id: str) -> None:
+        self._require_available()
+        consumed_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE approvals SET consumed_at=? WHERE approval_id=? AND consumed_at IS NULL",
+                (consumed_at, approval_id),
+            )
+            if cursor.rowcount != 1:
+                raise ApprovalError("approval already used")
+
+    @staticmethod
+    def _from_row(row: sqlite3.Row) -> Approval:
         return Approval(
             approval_id=row["approval_id"],
             action=row["action"],
@@ -117,6 +136,7 @@ class ApprovalStore:
             created_at=row["created_at"],
             expires_at=row["expires_at"],
             state_hash=row["state_hash"],
+            consumed_at=row["consumed_at"],
         )
 
     def _require_available(self) -> None:
@@ -151,31 +171,28 @@ def authorize(
     current_state: Any | None = None,
     now: datetime | None = None,
 ) -> str:
-    """Return the risk class or raise before the external action is dispatched."""
+    """Authorize an action before dispatch; destructive approval is exact and single-use."""
     risk = registry.classify(action)
     if risk == "read":
         return risk
 
-    try:
-        if approval_id is None:
-            if risk == "destructive":
-                raise ApprovalError("destructive action requires approval")
-            approval_store._require_available()
-            return risk
+    approval_store._require_available()
+    if approval_id is None:
+        if risk == "destructive":
+            raise ApprovalError("destructive action requires approval")
+        return risk
 
-        approval = approval_store.get(approval_id)
-    except ApprovalUnavailableError:
-        raise
-    except ApprovalError:
-        raise
-
+    approval = approval_store.get(approval_id)
     current_time = now or datetime.now(timezone.utc)
     if current_time >= datetime.fromisoformat(approval.expires_at):
         raise ApprovalError("approval expired")
+    if approval.consumed_at is not None:
+        raise ApprovalError("approval already used")
     if approval.action != action:
         raise ApprovalError("approval action mismatch")
     if approval.payload_hash != payload_hash(action, arguments):
         raise ApprovalError("approved payload changed")
     if approval.state_hash is not None and approval.state_hash != state_hash(current_state):
         raise ApprovalError("current state changed since approval")
+    approval_store.consume(approval.approval_id)
     return risk
