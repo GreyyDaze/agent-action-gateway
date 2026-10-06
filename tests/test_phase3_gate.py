@@ -12,6 +12,7 @@ from safety_layer.evaluation_models import (
 from safety_layer.evaluation_store import EvaluationStore
 from safety_layer.evaluator import evaluate_cases
 from safety_layer.gate import check_compatibility, run_gate
+from safety_layer.gate_cli import build_parser
 from safety_layer.golden import seed_golden_cases
 from safety_layer.judge import JudgeDecision, UnavailableRubricJudge
 
@@ -65,6 +66,18 @@ def baseline(summary, lane: str = "push", judge_version: str | None = None):
 
 
 class Phase3GatePersistenceTest(unittest.TestCase):
+    def test_repeat_option_supports_real_unchanged_proof(self) -> None:
+        args = build_parser().parse_args([
+            "check",
+            "--lane", "push",
+            "--candidate-version", "test",
+            "--candidate-file", "candidate.json",
+            "--repeat", "10",
+            "--unchanged",
+        ])
+        self.assertEqual(args.repeat, 10)
+        self.assertTrue(args.unchanged)
+
     def test_incompatible_judge_version_refuses_comparison(self) -> None:
         summary = evaluate_cases(seed_golden_cases(), good, runs=3, judge=StubRubricJudge())
         compatible, reason = check_compatibility(
