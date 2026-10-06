@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Protocol
-from typing import Any
-
 from .evaluation_models import GoldenCase, JUDGE_PROMPT_VERSION, JUDGE_VERSION
 
 
