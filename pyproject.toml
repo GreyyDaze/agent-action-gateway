@@ -9,5 +9,8 @@ description = "Prevention-first safety and evaluation layer for AI agents"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.scripts]
+gate = "safety_layer.gate_cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
