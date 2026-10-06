@@ -17,8 +17,8 @@ def good_output(case: GoldenCase) -> object:
 def five_point_drop_output(case: GoldenCase) -> object:
     if case.case_id == "refund-002":
         return {"order_id": "ORD-WRONG", "status": "failed"}
-    if case.case_id == "refund-003":
-        return {"order_id": "ORD-003", "status": "wrong"}
+    if case.case_id == "refund-006":
+        return {"order_id": "ORD-006", "status": "wrong"}
     return good_output(case)
 
 
