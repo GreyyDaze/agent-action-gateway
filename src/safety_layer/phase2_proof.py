@@ -33,7 +33,7 @@ def main() -> None:
             if mode == "expired":
                 approval_id = approvals.create(
                     "refund", {"order_id": "ORD-100", "amount": 400}, "human-1",
-                    datetime.now(timezone.utc) - timedelta(days=2),
+                    datetime.now(timezone.utc) + timedelta(days=1),
                 ).approval_id
             elif mode == "tampered":
                 approval_id = approvals.create(
@@ -53,6 +53,7 @@ def main() -> None:
                     arguments, "ORD-100",
                     registry=registry, approval_store=approvals,
                     approval_id=approval_id, current_state=current_state,
+                    now=datetime.now(timezone.utc) + timedelta(days=2) if mode == "expired" else None,
                 )
                 destructive_executions += 1
             except SafetyBlockedError:
