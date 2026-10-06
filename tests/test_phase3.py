@@ -5,7 +5,7 @@ from safety_layer.calibration import load_calibration_set
 from safety_layer.evaluation_models import GoldenCase
 from safety_layer.evaluator import evaluate_cases
 from safety_layer.golden import load_golden_set, seed_golden_cases
-from safety_layer.judge import JudgeDecision, is_deterministic
+from safety_layer.judge import JudgeDecision, UnavailableRubricJudge, is_deterministic
 from safety_layer.verdict import decide
 
 
@@ -156,6 +156,17 @@ class Phase3GateTest(unittest.TestCase):
         full = evaluate_cases(deterministic_cases(), good, runs=10)
         self.assertEqual(decide(push, lane="push", baseline_score=1.0).runs_per_case, 3)
         self.assertEqual(decide(full, lane="full", baseline_score=1.0).runs_per_case, 10)
+
+    def test_provider_unavailable_is_recorded_without_a_pass(self) -> None:
+        summary = evaluate_cases(
+            seed_golden_cases(),
+            good,
+            runs=3,
+            judge=UnavailableRubricJudge("provider timeout"),
+        )
+        self.assertFalse(summary.judge_available)
+        self.assertIn("provider timeout", summary.judge_error)
+        self.assertEqual(summary.observed_score, 0.0)
 
     def test_cost_and_runtime_are_reported(self) -> None:
         summary = evaluate_cases(
