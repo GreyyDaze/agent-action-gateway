@@ -47,6 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="treat this run as unchanged-code evidence for the false-alarm ledger",
     )
+    check.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="repeat the gate evaluation this many times; useful for unchanged-code proof",
+    )
     return parser
 
 
@@ -69,10 +75,8 @@ def run_calibrate(args: argparse.Namespace) -> int:
     return 0 if result.accepted else 1
 
 
-def run_check(args: argparse.Namespace) -> int:
-    cases = seed_golden_cases()
+def _run_check_once(args: argparse.Namespace, cases: tuple[GoldenCase, ...], store: EvaluationStore):
     runs = 3 if args.lane == "push" else 10
-    store = EvaluationStore(args.db)
     semantic_cases = tuple(case for case in cases if case.check_type == "rubric")
     judge = _build_judge(args.judge_model) if semantic_cases else None
 
@@ -83,7 +87,7 @@ def run_check(args: argparse.Namespace) -> int:
 
     if args.record_baseline and not summary.judge_available:
         print("UNCERTAIN | baseline not saved because semantic judge is unavailable")
-        return 1
+        return None
 
     if args.record_baseline:
         store.save_baseline(
@@ -103,12 +107,8 @@ def run_check(args: argparse.Namespace) -> int:
                 created_at=summary.created_at,
             )
         )
-        print(
-            "baseline saved: lane={} score={:.4f}".format(
-                args.lane, summary.observed_score
-            )
-        )
-        return 0
+        print("baseline saved: lane={} score={:.4f}".format(args.lane, summary.observed_score))
+        return None
 
     result = run_gate(
         summary,
@@ -133,9 +133,43 @@ def run_check(args: argparse.Namespace) -> int:
         )
     )
     print("false-alarm-ledger={}".format(store.false_alarm_count()))
-    return 0 if result.verdict == "PASS" else 1
+    return result
 
 
+def run_check(args: argparse.Namespace) -> int:
+    if args.repeat < 1:
+        raise SystemExit("--repeat must be >= 1")
+    if args.record_baseline and args.repeat != 1:
+        raise SystemExit("--record-baseline cannot be combined with --repeat > 1")
+
+    cases = seed_golden_cases()
+    store = EvaluationStore(args.db)
+    results = []
+    for _ in range(args.repeat):
+        result = _run_check_once(args, cases, store)
+        if result is not None:
+            results.append(result)
+            if result.verdict != "PASS":
+                if args.repeat > 1:
+                    print(
+                        "UNCHANGED-PROOF | runs={}/{} | false-fails={} | status=FAIL".format(
+                            len(results), args.repeat,
+                            sum(item.verdict == "FAIL" for item in results),
+                        )
+                    )
+                return 1
+
+    if args.repeat > 1:
+        false_fails = sum(result.verdict == "FAIL" for result in results)
+        print(
+            "UNCHANGED-PROOF | runs={}/{} | false-fails={} | status={}".format(
+                len(results), args.repeat, false_fails,
+                "PASS" if false_fails == 0 and len(results) == args.repeat else "FAIL",
+            )
+        )
+        return 0 if false_fails == 0 and len(results) == args.repeat else 1
+
+    return 0
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
