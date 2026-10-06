@@ -36,6 +36,11 @@ class SampleResult:
     passed: bool
     catastrophic: bool
     check_type: str
+    label: str
+    rationale: str
+    confidence: float
+    provider: str
+    model: str
 
 
 @dataclass(frozen=True)
