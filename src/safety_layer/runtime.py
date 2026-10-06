@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -45,6 +46,7 @@ def dispatch_external_action(
     approval_store: ApprovalStore | None = None,
     approval_id: str | None = None,
     current_state: Any | None = None,
+    now: datetime | None = None,
 ) -> str:
     """Authorize a proposed action, then execute it through the durable receipt boundary."""
     if registry is None or approval_store is None:
@@ -56,6 +58,7 @@ def dispatch_external_action(
         arguments,
         approval_id=approval_id,
         current_state=current_state,
+        now=now,
     )
     return execute_side_effect(store, provider, run_id, step_id, arguments, order_id)
 
