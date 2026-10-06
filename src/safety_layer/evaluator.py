@@ -5,7 +5,13 @@ from datetime import datetime, timezone
 from time import perf_counter
 
 from .evaluation_models import EvaluationSummary, GoldenCase, SampleResult
-from .judge import DeterministicJudge, Judge, JudgeDecision, is_deterministic
+from .judge import (
+    DeterministicJudge,
+    Judge,
+    JudgeDecision,
+    JudgeUnavailableError,
+    is_deterministic,
+)
 
 
 def evaluate_cases(
@@ -30,6 +36,8 @@ def evaluate_cases(
     started = perf_counter()
     samples: list[SampleResult] = []
     estimated_cost_usd = 0.0
+    judge_available = True
+    judge_error = ""
 
     for run_number in range(1, runs + 1):
         for case in cases:
@@ -38,7 +46,12 @@ def evaluate_cases(
                 deterministic_judge if is_deterministic(case) else judge
             )
             assert evaluator is not None
-            decision: JudgeDecision = evaluator.evaluate(case, output)
+            try:
+                decision: JudgeDecision = evaluator.evaluate(case, output)
+            except JudgeUnavailableError as exc:
+                judge_available = False
+                judge_error = str(exc)
+                break
             samples.append(
                 SampleResult(
                     case_id=case.case_id,
@@ -57,13 +70,17 @@ def evaluate_cases(
             estimated_cost_usd += decision.estimated_cost_usd
 
     runtime_minutes = (perf_counter() - started) / 60
-    width = len(cases)
-    per_run_scores = [
-        sum(sample.score for sample in samples[offset : offset + width]) / width
-        for offset in range(0, len(samples), width)
-    ]
-    observed = sum(per_run_scores) / len(per_run_scores)
-    noise = max(per_run_scores) - min(per_run_scores) if len(per_run_scores) > 1 else 0.0
+    if not judge_available:
+        observed = 0.0
+        noise = 0.0
+    else:
+        width = len(cases)
+        per_run_scores = [
+            sum(sample.score for sample in samples[offset : offset + width]) / width
+            for offset in range(0, len(samples), width)
+        ]
+        observed = sum(per_run_scores) / len(per_run_scores)
+        noise = max(per_run_scores) - min(per_run_scores) if len(per_run_scores) > 1 else 0.0
 
     judge_versions = {
         deterministic_judge.version
@@ -94,4 +111,6 @@ def evaluate_cases(
         runtime_minutes=runtime_minutes,
         candidate_version=candidate_version,
         created_at=datetime.now(timezone.utc).isoformat(),
+        judge_available=judge_available,
+        judge_error=judge_error,
     )
