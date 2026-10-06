@@ -40,6 +40,8 @@ def evaluate_cases(
     judge_error = ""
 
     for run_number in range(1, runs + 1):
+        if not judge_available:
+            break
         for case in cases:
             output = candidate(case)
             evaluator: Judge = (
