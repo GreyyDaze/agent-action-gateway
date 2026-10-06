@@ -86,11 +86,16 @@ class GeminiRubricJudgeProvider:
         try:
             raw_response = self._transport(request, self.timeout)
         except HTTPError as exc:
+            detail = _http_error_detail(exc)
             raise GeminiJudgeError(
                 f"Gemini request failed with HTTP {exc.code}"
+                + (f": {detail}" if detail else "")
+                + f" [model={self.model}]"
             ) from exc
         except (URLError, TimeoutError) as exc:
-            raise GeminiJudgeError("Gemini request failed") from exc
+            raise GeminiJudgeError(
+                f"Gemini request failed [model={self.model}]: {exc}"
+            ) from exc
         latency_ms = (perf_counter() - started) * 1000
 
         try:
@@ -226,6 +231,31 @@ class GeminiRubricJudgeProvider:
     def _default_transport(request: Request, timeout: float) -> bytes:
         with urlopen(request, timeout=timeout) as response:
             return response.read()
+
+
+def _http_error_detail(exc: HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+    if not body:
+        return ""
+
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return body[:500]
+
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            status = error.get("status")
+            message = error.get("message")
+            if isinstance(message, str):
+                return f"{message} (status={status})" if status else message
+
+    return body[:500]
 
 
 def _token_count(usage: object, field: str) -> int:
