@@ -1,36 +1,11 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from time import perf_counter
 
-from .evaluation_models import (
-    EvaluationSummary,
-    GoldenCase,
-    JUDGE_PROMPT_VERSION,
-    JUDGE_VERSION,
-    SampleResult,
-)
-
-
-class Judge:
-    version = JUDGE_VERSION
-    prompt_version = JUDGE_PROMPT_VERSION
-
-    def score(self, case: GoldenCase, output: object) -> float:
-        if case.check_type == "exact":
-            return 1.0 if output == case.expected else 0.0
-        if case.check_type == "field-equality":
-            if not isinstance(output, dict) or not isinstance(case.expected, dict):
-                return 0.0
-            matches = sum(
-                output.get(key) == value for key, value in case.expected.items()
-            )
-            return matches / len(case.expected)
-        if case.check_type == "regex":
-            return 1.0 if re.search(str(case.expected), str(output), re.IGNORECASE) else 0.0
-        raise ValueError("unsupported check type: {}".format(case.check_type))
+from .evaluation_models import EvaluationSummary, GoldenCase, SampleResult
+from .judge import DeterministicJudge, Judge, is_deterministic
 
 
 def evaluate_cases(
@@ -42,18 +17,31 @@ def evaluate_cases(
     estimated_cost_per_sample: float = 0.0,
     candidate_version: str = "unknown",
 ) -> EvaluationSummary:
+    """Evaluate cases, using deterministic checks before any optional LLM judge.
+
+    A rubric case requires an explicit product-controlled judge. Deterministic
+    cases never call that judge, even when one is supplied.
+    """
     if runs < 1:
         raise ValueError("runs must be >= 1")
     if not cases:
         raise ValueError("at least one golden case is required")
 
-    evaluator = judge or Judge()
+    deterministic_judge = DeterministicJudge()
+    if any(not is_deterministic(case) for case in cases) and judge is None:
+        raise ValueError(
+            "rubric-based cases require an explicit product-controlled judge"
+        )
+
     started = perf_counter()
     samples: list[SampleResult] = []
 
     for run_number in range(1, runs + 1):
         for case in cases:
-            score = evaluator.score(case, candidate(case))
+            output = candidate(case)
+            evaluator = deterministic_judge if is_deterministic(case) else judge
+            assert evaluator is not None
+            score = evaluator.score(case, output)
             samples.append(
                 SampleResult(
                     case_id=case.case_id,
@@ -75,6 +63,11 @@ def evaluate_cases(
     observed = sum(per_run_scores) / len(per_run_scores)
     noise = max(per_run_scores) - min(per_run_scores) if len(per_run_scores) > 1 else 0.0
 
+    judge_version = judge.version if judge is not None else deterministic_judge.version
+    judge_prompt_version = (
+        judge.prompt_version if judge is not None else deterministic_judge.prompt_version
+    )
+
     return EvaluationSummary(
         cases_evaluated=len(cases),
         runs_per_case=runs,
@@ -83,8 +76,8 @@ def evaluate_cases(
         noise_estimate=noise,
         catastrophic_failure=any(sample.catastrophic for sample in samples),
         samples=tuple(samples),
-        judge_version=evaluator.version,
-        judge_prompt_version=evaluator.prompt_version,
+        judge_version=judge_version,
+        judge_prompt_version=judge_prompt_version,
         estimated_cost_usd=len(samples) * estimated_cost_per_sample,
         runtime_minutes=runtime_minutes,
         candidate_version=candidate_version,
