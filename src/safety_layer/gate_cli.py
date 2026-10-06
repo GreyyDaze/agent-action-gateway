@@ -8,8 +8,10 @@ from typing import Any
 from .evaluation_models import Baseline, GoldenCase
 from .evaluation_store import EvaluationStore
 from .evaluator import evaluate_cases
+from .gemini_judge import GeminiRubricJudgeProvider
 from .golden import seed_golden_cases
 from .gate import run_gate
+from .judge import ProductControlledJudge
 
 
 def _candidate_from_file(path: str):
@@ -36,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--candidate-file", required=True)
     check.add_argument("--db", default="data/evaluations.db")
     check.add_argument("--record-baseline", action="store_true")
+    check.add_argument("--judge-model", default="gemini-2.5-flash-lite")
     check.add_argument(
         "--unchanged",
         action="store_true",
@@ -48,11 +51,18 @@ def run_check(args: argparse.Namespace) -> int:
     cases = seed_golden_cases()
     runs = 3 if args.lane == "push" else 10
     store = EvaluationStore(args.db)
+    semantic_cases = tuple(case for case in cases if case.check_type == "rubric")
+    judge = None
+    if semantic_cases:
+        try:
+            judge = ProductControlledJudge(GeminiRubricJudgeProvider(model=args.judge_model))
+        except Exception as exc:
+            print("UNCERTAIN | semantic judge unavailable: {}".format(exc))
+            return 1
+
     summary = evaluate_cases(
-        cases,
-        _candidate_from_file(args.candidate_file),
-        runs=runs,
-        candidate_version=args.candidate_version,
+        cases, _candidate_from_file(args.candidate_file), runs=runs,
+        judge=judge, candidate_version=args.candidate_version,
     )
 
     if args.record_baseline:
