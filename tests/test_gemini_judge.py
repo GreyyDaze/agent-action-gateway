@@ -145,6 +145,29 @@ class GeminiJudgeAdapterTest(unittest.TestCase):
         ):
             ProductControlledJudge(provider).evaluate(CASE, "anything")
 
+
+    def test_product_judge_rejects_unpinned_model_metadata(self) -> None:
+        class WrongModelProvider:
+            provider = "gemini"
+            model = "configured-model"
+
+            def judge(self, *, system_prompt, case, output):
+                from safety_layer.judge import JudgeDecision
+
+                return JudgeDecision(
+                    label="pass",
+                    score=1.0,
+                    confidence=1.0,
+                    rationale="test",
+                    provider="gemini",
+                    model="different-model",
+                    judge_version=GEMINI_JUDGE_VERSION,
+                    prompt_version=GEMINI_PROMPT_VERSION,
+                )
+
+        with self.assertRaisesRegex(ValueError, "model metadata"):
+            ProductControlledJudge(WrongModelProvider()).evaluate(CASE, "ok")
+
     def test_provider_failure_does_not_fabricate_decision(self) -> None:
         def failing_transport(_request: Request, _timeout: float) -> bytes:
             raise TimeoutError()
