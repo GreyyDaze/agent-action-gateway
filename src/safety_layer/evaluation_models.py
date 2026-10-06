@@ -4,6 +4,7 @@ from typing import Any
 
 
 GOLDEN_SET_VERSION = "golden-v1"
+CALIBRATION_SET_VERSION = "calibration-v1"
 JUDGE_VERSION = "deterministic-judge-v1"
 JUDGE_PROMPT_VERSION = "builtin-rubric-v1"
 
@@ -17,6 +18,15 @@ class GoldenCase:
     source: str
     catastrophic: bool = False
     rubric: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CalibrationExample:
+    example_id: str
+    case_id: str
+    output: Any
+    label: str
+    rationale: str
 
 
 @dataclass(frozen=True)
