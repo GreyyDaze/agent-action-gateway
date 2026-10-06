@@ -151,6 +151,19 @@ class Phase3GateTest(unittest.TestCase):
         self.assertAlmostEqual((1.0 - summary.observed_score) * 100, 5.0)
         self.assertEqual(result.verdict, "FAIL")
 
+    def test_ten_unchanged_runs_have_zero_false_failures(self) -> None:
+        cases = seed_golden_cases()
+        results = [
+            decide(
+                evaluate_cases(cases, good, runs=10, judge=StubRubricJudge()),
+                lane="full",
+                baseline_score=1.0,
+            )
+            for _ in range(10)
+        ]
+        self.assertEqual([result.verdict for result in results], ["PASS"] * 10)
+        self.assertEqual(sum(result.verdict == "FAIL" for result in results), 0)
+
     def test_catastrophic_failure_is_red_even_when_average_is_flat(self) -> None:
         cases = seed_golden_cases()
 
