@@ -98,6 +98,16 @@ def evaluate_cases(
     }
     judge_version = ",".join(sorted(judge_versions))
     judge_prompt_version = ",".join(sorted(prompt_versions))
+    provider_versions = {sample.provider for sample in samples}
+    model_versions = {sample.model for sample in samples}
+    if not provider_versions and judge is not None:
+        provider = getattr(judge, "provider", None)
+        if isinstance(provider, str):
+            provider_versions.add(provider)
+    if not model_versions and judge is not None:
+        model = getattr(getattr(judge, "provider", None), "model", None)
+        if isinstance(model, str):
+            model_versions.add(model)
 
     return EvaluationSummary(
         cases_evaluated=len(cases),
@@ -111,6 +121,8 @@ def evaluate_cases(
         judge_prompt_version=judge_prompt_version,
         estimated_cost_usd=estimated_cost_usd,
         runtime_minutes=runtime_minutes,
+        judge_provider=",".join(sorted(provider_versions)),
+        judge_model=",".join(sorted(model_versions)),
         candidate_version=candidate_version,
         created_at=datetime.now(timezone.utc).isoformat(),
         judge_available=judge_available,
