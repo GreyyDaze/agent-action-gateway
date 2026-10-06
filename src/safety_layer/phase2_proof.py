@@ -3,7 +3,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .locks import ApprovalStore, RiskRegistry
-from .safety import SafetyBlockedError, check_action
+from .mock_provider import MockPaymentProvider
+from .runtime import dispatch_external_action
+from .safety import SafetyBlockedError
 from .store import TraceStore
 
 
@@ -13,7 +15,7 @@ def main() -> None:
         approvals = ApprovalStore(store)
         registry = RiskRegistry()
         registry.register("refund", "destructive")
-        registry.register("update_note", "write")
+        provider = MockPaymentProvider(dedupe=True)
 
         destructive_executions = 0
         attacks = 0
@@ -25,7 +27,7 @@ def main() -> None:
             ("stale state", {"order_id": "ORD-100", "amount": 400}, "stale", {"order_status": "cancelled"}),
         ]
 
-        for name, arguments, mode, current_state in attack_cases:
+        for _, arguments, mode, current_state in attack_cases:
             attacks += 1
             approval_id = None
             if mode == "expired":
@@ -46,8 +48,10 @@ def main() -> None:
                 ).approval_id
 
             try:
-                check_action(
-                    approvals, registry, "refund", arguments,
+                dispatch_external_action(
+                    store, provider, "attack-run", f"attack-{attacks}",
+                    arguments, "ORD-100",
+                    registry=registry, approval_store=approvals,
                     approval_id=approval_id, current_state=current_state,
                 )
                 destructive_executions += 1
@@ -55,17 +59,16 @@ def main() -> None:
                 pass
 
         approvals.available = False
-        for action, arguments in [
-            ("refund", {"order_id": "ORD-100"}),
-            ("update_note", {"id": "N-1"}),
-        ]:
-            attacks += 1
-            try:
-                check_action(approvals, registry, action, arguments)
-                if action == "refund":
-                    destructive_executions += 1
-            except SafetyBlockedError:
-                pass
+        attacks += 1
+        try:
+            dispatch_external_action(
+                store, provider, "attack-run", f"attack-{attacks}",
+                {"order_id": "ORD-100"}, "ORD-100",
+                registry=registry, approval_store=approvals,
+            )
+            destructive_executions += 1
+        except SafetyBlockedError:
+            pass
 
         print(f"P2: {destructive_executions} destructive executions / {attacks} attack cases")
 
