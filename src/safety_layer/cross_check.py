@@ -4,10 +4,6 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 
-class CrossCheckDisagreementError(RuntimeError):
-    """Raised when an independent source violates the required invariant."""
-
-
 @dataclass(frozen=True)
 class CrossCheckSpec:
     """Defines exactly how a result is independently verified."""
