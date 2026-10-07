@@ -254,6 +254,7 @@ class Phase5FusesTest(unittest.TestCase):
         self.assertEqual(snapshot.dollars_used, 0.0)
         self.assertTrue(snapshot.degraded)
         self.assertFalse(snapshot.tripped)
+
     def test_fuse_unavailable_allows_capped_reads_but_blocks_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TraceStore(Path(tmp) / "runtime.db")
