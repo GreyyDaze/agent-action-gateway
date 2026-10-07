@@ -304,12 +304,19 @@ def execute_tool(
         cross_check=cross_check,
     )
     trace_flags = suspicious_flags(empty_result=not bool(result))
-    status = honest_status(
+    phase6_status = honest_status(
         blocked=decision.decision != "CONTINUE",
         suspicious=bool(trace_flags),
     )
+    # Preserve the Phase 4/5 public status contract. Phase 6 evidence is
+    # exposed separately so observability does not silently change behavior.
+    if decision.decision == "CONTINUE":
+        status = "allowed"
+    else:
+        status = "stopped"
     return {
         "status": status,
+        "phase6_status": phase6_status,
         "decision": decision.decision,
         "result": result if decision.decision == "CONTINUE" else None,
         "flags": decision.flags,
