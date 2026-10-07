@@ -248,8 +248,7 @@ class Phase6FailureWallPersistenceTests(unittest.TestCase):
             merged = merge_failure_groups([first, second])
             store.save_group(merged)
 
-            split = split_failure_group(merged, [first.signature])
-            split.append(second)
+            split = split_failure_group(merged, [first.signature, second.signature])
             store.split(merged.group_id, split)
 
             self.assertEqual(FailureWallStore(path).get_group(merged.group_id).state, "split")
