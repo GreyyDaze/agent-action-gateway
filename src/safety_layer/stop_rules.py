@@ -4,7 +4,7 @@ LLM confidence is deliberately not used here. Decisions come from explicit
 runtime state, tool results, environment labels, and policy inputs.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 
