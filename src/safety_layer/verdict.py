@@ -41,6 +41,8 @@ def decide(summary: EvaluationSummary, *, lane: str, baseline_score: float) -> G
         runs_per_case=summary.runs_per_case,
         judge_version=summary.judge_version,
         judge_prompt_version=summary.judge_prompt_version,
+        judge_provider=summary.judge_provider,
+        judge_model=summary.judge_model,
         estimated_cost_usd=summary.estimated_cost_usd,
         runtime_minutes=summary.runtime_minutes,
         catastrophic_failure=summary.catastrophic_failure,
