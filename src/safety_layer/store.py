@@ -7,6 +7,7 @@ from .models import GateVerdict, Receipt, TraceEvent
 
 
 class TraceStore:
+    # Clarification state is persisted with the run to prevent safety-budget resets.
     """Durable SQLite store for the self-hosted single-node production path."""
 
     def __init__(self, path: str | Path = "data/runtime.db") -> None:
