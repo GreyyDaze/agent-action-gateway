@@ -23,6 +23,11 @@ from .stop_rules import (
 from .store import TraceStore
 
 
+def _persist_fuse(trace_store: TraceStore, run_id: str, fuse: FuseController | None) -> None:
+    if fuse is not None:
+        trace_store.record_fuse_snapshot(run_id, fuse.budget.snapshot())
+
+
 def run(
     agent_fn: Callable[[str], Any],
     task: str,
@@ -109,6 +114,7 @@ def run(
                 output = agent_fn(task)
     except FuseTrippedError as exc:
         trace_store.append_trace(TraceEvent(active_run_id, 1, "phase5.fuse", task, str(exc), "blocked"))
+        _persist_fuse(trace_store, active_run_id, fuse)
         return {
             "run_id": active_run_id,
             "output": None,
@@ -120,6 +126,7 @@ def run(
         trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, str(exc), "failed"))
         trace_store.append_receipt(active_run_id, f"RECEIPT run={active_run_id} status=failed")
         gate = evaluate(active_run_id, trace_store, score=0.0)
+        _persist_fuse(trace_store, active_run_id, fuse)
         return {
             "run_id": active_run_id,
             "output": None,
@@ -132,6 +139,7 @@ def run(
     trace_store.append_trace(TraceEvent(active_run_id, 2, "after", output, None, "completed"))
     trace_store.append_receipt(active_run_id, f"RECEIPT run={active_run_id} status=completed")
     gate = evaluate(active_run_id, trace_store)
+    _persist_fuse(trace_store, active_run_id, fuse)
     return {
         "run_id": active_run_id,
         "output": output,
