@@ -41,6 +41,29 @@ safety wall --db data/runtime.db
 
 The commands are thin interfaces over the existing implementation. Safety policy is not duplicated in the CLI.
 
+### Reproduce the phase proofs
+
+From the repository root after installation:
+
+~~~bash
+safety proof --jobs 1000
+~~~
+
+This runs the deterministic P1 crash proof and the P2-P6 proof suites. It prints one labeled proof result per phase and exits non-zero on failure.
+
+For individual proofs:
+
+~~~bash
+python -m safety_layer.phase1_proof --jobs 1000
+pytest -q tests/test_phase2.py
+pytest -q tests/test_phase3.py tests/test_phase3_gate.py
+pytest -q tests/test_phase4_stop_rules.py
+pytest -q tests/test_phase5_fuses.py
+pytest -q tests/test_phase6_final_proof.py tests/test_phase6_planted_failures.py tests/test_phase6_promotion_drill.py tests/test_phase6_trace.py
+~~~
+
+P3 semantic judge calibration is provider-dependent. The deterministic gate tests run without credentials; the hosted judge path is documented separately below.
+
 For the dashboard:
 
 ~~~bash
@@ -74,6 +97,21 @@ Run the phase-specific tests to reproduce the repository's proof evidence:
 
 The exact proof output belongs to the phase test/proof commands. Do not treat a green unit test as a stronger claim than the proof it actually runs.
 
+## SDK integration boundary
+
+The SDK entry point is intentionally small:
+
+~~~python
+from safety_layer import run
+
+result = run(agent, task)
+print(result["status"])
+~~~
+
+The \`agent\` callable is owned by your application. The safety layer receives the task, applies its deterministic runtime controls, records evidence, and evaluates the run. It does not own the agent's LLM provider or model loop.
+
+The current SDK is a lightweight wrapper around the existing runtime, not a universal agent framework. See \`docs/sdk.md\` for the supported boundary and current limitations.
+
 ## Scope and honest limits
 
 This tool does **not** claim:
@@ -85,7 +123,23 @@ This tool does **not** claim:
 - ownership of the external agent's LLM calls;
 - a large enterprise observability platform.
 
-Deferred work remains in `docs/PRD.md` and `docs/build-plan.md`.
+Deferred work is tracked in `ROADMAP.md`. The PRD and build plan remain the source of truth for requirements and phase order.
+
+## Dashboard
+
+Start the self-hosted dashboard against the same SQLite runtime database:
+
+~~~bash
+python -m safety_layer.dashboard --db data/runtime.db --host 127.0.0.1 --port 8000
+~~~
+
+The dashboard currently exposes:
+- persisted trace events and evidence per run;
+- pending approval queue with approve/deny actions;
+- gate verdict history;
+- persisted Phase 5 fuse counters when a run supplies a fuse.
+
+The JSON state is also available at \`/api/state\`.
 
 ## Fresh-install proof
 
