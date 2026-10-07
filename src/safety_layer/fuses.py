@@ -104,6 +104,20 @@ class FuseBudget:
             self._steps_used = next_steps
             self._dollars_used = next_dollars
 
+    def reconcile_cost(self, estimated_dollars: float, actual_dollars: float) -> None:
+        """Replace a pre-dispatch estimate with observed cost."""
+        if estimated_dollars < 0 or actual_dollars < 0:
+            raise ValueError("costs must be >= 0")
+        with self._lock:
+            self._dollars_used += actual_dollars - estimated_dollars
+            if self._dollars_used < 0:
+                self._dollars_used = 0.0
+            if (
+                self.limits.max_dollars is not None
+                and self._dollars_used > self.limits.max_dollars
+            ):
+                self._trip_locked("spend budget exhausted")
+
     def record_cost(self, dollars: float) -> None:
         """Record additional observed cost without allowing future dispatch."""
         if dollars < 0:
