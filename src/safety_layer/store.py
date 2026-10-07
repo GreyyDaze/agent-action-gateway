@@ -38,7 +38,9 @@ class TraceStore:
                     status TEXT NOT NULL,
                     flags_json TEXT NOT NULL DEFAULT '[]',
                     capture_class TEXT NOT NULL DEFAULT 'always',
-                    provider_metadata_json TEXT NOT NULL DEFAULT '{}'
+                    provider_metadata_json TEXT NOT NULL DEFAULT '{}',
+                    provider_evidence_json TEXT NOT NULL DEFAULT '{}',
+                    replay_of_trace_id INTEGER
                 );
                 """
             )
@@ -50,6 +52,8 @@ class TraceStore:
                 "flags_json": "ALTER TABLE trace_events ADD COLUMN flags_json TEXT NOT NULL DEFAULT '[]'",
                 "capture_class": "ALTER TABLE trace_events ADD COLUMN capture_class TEXT NOT NULL DEFAULT 'always'",
                 "provider_metadata_json": "ALTER TABLE trace_events ADD COLUMN provider_metadata_json TEXT NOT NULL DEFAULT '{}'",
+                "provider_evidence_json": "ALTER TABLE trace_events ADD COLUMN provider_evidence_json TEXT NOT NULL DEFAULT '{}'",
+                "replay_of_trace_id": "ALTER TABLE trace_events ADD COLUMN replay_of_trace_id INTEGER",
             }
             for name, statement in migrations.items():
                 if name not in columns:
@@ -93,8 +97,9 @@ class TraceStore:
                 """
                 INSERT INTO trace_events(
                     run_id, step, event, input_json, output_json, status,
-                    flags_json, capture_class, provider_metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    flags_json, capture_class, provider_metadata_json,
+                    provider_evidence_json, replay_of_trace_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.run_id,
@@ -106,8 +111,39 @@ class TraceStore:
                     json.dumps(list(event.flags), sort_keys=True),
                     event.capture_class,
                     json.dumps(redact(event.provider_metadata or {}), sort_keys=True),
+                    json.dumps(redact(event.provider_evidence or {}), sort_keys=True),
+                    event.replay_of_trace_id,
                 ),
             )
+            return int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+    def append_replay(self, original_trace_id: int, event: TraceEvent) -> int:
+        """Append a new trace linked to an original trace without mutating it."""
+        if event.replay_of_trace_id is not None:
+            raise ValueError("replay event already has a replay source")
+        if self._trace_row(original_trace_id) is None:
+            raise KeyError(f"unknown trace: {original_trace_id}")
+        return self.append_trace(
+            TraceEvent(
+                run_id=event.run_id,
+                step=event.step,
+                event=event.event,
+                input=event.input,
+                output=event.output,
+                status=event.status,
+                flags=event.flags,
+                capture_class=event.capture_class,
+                provider_metadata=event.provider_metadata,
+                provider_evidence=event.provider_evidence,
+                replay_of_trace_id=original_trace_id,
+            )
+        )
+
+    def _trace_row(self, trace_id: int) -> sqlite3.Row | None:
+        with self._connect() as connection:
+            return connection.execute(
+                "SELECT * FROM trace_events WHERE id = ?", (trace_id,)
+            ).fetchone()
 
     def load_clarification_state(self, run_id: str) -> dict[str, Any] | None:
         """Load persisted Phase 4 clarification state for a run."""
@@ -205,6 +241,8 @@ class TraceStore:
             trace["output"] = json.loads(trace.pop("output_json"))
             trace["flags"] = json.loads(trace.pop("flags_json", "[]"))
             trace["provider_metadata"] = json.loads(trace.pop("provider_metadata_json", "{}"))
+            trace["provider_evidence"] = json.loads(trace.pop("provider_evidence_json", "{}"))
+            trace["replay_of_trace_id"] = trace.pop("replay_of_trace_id", None)
             traces.append(trace)
 
         return {"traces": traces, "receipts": receipts, "gate_verdicts": gates}
