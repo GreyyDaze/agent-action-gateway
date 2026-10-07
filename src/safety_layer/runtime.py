@@ -13,6 +13,7 @@ from .safety import check_action
 from .stop_rules import (
     AmbiguityBlockedError,
     ClarificationState,
+    ResultDecision,
     StopPolicy,
     enforce_environment,
     validate_required_input,
