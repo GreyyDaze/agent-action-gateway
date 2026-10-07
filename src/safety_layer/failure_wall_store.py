@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
 
@@ -74,7 +73,7 @@ class FailureWallStore:
         """Create or replace one complete group and its evidence records."""
         with self._connect() as connection:
             connection.execute(
-                """
+            """
                 INSERT INTO failure_groups(
                     group_id, error_type, failing_step, config_fingerprint,
                     state, ownership
@@ -86,8 +85,8 @@ class FailureWallStore:
                     state=excluded.state,
                     ownership=excluded.ownership,
                     updated_at=CURRENT_TIMESTAMP
-                """,
-                (
+            """,
+            (
                     group.group_id,
                     group.signature.error_type,
                     group.signature.failing_step,
@@ -101,13 +100,13 @@ class FailureWallStore:
                 (group.group_id,),
             )
             connection.executemany(
-                """
+            """
                 INSERT INTO failure_records(
                     group_id, trace_id, run_id, step, event, status,
                     error_type, failing_step, config_fingerprint, flags_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
+            """,
+            [
                     (
                         group.group_id,
                         record.trace_id,
@@ -120,9 +119,9 @@ class FailureWallStore:
                         record.config_fingerprint,
                         json.dumps(list(record.flags), sort_keys=True),
                     )
-                    for record in group.records
-                ],
-            )
+                for record in group.records
+            ],
+        )
 
     def save_groups(self, groups: Iterable[FailureGroup]) -> None:
         for group in groups:
