@@ -10,6 +10,9 @@ class TraceEvent:
     input: Any
     output: Any
     status: str
+    flags: tuple[str, ...] = ()
+    capture_class: str = "always"
+    provider_metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
