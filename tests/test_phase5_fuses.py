@@ -3,9 +3,12 @@ import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 from safety_layer.fuses import FuseBudget, FuseController, FuseLimits, FuseTrippedError
-from safety_layer.runtime import execute_tool, run
+from safety_layer.locks import ApprovalStore, RiskRegistry
+from safety_layer.mock_provider import MockPaymentProvider
+from safety_layer.runtime import dispatch_external_action, execute_tool, run
 from safety_layer.store import TraceStore
 
 
@@ -187,6 +190,70 @@ class Phase5FusesTest(unittest.TestCase):
         self.assertFalse(detector.observe("lookup", {"id": "C-1"}))
         self.assertTrue(detector.observe("lookup", {"id": "C-1"}))
 
+    def test_unavailable_fuse_blocks_real_external_write_before_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            approvals = ApprovalStore(store)
+            registry = RiskRegistry()
+            registry.register("refund", "destructive")
+            arguments = {"order_id": "ORD-100", "amount": 400}
+            approval = approvals.create(
+                "refund", arguments, "human-1",
+                datetime.now(timezone.utc) + timedelta(days=1),
+            )
+            provider = MockPaymentProvider(dedupe=True)
+            fuse = FuseController(FuseBudget())
+            fuse.mark_unavailable()
+
+            with self.assertRaisesRegex(FuseTrippedError, "writes fail closed"):
+                dispatch_external_action(
+                    store, provider, "run-real-action", "step-1",
+                    arguments, "ORD-100",
+                    registry=registry, approval_store=approvals,
+                    approval_id=approval.approval_id, fuse=fuse,
+                )
+
+            self.assertEqual(provider.refunds, [])
+            self.assertIsNone(approvals.get(approval.approval_id).consumed_at)
+
+    def test_available_fuse_allows_real_external_write_and_counts_step(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            approvals = ApprovalStore(store)
+            registry = RiskRegistry()
+            registry.register("refund", "destructive")
+            arguments = {"order_id": "ORD-101", "amount": 200}
+            approval = approvals.create(
+                "refund", arguments, "human-1",
+                datetime.now(timezone.utc) + timedelta(days=1),
+            )
+            provider = MockPaymentProvider(dedupe=True)
+            fuse = FuseController(FuseBudget(FuseLimits(max_steps=1)))
+
+            result = dispatch_external_action(
+                store, provider, "run-real-action", "step-1",
+                arguments, "ORD-101",
+                registry=registry, approval_store=approvals,
+                approval_id=approval.approval_id, fuse=fuse,
+            )
+
+            self.assertTrue(result.startswith("mock-"))
+            self.assertEqual(len(provider.refunds), 1)
+            snapshot = fuse.snapshot()
+            self.assertEqual(snapshot.steps_used, 1)
+            self.assertFalse(snapshot.degraded)
+            self.assertFalse(snapshot.tripped)
+
+    def test_degraded_counter_visibility_reports_controller_state(self) -> None:
+        fuse = FuseController(FuseBudget(FuseLimits(degraded_read_steps=2)))
+        fuse.mark_unavailable()
+
+        snapshot = fuse.snapshot()
+
+        self.assertEqual(snapshot.steps_used, 0)
+        self.assertEqual(snapshot.dollars_used, 0.0)
+        self.assertTrue(snapshot.degraded)
+        self.assertFalse(snapshot.tripped)
     def test_fuse_unavailable_allows_capped_reads_but_blocks_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TraceStore(Path(tmp) / "runtime.db")
