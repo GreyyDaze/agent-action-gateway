@@ -8,7 +8,6 @@ from safety_layer.stop_rules import (
     CrossEnvironmentError,
     StopPolicy,
     enforce_environment,
-    CrossEnvironmentError,
 )
 from safety_layer.locks import ApprovalStore, RiskRegistry
 from safety_layer.mock_provider import MockPaymentProvider
