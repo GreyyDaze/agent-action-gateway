@@ -9,14 +9,50 @@ from .models import TraceEvent
 from .provider import RefundProvider
 from .receipts import execute_side_effect, resolve_unknown
 from .safety import check_action
-from .stop_rules import enforce_environment
+from .stop_rules import (
+    AmbiguityBlockedError,
+    ClarificationState,
+    StopPolicy,
+    enforce_environment,
+    validate_required_input,
+)
 from .store import TraceStore
 
 
-def run(agent_fn: Callable[[str], Any], task: str, store: TraceStore | None = None) -> dict[str, Any]:
+def run(
+    agent_fn: Callable[[str], Any],
+    task: str,
+    store: TraceStore | None = None,
+    *,
+    clarification_state: ClarificationState | None = None,
+    required_inputs: dict[str, Any] | None = None,
+    batch: bool = False,
+) -> dict[str, Any]:
     """Phase 0-compatible agent shell; the external agent remains outside the layer."""
     trace_store = store or TraceStore()
     run_id = str(uuid4())
+    stop_policy = StopPolicy()
+    clarification_state = clarification_state or ClarificationState()
+    if required_inputs is not None:
+        try:
+            proposal = validate_required_input(
+                stop_policy, clarification_state, required_inputs, batch=batch
+            )
+        except AmbiguityBlockedError as exc:
+            trace_store.append_trace(
+                TraceEvent(run_id, 0, "phase4", task, str(exc), "blocked")
+            )
+            return {"run_id": run_id, "output": None, "status": "blocked", "reason": str(exc)}
+        if proposal.decision == "ASK":
+            trace_store.append_trace(
+                TraceEvent(run_id, 0, "phase4", task, proposal.missing_fields, "ask")
+            )
+            return {
+                "run_id": run_id,
+                "output": None,
+                "status": "needs_clarification",
+                "missing_fields": proposal.missing_fields,
+            }
 
     trace_store.append_trace(TraceEvent(run_id, 0, "before", task, None, "started"))
     try:
