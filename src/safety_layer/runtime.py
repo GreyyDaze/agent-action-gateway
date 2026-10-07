@@ -4,6 +4,7 @@ from typing import Any
 from uuid import uuid4
 
 from .cross_check import CrossCheckSpec, perform_cross_check
+from .fuses import FuseController, FuseTrippedError
 from .gate import evaluate
 from .locks import ApprovalStore, RiskRegistry
 from .models import TraceEvent
@@ -31,6 +32,7 @@ def run(
     required_inputs: dict[str, Any] | None = None,
     batch: bool = False,
     new_turn: bool = False,
+    fuse: FuseController | None = None,
 ) -> dict[str, Any]:
     """Run the agent with durable Phase 4 clarification state."""
     trace_store = store or TraceStore()
@@ -84,6 +86,20 @@ def run(
             }
 
     trace_store.append_trace(TraceEvent(active_run_id, 0, "before", task, None, "started"))
+    if fuse is not None:
+        try:
+            fuse.budget.check()
+        except FuseTrippedError as exc:
+            trace_store.append_trace(
+                TraceEvent(active_run_id, 0, "phase5.fuse", task, str(exc), "blocked")
+            )
+            return {
+                "run_id": active_run_id,
+                "output": None,
+                "status": "blocked",
+                "reason": str(exc),
+                "attempt": clarification_state.attempts,
+            }
     try:
         output = agent_fn(task)
     except Exception as exc:
@@ -200,8 +216,36 @@ def execute_tool(
     high_stakes: bool = False,
     batch: bool = False,
     cross_check: CrossCheckSpec | None = None,
+    fuse: FuseController | None = None,
+    action: str | None = None,
+    arguments: dict[str, Any] | None = None,
+    estimated_cost_usd: float = 0.0,
+    actual_cost_usd: float | None = None,
+    new_information: bool = False,
+    state_changed: bool = False,
 ) -> dict[str, Any]:
-    """Execute one external tool call and enforce Phase 4 on its result."""
+    """Execute one external tool call through the Phase 5 boundary, then apply Phase 4."""
+    if fuse is not None:
+        try:
+            fuse.before_dispatch(
+                action or task,
+                arguments or {},
+                estimated_cost_usd=estimated_cost_usd,
+                new_information=new_information,
+                state_changed=state_changed,
+            )
+        except FuseTrippedError as exc:
+            store.append_trace(
+                TraceEvent(
+                    run_id,
+                    3,
+                    "phase5.fuse",
+                    task,
+                    str(exc),
+                    "blocked",
+                )
+            )
+            return {"status": "blocked", "decision": "FUSE", "result": None, "error": str(exc)}
     try:
         result = tool_fn()
     except Exception as exc:
@@ -216,6 +260,15 @@ def execute_tool(
             )
         )
         return {"status": "blocked", "decision": "BLOCK", "result": None, "error": str(exc)}
+
+    if fuse is not None and actual_cost_usd is not None:
+        try:
+            fuse.budget.record_cost(actual_cost_usd - estimated_cost_usd)
+        except FuseTrippedError as exc:
+            store.append_trace(
+                TraceEvent(run_id, 3, "phase5.fuse", task, str(exc), "blocked")
+            )
+            return {"status": "blocked", "decision": "FUSE", "result": None, "error": str(exc)}
 
     decision = evaluate_tool_result(
         store,
@@ -252,10 +305,23 @@ def dispatch_external_action(
     now: datetime | None = None,
     session_environment: str = "prod",
     target_environment: str | None = None,
+    fuse: FuseController | None = None,
+    estimated_cost_usd: float = 0.0,
+    actual_cost_usd: float | None = None,
+    new_information: bool = False,
+    state_changed: bool = False,
 ) -> str:
     """Authorize a proposed action, then execute it through the durable receipt boundary."""
     if registry is None or approval_store is None:
         raise RuntimeError("Phase 2 safety policy is required for external action dispatch")
+    if fuse is not None:
+        fuse.before_dispatch(
+            action,
+            arguments,
+            estimated_cost_usd=estimated_cost_usd,
+            new_information=new_information,
+            state_changed=state_changed,
+        )
     enforce_environment(session_environment, target_environment or session_environment)
     check_action(
         approval_store,
@@ -266,7 +332,10 @@ def dispatch_external_action(
         current_state=current_state,
         now=now,
     )
-    return execute_side_effect(store, provider, run_id, step_id, arguments, order_id)
+    result = execute_side_effect(store, provider, run_id, step_id, arguments, order_id)
+    if fuse is not None and actual_cost_usd is not None:
+        fuse.budget.record_cost(actual_cost_usd - estimated_cost_usd)
+    return result
 
 
 def recover_external_actions(store: TraceStore, provider: RefundProvider) -> int:
