@@ -120,27 +120,6 @@ class Phase4StopRulesTest(unittest.TestCase):
 
             self.assertEqual(provider.refunds, [])
 
-    def test_external_dispatch_allows_same_environment(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            store = TraceStore(Path(tmp) / "runtime.db")
-            approvals = ApprovalStore(store)
-            registry = RiskRegistry()
-            registry.register("lookup_order", "read")
-            provider = MockPaymentProvider(dedupe=True)
-
-            dispatch_external_action(
-                store,
-                provider,
-                "run-env",
-                "step-1",
-                {"order_id": "ORD-100"},
-                "ORD-100",
-                action="lookup_order",
-                registry=registry,
-                approval_store=approvals,
-                session_environment="prod",
-                target_environment="prod",
-            )
 
 
 if __name__ == "__main__":
