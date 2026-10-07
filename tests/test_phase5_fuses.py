@@ -141,13 +141,14 @@ class Phase5FusesTest(unittest.TestCase):
     def test_run_is_blocked_if_wall_clock_budget_is_already_exhausted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TraceStore(Path(tmp) / "runtime.db")
-            now = [10.0]
+            now = [0.0]
             fuse = FuseController(
                 FuseBudget(
                     FuseLimits(max_wall_seconds=10.0),
                     clock=lambda: now[0],
                 )
             )
+            now[0] = 10.0
             calls = []
 
             result = run(
