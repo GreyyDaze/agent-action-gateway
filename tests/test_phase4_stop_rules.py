@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from safety_layer.cross_check import CrossCheckSpec, perform_cross_check
 from safety_layer.runtime import run
 from safety_layer.stop_rules import (
     AmbiguityBlockedError,
@@ -83,6 +84,76 @@ class Phase4StopRulesTest(unittest.TestCase):
 
         decision = self.policy.high_stakes_read(second_source_confirmed=True)
         self.assertEqual(decision.decision, "CONTINUE")
+
+    def test_cross_check_runs_second_source_and_records_invariant(self) -> None:
+        calls = []
+
+        spec = CrossCheckSpec(
+            first_source="primary-db",
+            second_source="replica-db",
+            invariant_name="same-record-set",
+            second_source_fn=lambda: calls.append("second") or {"records": []},
+            invariant=lambda first, second: first == second,
+        )
+
+        result = perform_cross_check({"records": []}, spec)
+
+        self.assertEqual(calls, ["second"])
+        self.assertTrue(result.agrees)
+        self.assertEqual(result.flags, ("cross-check-agreement",))
+        self.assertEqual(result.invariant_name, "same-record-set")
+
+    def test_cross_check_disagreement_requires_stop(self) -> None:
+        spec = CrossCheckSpec(
+            first_source="primary-db",
+            second_source="audit-db",
+            invariant_name="same-record-set",
+            second_source_fn=lambda: {"records": [{"id": "ORD-100"}]},
+            invariant=lambda first, second: first == second,
+        )
+
+        result = perform_cross_check({"records": []}, spec)
+        decision = self.policy.cross_check_result(result)
+
+        self.assertFalse(result.agrees)
+        self.assertEqual(decision.decision, "ASK")
+        self.assertIn("cross-check-disagreement", decision.flags)
+
+    def test_clarification_state_survives_run_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            first = run(
+                lambda task: "should not execute",
+                "refund request",
+                store,
+                run_id="resume-1",
+                required_inputs={"order_id": None},
+            )
+            self.assertEqual(first["status"], "needs_clarification")
+
+            second = run(
+                lambda task: "should not execute",
+                "refund request",
+                store,
+                run_id="resume-1",
+                required_inputs={"order_id": None},
+                new_turn=True,
+            )
+            self.assertEqual(second["status"], "needs_clarification")
+            self.assertEqual(second["attempt"], 2)
+
+            persisted = store.load_clarification_state("resume-1")
+            self.assertEqual(persisted["attempts"], 2)
+
+            third = run(
+                lambda task: "executed only after best effort",
+                "refund request",
+                store,
+                run_id="resume-1",
+                required_inputs={"order_id": None},
+                new_turn=True,
+            )
+            self.assertEqual(third["status"], "completed")
 
     def test_environment_mismatch_is_blocked(self) -> None:
         with self.assertRaises(CrossEnvironmentError):
