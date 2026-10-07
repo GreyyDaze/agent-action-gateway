@@ -189,6 +189,53 @@ def evaluate_tool_result(
     return decision
 
 
+
+def execute_tool(
+    store: TraceStore,
+    run_id: str,
+    task: str,
+    tool_fn: Callable[[], Mapping[str, Any]],
+    *,
+    required_fields: tuple[str, ...] = (),
+    high_stakes: bool = False,
+    batch: bool = False,
+    cross_check: CrossCheckSpec | None = None,
+) -> dict[str, Any]:
+    """Execute one external tool call and enforce Phase 4 on its result."""
+    try:
+        result = tool_fn()
+    except Exception as exc:
+        store.append_trace(
+            TraceEvent(
+                run_id,
+                3,
+                "phase4.tool_result",
+                task,
+                {"decision": "BLOCK", "flags": ("tool-error",), "error": str(exc)},
+                "blocked",
+            )
+        )
+        return {"status": "blocked", "decision": "BLOCK", "result": None, "error": str(exc)}
+
+    decision = evaluate_tool_result(
+        store,
+        run_id,
+        task,
+        result,
+        required_fields=required_fields,
+        high_stakes=high_stakes,
+        batch=batch,
+        cross_check=cross_check,
+    )
+    return {
+        "status": "allowed" if decision.decision == "CONTINUE" else "stopped",
+        "decision": decision.decision,
+        "result": result if decision.decision == "CONTINUE" else None,
+        "flags": decision.flags,
+        "missing": decision.missing,
+        "cross_check_required": decision.cross_check_required,
+    }
+
 def dispatch_external_action(
     store: TraceStore,
     provider: RefundProvider,
