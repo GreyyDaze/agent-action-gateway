@@ -1,25 +1,31 @@
 """Deterministic Phase 5 execution fuses.
 
-Fuses are deliberately local and deterministic. They sit on the action
-boundary and never try to judge the agent's goal.
+Fuses are local, deterministic circuit breakers at the action boundary.
+They enforce budgets before dispatch and never judge the agent's goal.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import signal
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
 
 class FuseError(RuntimeError):
-    """Base error for a fuse decision that blocks execution."""
+    """Base error for a fuse decision."""
 
 
 class FuseTrippedError(FuseError):
-    """Raised when a run cannot dispatch another action."""
+    """Raised when a run cannot safely continue."""
+
+
+class FuseUnavailableError(FuseError):
+    """Raised when the fuse service is unavailable."""
 
 
 @dataclass(frozen=True)
@@ -28,6 +34,7 @@ class FuseLimits:
     max_wall_seconds: float | None = None
     max_dollars: float | None = None
     loop_repeat_limit: int = 3
+    degraded_read_steps: int = 10
 
     def __post_init__(self) -> None:
         if self.max_steps is not None and self.max_steps < 0:
@@ -38,6 +45,8 @@ class FuseLimits:
             raise ValueError("max_dollars must be >= 0")
         if self.loop_repeat_limit < 2:
             raise ValueError("loop_repeat_limit must be >= 2")
+        if self.degraded_read_steps < 0:
+            raise ValueError("degraded_read_steps must be >= 0")
 
 
 @dataclass(frozen=True)
@@ -46,22 +55,14 @@ class FuseSnapshot:
     dollars_used: float
     elapsed_seconds: float
     tripped: bool
+    degraded: bool
     reason: str | None
 
 
 class FuseBudget:
-    """In-process atomic budget for one run.
+    """In-process atomic budget for one run."""
 
-    The lock protects the read-modify-write operation so concurrent callers
-    sharing this budget cannot both consume the same remaining capacity.
-    """
-
-    def __init__(
-        self,
-        limits: FuseLimits | None = None,
-        *,
-        clock: Any = time.monotonic,
-    ) -> None:
+    def __init__(self, limits: FuseLimits | None = None, *, clock: Any = time.monotonic) -> None:
         self.limits = limits or FuseLimits()
         self._clock = clock
         self._started_at = clock()
@@ -71,65 +72,47 @@ class FuseBudget:
         self._lock = threading.Lock()
 
     def check(self) -> None:
-        """Check limits without consuming a step or dispatching an action."""
         with self._lock:
             self._check_locked()
 
     def consume_step(self, estimated_cost_usd: float = 0.0) -> None:
-        """Atomically reserve one action and its estimated spend.
-
-        Reservation happens before dispatch. Therefore a rejected action never
-        reaches the external tool.
-        """
         if estimated_cost_usd < 0:
             raise ValueError("estimated_cost_usd must be >= 0")
-
         with self._lock:
             self._check_locked()
-
             next_steps = self._steps_used + 1
             next_dollars = self._dollars_used + estimated_cost_usd
-
-            if (
-                self.limits.max_steps is not None
-                and next_steps > self.limits.max_steps
-            ):
+            if self.limits.max_steps is not None and next_steps > self.limits.max_steps:
                 self._trip_locked("step budget exhausted")
-            if (
-                self.limits.max_dollars is not None
-                and next_dollars > self.limits.max_dollars
-            ):
+            if self.limits.max_dollars is not None and next_dollars > self.limits.max_dollars:
                 self._trip_locked("spend budget exhausted")
-
             self._steps_used = next_steps
             self._dollars_used = next_dollars
 
     def reconcile_cost(self, estimated_dollars: float, actual_dollars: float) -> None:
-        """Replace a pre-dispatch estimate with observed cost."""
         if estimated_dollars < 0 or actual_dollars < 0:
             raise ValueError("costs must be >= 0")
         with self._lock:
             self._dollars_used += actual_dollars - estimated_dollars
-            if self._dollars_used < 0:
-                self._dollars_used = 0.0
-            if (
-                self.limits.max_dollars is not None
-                and self._dollars_used > self.limits.max_dollars
-            ):
+            self._dollars_used = max(0.0, self._dollars_used)
+            if self.limits.max_dollars is not None and self._dollars_used > self.limits.max_dollars:
                 self._trip_locked("spend budget exhausted")
 
     def record_cost(self, dollars: float) -> None:
-        """Record additional observed cost without allowing future dispatch."""
         if dollars < 0:
             raise ValueError("dollars must be >= 0")
-
         with self._lock:
             self._dollars_used += dollars
-            if (
-                self.limits.max_dollars is not None
-                and self._dollars_used > self.limits.max_dollars
-            ):
+            if self.limits.max_dollars is not None and self._dollars_used > self.limits.max_dollars:
                 self._trip_locked("spend budget exhausted")
+
+    def trip(self, reason: str) -> None:
+        """Trip the fuse without taking a lock.
+
+        Used by the signal handler because Python signal handlers must not
+        acquire threading locks.
+        """
+        self._tripped_reason = reason
 
     def snapshot(self) -> FuseSnapshot:
         with self._lock:
@@ -138,30 +121,19 @@ class FuseBudget:
                 dollars_used=self._dollars_used,
                 elapsed_seconds=self._clock() - self._started_at,
                 tripped=self._tripped_reason is not None,
+                degraded=False,
                 reason=self._tripped_reason,
             )
 
     def _check_locked(self) -> None:
         if self._tripped_reason is not None:
             raise FuseTrippedError(self._tripped_reason)
-
         elapsed = self._clock() - self._started_at
-        if (
-            self.limits.max_wall_seconds is not None
-            and elapsed >= self.limits.max_wall_seconds
-        ):
+        if self.limits.max_wall_seconds is not None and elapsed >= self.limits.max_wall_seconds:
             self._trip_locked("wall-clock budget exhausted")
-
-        if (
-            self.limits.max_steps is not None
-            and self._steps_used >= self.limits.max_steps
-        ):
+        if self.limits.max_steps is not None and self._steps_used >= self.limits.max_steps:
             self._trip_locked("step budget exhausted")
-
-        if (
-            self.limits.max_dollars is not None
-            and self._dollars_used >= self.limits.max_dollars
-        ):
+        if self.limits.max_dollars is not None and self._dollars_used >= self.limits.max_dollars:
             self._trip_locked("spend budget exhausted")
 
     def _trip_locked(self, reason: str) -> None:
@@ -170,12 +142,7 @@ class FuseBudget:
 
 
 class LoopDetector:
-    """Detect repeated identical actions that make no progress.
-
-    Progress is explicit: either new information arrived or external state
-    changed. Different action arguments produce different fingerprints, which
-    keeps normal pagination from looking like a loop.
-    """
+    """Detect repeated actions without explicit progress."""
 
     def __init__(self, repeat_limit: int = 3) -> None:
         if repeat_limit < 2:
@@ -183,6 +150,7 @@ class LoopDetector:
         self.repeat_limit = repeat_limit
         self._last_fingerprint: str | None = None
         self._stalled_repeats = 0
+        self._lock = threading.Lock()
 
     @staticmethod
     def fingerprint(action: str, arguments: dict[str, Any]) -> str:
@@ -203,23 +171,21 @@ class LoopDetector:
         state_changed: bool = False,
     ) -> bool:
         fingerprint = self.fingerprint(action, arguments)
-
-        if new_information or state_changed:
-            self._last_fingerprint = fingerprint
-            self._stalled_repeats = 0
-            return False
-
-        if fingerprint == self._last_fingerprint:
-            self._stalled_repeats += 1
-        else:
-            self._last_fingerprint = fingerprint
-            self._stalled_repeats = 1
-
-        return self._stalled_repeats >= self.repeat_limit
+        with self._lock:
+            if new_information or state_changed:
+                self._last_fingerprint = fingerprint
+                self._stalled_repeats = 0
+                return False
+            if fingerprint == self._last_fingerprint:
+                self._stalled_repeats += 1
+            else:
+                self._last_fingerprint = fingerprint
+                self._stalled_repeats = 1
+            return self._stalled_repeats >= self.repeat_limit
 
 
 class FuseController:
-    """Combines budget enforcement and loop detection at an action boundary."""
+    """Budget, loop, deadline, and availability policy at one action boundary."""
 
     def __init__(
         self,
@@ -228,9 +194,27 @@ class FuseController:
         loop_detector: LoopDetector | None = None,
     ) -> None:
         self.budget = budget
-        self.loop_detector = loop_detector or LoopDetector(
-            budget.limits.loop_repeat_limit
-        )
+        self.loop_detector = loop_detector or LoopDetector(budget.limits.loop_repeat_limit)
+        self._available = True
+        self._degraded_reads_used = 0
+        self._availability_lock = threading.Lock()
+
+    @property
+    def degraded(self) -> bool:
+        return not self._available
+
+    def mark_unavailable(self) -> None:
+        with self._availability_lock:
+            self._available = False
+
+    def restore(self) -> None:
+        with self._availability_lock:
+            self._available = True
+            self._degraded_reads_used = 0
+
+    def _is_available(self) -> bool:
+        with self._availability_lock:
+            return self._available
 
     def before_dispatch(
         self,
@@ -240,10 +224,18 @@ class FuseController:
         estimated_cost_usd: float = 0.0,
         new_information: bool = False,
         state_changed: bool = False,
+        write: bool = False,
     ) -> None:
-        """Run the complete local fuse check before external dispatch."""
-        self.budget.check()
+        if not self._is_available():
+            if write:
+                raise FuseTrippedError("fuse unavailable: writes fail closed")
+            with self._availability_lock:
+                if self._degraded_reads_used >= self.budget.limits.degraded_read_steps:
+                    raise FuseTrippedError("fuse unavailable: degraded read cap exhausted")
+                self._degraded_reads_used += 1
+            return
 
+        self.budget.check()
         if self.loop_detector.observe(
             action,
             arguments,
@@ -251,5 +243,39 @@ class FuseController:
             state_changed=state_changed,
         ):
             raise FuseTrippedError("loop detected: repeated action made no progress")
-
         self.budget.consume_step(estimated_cost_usd)
+
+    @contextmanager
+    def deadline_guard(self) -> Iterator[None]:
+        """Interrupt a long-running Python call at the wall-clock deadline.
+
+        Unix main-thread only. Normal action-boundary checks remain the
+        portable enforcement mechanism for other execution contexts.
+        """
+        limit = self.budget.limits.max_wall_seconds
+        if limit is None:
+            yield
+            return
+        if threading.current_thread() is not threading.main_thread() or not hasattr(signal, "SIGALRM"):
+            yield
+            return
+
+        remaining = limit - (self.budget._clock() - self.budget._started_at)
+        if remaining <= 0:
+            self.budget.trip("wall-clock budget exhausted")
+            raise FuseTrippedError("wall-clock budget exhausted")
+
+        previous_handler = signal.getsignal(signal.SIGALRM)
+
+        def handle_timeout(_signum: int, _frame: Any) -> None:
+            self.budget.trip("wall-clock budget exhausted")
+            raise FuseTrippedError("wall-clock budget exhausted")
+
+        previous_timer = signal.getitimer(signal.ITIMER_REAL)
+        signal.signal(signal.SIGALRM, handle_timeout)
+        signal.setitimer(signal.ITIMER_REAL, remaining)
+        try:
+            yield
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
+            signal.signal(signal.SIGALRM, previous_handler)
