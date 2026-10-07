@@ -87,6 +87,15 @@ class TraceStore:
                     max_attempts INTEGER NOT NULL,
                     asked_this_turn INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS run_budgets (
+                    run_id TEXT PRIMARY KEY,
+                    steps_used INTEGER NOT NULL,
+                    dollars_used REAL NOT NULL,
+                    elapsed_seconds REAL NOT NULL,
+                    tripped INTEGER NOT NULL,
+                    degraded INTEGER NOT NULL,
+                    reason TEXT
+                );
                 """
             )
 
@@ -246,6 +255,60 @@ class TraceStore:
             traces.append(trace)
 
         return {"traces": traces, "receipts": receipts, "gate_verdicts": gates}
+
+    def record_fuse_snapshot(self, run_id: str, snapshot: Any) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO run_budgets(
+                    run_id, steps_used, dollars_used, elapsed_seconds,
+                    tripped, degraded, reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    steps_used=excluded.steps_used,
+                    dollars_used=excluded.dollars_used,
+                    elapsed_seconds=excluded.elapsed_seconds,
+                    tripped=excluded.tripped,
+                    degraded=excluded.degraded,
+                    reason=excluded.reason
+                """,
+                (
+                    run_id,
+                    int(snapshot.steps_used),
+                    float(snapshot.dollars_used),
+                    float(snapshot.elapsed_seconds),
+                    int(bool(snapshot.tripped)),
+                    int(bool(snapshot.degraded)),
+                    snapshot.reason,
+                ),
+            )
+
+    def dashboard_snapshot(self) -> dict[str, Any]:
+        snapshot = self.snapshot()
+        runs_by_id: dict[str, dict[str, Any]] = {}
+        for trace in snapshot["traces"]:
+            run = runs_by_id.setdefault(
+                trace["run_id"],
+                {"run_id": trace["run_id"], "status": trace["status"]},
+            )
+            if trace["status"] in {"failed", "blocked"}:
+                run["status"] = trace["status"]
+        with self._connect() as connection:
+            budgets = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT run_id, steps_used, dollars_used, elapsed_seconds, tripped, degraded, reason "
+                    "FROM run_budgets ORDER BY run_id"
+                )
+            ]
+        for budget in budgets:
+            budget["tripped"] = bool(budget["tripped"])
+            budget["degraded"] = bool(budget["degraded"])
+        return {
+            **snapshot,
+            "runs": list(runs_by_id.values()),
+            "budgets": budgets,
+        }
 
     def append_gate(self, verdict: GateVerdict) -> None:
         with self._connect() as connection:
