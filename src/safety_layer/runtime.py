@@ -9,6 +9,7 @@ from .models import TraceEvent
 from .provider import RefundProvider
 from .receipts import execute_side_effect, resolve_unknown
 from .safety import check_action
+from .stop_rules import enforce_environment
 from .store import TraceStore
 
 
@@ -47,10 +48,13 @@ def dispatch_external_action(
     approval_id: str | None = None,
     current_state: Any | None = None,
     now: datetime | None = None,
+    session_environment: str = "prod",
+    target_environment: str | None = None,
 ) -> str:
     """Authorize a proposed action, then execute it through the durable receipt boundary."""
     if registry is None or approval_store is None:
         raise RuntimeError("Phase 2 safety policy is required for external action dispatch")
+    enforce_environment(session_environment, target_environment or session_environment)
     check_action(
         approval_store,
         registry,
