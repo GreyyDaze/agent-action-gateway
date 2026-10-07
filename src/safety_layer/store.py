@@ -109,6 +109,43 @@ class TraceStore:
                 ),
             )
 
+    def load_clarification_state(self, run_id: str) -> dict[str, Any] | None:
+        """Load persisted Phase 4 clarification state for a run."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT attempts, max_attempts, asked_this_turn "
+                "FROM clarification_states WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "attempts": row["attempts"],
+            "max_attempts": row["max_attempts"],
+            "asked_this_turn": bool(row["asked_this_turn"]),
+        }
+
+    def save_clarification_state(self, run_id: str, state: Any) -> None:
+        """Persist Phase 4 clarification state atomically for a run."""
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO clarification_states(
+                    run_id, attempts, max_attempts, asked_this_turn
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    attempts=excluded.attempts,
+                    max_attempts=excluded.max_attempts,
+                    asked_this_turn=excluded.asked_this_turn
+                """,
+                (
+                    run_id,
+                    int(state.attempts),
+                    int(state.max_attempts),
+                    int(bool(state.asked_this_turn)),
+                ),
+            )
+
     def append_receipt(self, run_id: str, line: str) -> None:
         """Append a legacy audit receipt without reusing a unique intent key."""
         intent_key = f"phase0:{run_id}:{uuid4()}"
