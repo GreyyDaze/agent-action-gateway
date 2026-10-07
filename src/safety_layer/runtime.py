@@ -26,51 +26,89 @@ def run(
     task: str,
     store: TraceStore | None = None,
     *,
+    run_id: str | None = None,
     clarification_state: ClarificationState | None = None,
     required_inputs: dict[str, Any] | None = None,
     batch: bool = False,
+    new_turn: bool = False,
 ) -> dict[str, Any]:
-    """Phase 4 runtime shell; the external agent remains outside the layer."""
+    """Run the agent with durable Phase 4 clarification state."""
     trace_store = store or TraceStore()
-    run_id = str(uuid4())
+    active_run_id = run_id or str(uuid4())
     stop_policy = StopPolicy()
-    clarification_state = clarification_state or ClarificationState()
+
+    if clarification_state is None:
+        persisted = trace_store.load_clarification_state(active_run_id)
+        if persisted is None:
+            clarification_state = ClarificationState()
+        else:
+            clarification_state = ClarificationState(
+                attempts=persisted["attempts"],
+                max_attempts=persisted["max_attempts"],
+                asked_this_turn=persisted["asked_this_turn"],
+            )
+
+    if new_turn:
+        clarification_state.next_turn()
+
     if required_inputs is not None:
         try:
             proposal = validate_required_input(
                 stop_policy, clarification_state, required_inputs, batch=batch
             )
         except AmbiguityBlockedError as exc:
+            trace_store.save_clarification_state(active_run_id, clarification_state)
             trace_store.append_trace(
-                TraceEvent(run_id, 0, "phase4", task, str(exc), "blocked")
-            )
-            return {"run_id": run_id, "output": None, "status": "blocked", "reason": str(exc)}
-        if proposal.decision == "ASK":
-            trace_store.append_trace(
-                TraceEvent(run_id, 0, "phase4", task, proposal.missing_fields, "ask")
+                TraceEvent(active_run_id, 0, "phase4", task, str(exc), "blocked")
             )
             return {
-                "run_id": run_id,
+                "run_id": active_run_id,
+                "output": None,
+                "status": "blocked",
+                "reason": str(exc),
+                "attempt": clarification_state.attempts,
+            }
+
+        trace_store.save_clarification_state(active_run_id, clarification_state)
+
+        if proposal.decision == "ASK":
+            trace_store.append_trace(
+                TraceEvent(active_run_id, 0, "phase4", task, proposal.missing_fields, "ask")
+            )
+            return {
+                "run_id": active_run_id,
                 "output": None,
                 "status": "needs_clarification",
                 "missing_fields": proposal.missing_fields,
+                "attempt": clarification_state.attempts,
             }
 
-    trace_store.append_trace(TraceEvent(run_id, 0, "before", task, None, "started"))
+    trace_store.append_trace(TraceEvent(active_run_id, 0, "before", task, None, "started"))
     try:
         output = agent_fn(task)
     except Exception as exc:
-        trace_store.append_trace(TraceEvent(run_id, 1, "agent", task, str(exc), "failed"))
-        trace_store.append_receipt(run_id, f"RECEIPT run={run_id} status=failed")
-        gate = evaluate(run_id, trace_store, score=0.0)
-        return {"run_id": run_id, "output": None, "gate": gate, "status": "failed"}
+        trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, str(exc), "failed"))
+        trace_store.append_receipt(active_run_id, f"RECEIPT run={active_run_id} status=failed")
+        gate = evaluate(active_run_id, trace_store, score=0.0)
+        return {
+            "run_id": active_run_id,
+            "output": None,
+            "gate": gate,
+            "status": "failed",
+            "attempt": clarification_state.attempts,
+        }
 
-    trace_store.append_trace(TraceEvent(run_id, 1, "agent", task, output, "completed"))
-    trace_store.append_trace(TraceEvent(run_id, 2, "after", output, None, "completed"))
-    trace_store.append_receipt(run_id, f"RECEIPT run={run_id} status=completed")
-    gate = evaluate(run_id, trace_store)
-    return {"run_id": run_id, "output": output, "gate": gate, "status": "completed"}
-
+    trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, output, "completed"))
+    trace_store.append_trace(TraceEvent(active_run_id, 2, "after", output, None, "completed"))
+    trace_store.append_receipt(active_run_id, f"RECEIPT run={active_run_id} status=completed")
+    gate = evaluate(active_run_id, trace_store)
+    return {
+        "run_id": active_run_id,
+        "output": output,
+        "gate": gate,
+        "status": "completed",
+        "attempt": clarification_state.attempts,
+    }
 
 def evaluate_tool_result(
     store: TraceStore,
