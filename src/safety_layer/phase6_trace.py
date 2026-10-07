@@ -286,6 +286,8 @@ def split_failure_group(
     requested = list(signatures)
     if not requested:
         raise ValueError("split requires at least one target signature")
+    if len(requested) != len(set(requested)):
+        raise ValueError("split target signatures must be unique")
 
     buckets = {signature: [] for signature in requested}
     for record in group.records:
