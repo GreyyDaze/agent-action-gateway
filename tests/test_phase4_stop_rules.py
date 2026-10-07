@@ -287,6 +287,153 @@ class Phase4StopRulesTest(unittest.TestCase):
             self.assertFalse(evidence["cross_check"]["agrees"])
 
 
+    def test_five_request_clarification_sequence_preserves_budget(self) -> None:
+        """Model the five-request adversarial sequence without allowing tool execution on ASK."""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            calls = []
+
+            def agent(task: str) -> str:
+                calls.append(task)
+                return "executed"
+
+            first = run(
+                agent, "vague request 1", store, run_id="five-requests",
+                required_inputs={"order_id": None},
+            )
+            self.assertEqual(first["status"], "needs_clarification")
+            self.assertEqual(calls, [])
+
+            second = run(
+                agent, "vague request 2", store, run_id="five-requests",
+                required_inputs={"order_id": None}, new_turn=True,
+            )
+            self.assertEqual(second["status"], "needs_clarification")
+            self.assertEqual(calls, [])
+
+            third = run(
+                agent, "vague request 3", store, run_id="five-requests",
+                required_inputs={"order_id": None}, new_turn=True,
+            )
+            self.assertEqual(third["status"], "completed")
+            self.assertEqual(third["attempt"], 2)
+            self.assertEqual(calls, ["vague request 3"])
+
+            fourth = run(
+                agent, "vague request 4", store, run_id="five-requests",
+                required_inputs={"order_id": None}, new_turn=True,
+            )
+            self.assertEqual(fourth["status"], "completed")
+            self.assertEqual(fourth["attempt"], 2)
+            self.assertEqual(calls, ["vague request 3", "vague request 4"])
+
+            fifth = run(
+                agent, "vague request 5", store, run_id="five-requests",
+                required_inputs={"order_id": None}, batch=True,
+            )
+            self.assertEqual(fifth["status"], "blocked")
+            self.assertEqual(calls, ["vague request 3", "vague request 4"])
+
+            persisted = store.load_clarification_state("five-requests")
+            self.assertEqual(persisted["attempts"], 2)
+
+    def test_batch_ambiguity_is_blocked_at_run_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            calls = []
+
+            result = run(
+                lambda task: calls.append(task) or "unsafe",
+                "batch refund",
+                store,
+                run_id="batch-ambiguity",
+                required_inputs={"order_id": None},
+                batch=True,
+            )
+
+            self.assertEqual(result["status"], "blocked")
+            self.assertEqual(calls, [])
+            self.assertEqual(result["attempt"], 0)
+
+    def test_high_stakes_cross_check_runs_exactly_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            calls = []
+            spec = CrossCheckSpec(
+                first_source="accounts",
+                second_source="audit",
+                invariant_name="same-account",
+                second_source_fn=lambda: calls.append("second") or {"account_id": "A-1"},
+                invariant=lambda first, second: first == second,
+            )
+
+            decision = evaluate_tool_result(
+                store,
+                "high-stakes-once",
+                "read account",
+                {"account_id": "A-1"},
+                high_stakes=True,
+                cross_check=spec,
+            )
+
+            self.assertEqual(decision.decision, "CONTINUE")
+            self.assertEqual(calls, ["second"])
+
+    def test_empty_result_cross_check_runs_exactly_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            calls = []
+            spec = CrossCheckSpec(
+                first_source="orders",
+                second_source="audit",
+                invariant_name="same-record-set",
+                second_source_fn=lambda: calls.append("second") or {},
+                invariant=lambda first, second: first == second,
+            )
+
+            first = evaluate_tool_result(
+                store, "empty-once", "find order", {}, cross_check=spec,
+            )
+            second = evaluate_tool_result(
+                store, "empty-once", "find order", {}, cross_check=spec,
+            )
+
+            self.assertEqual(first.decision, "ASK")
+            self.assertEqual(second.decision, "ASK")
+            self.assertEqual(calls, ["second", "second"])
+
+    def test_legitimate_pagination_does_not_trigger_false_stops(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            for page in range(50):
+                outcome = execute_tool(
+                    store,
+                    f"pagination-{page}",
+                    f"fetch page {page}",
+                    lambda page=page: {"records": [page]},
+                    required_fields=("records",),
+                )
+                self.assertEqual(outcome["decision"], "CONTINUE")
+                self.assertEqual(outcome["status"], "allowed")
+                self.assertEqual(outcome["result"], {"records": [page]})
+
+    def test_phase4_proof_traps_and_legitimate_paths(self) -> None:
+        traps = [
+            self.policy.missing_input(ClarificationState(), ["order_id"]).decision,
+            self.policy.empty_result(cross_check_performed=False).decision,
+            self.policy.partial_result({}, ["order_id"], missing_critical=True).decision,
+            self.policy.high_stakes_read(second_source_confirmed=False).decision,
+        ]
+        self.assertEqual(traps, ["ASK", "CROSS_CHECK", "ASK", "ASK"])
+
+        legitimate = [
+            self.policy.partial_result({"order_id": "ORD-1"}, [], missing_critical=True).decision,
+            self.policy.high_stakes_read(second_source_confirmed=True).decision,
+            self.policy.empty_result(cross_check_performed=True).decision,
+        ]
+        self.assertEqual(legitimate, ["CONTINUE", "CONTINUE", "ASK"])
+
+
     def test_environment_mismatch_is_blocked(self) -> None:
         with self.assertRaises(CrossEnvironmentError):
             enforce_environment("staging", "prod")
