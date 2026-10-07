@@ -2,6 +2,7 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .models import GateVerdict, Receipt, TraceEvent
 
@@ -72,10 +73,12 @@ class TraceStore:
             )
 
     def append_receipt(self, run_id: str, line: str) -> None:
+        """Append a legacy audit receipt without reusing a unique intent key."""
+        intent_key = f"phase0:{run_id}:{uuid4()}"
         with self._connect() as connection:
             connection.execute(
                 "INSERT INTO receipts(run_id, step_id, intent_key, action, arguments_json, state) VALUES (?, ?, ?, ?, ?, ?)",
-                (run_id, "phase0", f"phase0:{run_id}", "legacy", json.dumps({"line": line}), "done"),
+                (run_id, "phase0", intent_key, "legacy", json.dumps({"line": line}), "done"),
             )
 
     def create_receipt(self, run_id: str, step_id: str, action: str, arguments: dict[str, Any]) -> Receipt:
