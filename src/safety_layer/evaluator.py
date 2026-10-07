@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
-from time import perf_counter
+from time import perf_counter, sleep
 
 from .evaluation_models import EvaluationSummary, GoldenCase, SampleResult
 from .judge import (
@@ -21,12 +21,15 @@ def evaluate_cases(
     runs: int,
     judge: Judge | None = None,
     candidate_version: str = "unknown",
+    judge_wait_seconds: float = 0.0,
 ) -> EvaluationSummary:
     """Evaluate deterministically first and use an explicit product judge for rubric cases."""
     if runs < 1:
         raise ValueError("runs must be >= 1")
     if not cases:
         raise ValueError("at least one golden case is required")
+    if judge_wait_seconds < 0:
+        raise ValueError("judge_wait_seconds must be >= 0")
     if any(not is_deterministic(case) for case in cases) and judge is None:
         raise ValueError(
             "rubric-based cases require an explicit product-controlled judge"
@@ -38,6 +41,7 @@ def evaluate_cases(
     estimated_cost_usd = 0.0
     judge_available = True
     judge_error = ""
+    judge_request_count = 0
 
     for run_number in range(1, runs + 1):
         if not judge_available:
@@ -49,6 +53,10 @@ def evaluate_cases(
             )
             assert evaluator is not None
             try:
+                if not is_deterministic(case):
+                    if judge_request_count > 0 and judge_wait_seconds:
+                        sleep(judge_wait_seconds)
+                    judge_request_count += 1
                 decision: JudgeDecision = evaluator.evaluate(case, output)
             except JudgeUnavailableError as exc:
                 judge_available = False
