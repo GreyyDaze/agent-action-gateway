@@ -28,7 +28,7 @@ def run(
     required_inputs: dict[str, Any] | None = None,
     batch: bool = False,
 ) -> dict[str, Any]:
-    """Phase 0-compatible agent shell; the external agent remains outside the layer."""
+    """Phase 4 runtime shell; the external agent remains outside the layer."""
     trace_store = store or TraceStore()
     run_id = str(uuid4())
     stop_policy = StopPolicy()
