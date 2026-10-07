@@ -101,7 +101,20 @@ def run(
                 "attempt": clarification_state.attempts,
             }
     try:
-        output = agent_fn(task)
+        if fuse is None:
+            output = agent_fn(task)
+        else:
+            with fuse.deadline_guard():
+                output = agent_fn(task)
+    except FuseTrippedError as exc:
+        trace_store.append_trace(TraceEvent(active_run_id, 1, "phase5.fuse", task, str(exc), "blocked"))
+        return {
+            "run_id": active_run_id,
+            "output": None,
+            "status": "blocked",
+            "reason": str(exc),
+            "attempt": clarification_state.attempts,
+        }
     except Exception as exc:
         trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, str(exc), "failed"))
         trace_store.append_receipt(active_run_id, f"RECEIPT run={active_run_id} status=failed")
@@ -223,6 +236,7 @@ def execute_tool(
     actual_cost_usd: float | None = None,
     new_information: bool = False,
     state_changed: bool = False,
+    write: bool = False,
 ) -> dict[str, Any]:
     """Execute one external tool call through the Phase 5 boundary, then apply Phase 4."""
     if fuse is not None:
@@ -233,6 +247,7 @@ def execute_tool(
                 estimated_cost_usd=estimated_cost_usd,
                 new_information=new_information,
                 state_changed=state_changed,
+                write=write,
             )
         except FuseTrippedError as exc:
             store.append_trace(
@@ -321,6 +336,7 @@ def dispatch_external_action(
             estimated_cost_usd=estimated_cost_usd,
             new_information=new_information,
             state_changed=state_changed,
+            write=True,
         )
     enforce_environment(session_environment, target_environment or session_environment)
     check_action(
