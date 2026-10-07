@@ -131,8 +131,8 @@ class Phase4StopRulesTest(unittest.TestCase):
                 required_inputs={"order_id": None},
             )
             self.assertEqual(result["status"], "needs_clarification")
-            events = store.list_trace(result["run_id"])
-            self.assertEqual(events[-1].status, "ask")
+            events = [e for e in store.snapshot()["traces"] if e["run_id"] == result["run_id"]]
+            self.assertEqual(events[-1]["status"], "ask")
 
     def test_run_batch_ambiguity_blocks_and_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -145,8 +145,8 @@ class Phase4StopRulesTest(unittest.TestCase):
                 batch=True,
             )
             self.assertEqual(result["status"], "blocked")
-            events = store.list_trace(result["run_id"])
-            self.assertEqual(events[-1].status, "blocked")
+            events = [e for e in store.snapshot()["traces"] if e["run_id"] == result["run_id"]]
+            self.assertEqual(events[-1]["status"], "blocked")
 
 
 if __name__ == "__main__":
