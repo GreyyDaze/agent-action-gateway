@@ -263,7 +263,7 @@ def execute_tool(
 
     if fuse is not None and actual_cost_usd is not None:
         try:
-            fuse.budget.record_cost(actual_cost_usd - estimated_cost_usd)
+            fuse.budget.reconcile_cost(estimated_cost_usd, actual_cost_usd)
         except FuseTrippedError as exc:
             store.append_trace(
                 TraceEvent(run_id, 3, "phase5.fuse", task, str(exc), "blocked")
@@ -334,7 +334,7 @@ def dispatch_external_action(
     )
     result = execute_side_effect(store, provider, run_id, step_id, arguments, order_id)
     if fuse is not None and actual_cost_usd is not None:
-        fuse.budget.record_cost(actual_cost_usd - estimated_cost_usd)
+        fuse.budget.reconcile_cost(estimated_cost_usd, actual_cost_usd)
     return result
 
 
