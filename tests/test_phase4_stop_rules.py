@@ -434,6 +434,97 @@ class Phase4StopRulesTest(unittest.TestCase):
         self.assertEqual(legitimate, ["CONTINUE", "CONTINUE", "ASK"])
 
 
+    def test_phase4_proof_matrix_has_zero_missed_traps_and_false_stops(self) -> None:
+        """Lock the Phase 4 proof set to explicit traps and legitimate paths."""
+        traps = [
+            ("missing-critical", self.policy.missing_input(
+                ClarificationState(), ["order_id"]
+            ).decision, "ASK"),
+            ("batch-ambiguity", self._batch_missing_input_decision(), "BLOCK"),
+            ("empty-result", self.policy.empty_result(
+                cross_check_performed=False
+            ).decision, "CROSS_CHECK"),
+            ("partial-critical", self.policy.partial_result(
+                {}, ["order_id"], missing_critical=True
+            ).decision, "ASK"),
+            ("high-stakes-unconfirmed", self.policy.high_stakes_read(
+                second_source_confirmed=False
+            ).decision, "ASK"),
+            ("cross-check-disagreement", self._disagreement_decision(), "ASK"),
+            ("cross-check-disagreement-batch", self._disagreement_decision(
+                batch=True
+            ), "BLOCK"),
+            ("second-clarification-same-turn", self._second_question_decision(), "BLOCK"),
+        ]
+
+        legitimate = [
+            ("complete-result", self.policy.partial_result(
+                {"order_id": "ORD-1"}, [], missing_critical=True
+            ).decision, "CONTINUE"),
+            ("noncritical-partial", self.policy.partial_result(
+                {"order_id": "ORD-1"}, ["optional_note"], missing_critical=False
+            ).decision, "REPORT_PARTIAL"),
+            ("confirmed-high-stakes", self.policy.high_stakes_read(
+                second_source_confirmed=True
+            ).decision, "CONTINUE"),
+            ("cross-check-agreement", self._agreement_decision(), "CONTINUE"),
+        ]
+
+        missed_traps = [name for name, actual, expected in traps if actual != expected]
+        false_stops = [
+            name for name, actual, expected in legitimate if actual != expected
+        ]
+
+        self.assertEqual(missed_traps, [], f"missed Phase 4 traps: {missed_traps}")
+        self.assertEqual(false_stops, [], f"false stops on legitimate paths: {false_stops}")
+        self.assertEqual(len(missed_traps), 0)
+        self.assertEqual(len(false_stops), 0)
+        self.assertEqual(len(traps), 8)
+        self.assertEqual(len(legitimate), 4)
+
+    def _batch_missing_input_decision(self) -> str:
+        try:
+            self.policy.missing_input(
+                ClarificationState(), ["order_id"], batch=True
+            )
+        except AmbiguityBlockedError:
+            return "BLOCK"
+        return "CONTINUE"
+
+    def _disagreement_decision(self, *, batch: bool = False) -> str:
+        spec = CrossCheckSpec(
+            first_source="orders",
+            second_source="audit",
+            invariant_name="same-record-set",
+            second_source_fn=lambda: {"records": [{"id": "ORD-100"}]},
+            invariant=lambda first, second: first == second,
+        )
+        return self.policy.cross_check_result(
+            perform_cross_check({"records": []}, spec),
+            batch=batch,
+        ).decision
+
+    def _agreement_decision(self) -> str:
+        spec = CrossCheckSpec(
+            first_source="orders",
+            second_source="audit",
+            invariant_name="same-record-set",
+            second_source_fn=lambda: {"records": [{"id": "ORD-100"}]},
+            invariant=lambda first, second: first == second,
+        )
+        return self.policy.cross_check_result(
+            perform_cross_check({"records": [{"id": "ORD-100"}]}, spec)
+        ).decision
+
+    def _second_question_decision(self) -> str:
+        state = ClarificationState()
+        self.policy.missing_input(state, ["order_id"])
+        try:
+            self.policy.missing_input(state, ["order_id"])
+        except AmbiguityBlockedError:
+            return "BLOCK"
+        return "CONTINUE"
+
     def test_environment_mismatch_is_blocked(self) -> None:
         with self.assertRaises(CrossEnvironmentError):
             enforce_environment("staging", "prod")
