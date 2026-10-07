@@ -84,42 +84,70 @@ def evaluate_tool_result(
 ) -> ResultDecision:
     """Apply Phase 4 policy to the result returned by a real tool."""
     policy = StopPolicy()
+    checked = None
 
-    if not result and cross_check is not None:
-        checked = perform_cross_check(result, cross_check)
-        decision = policy.cross_check_result(checked, batch=batch)
-        evidence = {
-            "decision": decision.decision,
-            "flags": decision.flags,
-            "cross_check": {
+    if not result:
+        if cross_check is None:
+            decision = policy.empty_result(
+                cross_check_performed=False,
+                batch=batch,
+            )
+        else:
+            checked = perform_cross_check(result, cross_check)
+            decision = policy.cross_check_result(checked, batch=batch)
+    else:
+        missing = [
+            field for field in required_fields if result.get(field) in (None, "")
+        ]
+        if missing:
+            decision = policy.partial_result(
+                result,
+                missing,
+                missing_critical=high_stakes,
+                batch=batch,
+            )
+        elif high_stakes:
+            if cross_check is None:
+                decision = policy.high_stakes_read(
+                    second_source_confirmed=False,
+                    batch=batch,
+                )
+            else:
+                checked = perform_cross_check(result, cross_check)
+                decision = policy.high_stakes_read(
+                    second_source_confirmed=checked.agrees,
+                    batch=batch,
+                )
+        else:
+            decision = ResultDecision("CONTINUE")
+
+    evidence = {
+        "decision": decision.decision,
+        "flags": decision.flags,
+        "missing": decision.missing,
+        "cross_check_required": decision.cross_check_required,
+        "cross_check": (
+            {
                 "first_source": checked.first_source,
                 "second_source": checked.second_source,
                 "invariant": checked.invariant_name,
                 "agrees": checked.agrees,
-            },
-        }
-    else:
-        decision = policy.empty_result(
-            cross_check_performed=False,
-            batch=batch,
-        ) if not result else policy.partial_result(
-            result,
-            [field for field in required_fields if result.get(field) in (None, "")],
-            missing_critical=high_stakes,
-            batch=batch,
-        )
-        evidence = {
-            "decision": decision.decision,
-            "flags": decision.flags,
-            "missing": decision.missing,
-            "cross_check_required": decision.cross_check_required,
-        }
-
+            }
+            if checked is not None
+            else None
+        ),
+    }
     store.append_trace(
-        TraceEvent(run_id, 3, "phase4.tool_result", task, evidence, decision.decision.lower())
+        TraceEvent(
+            run_id,
+            3,
+            "phase4.tool_result",
+            task,
+            evidence,
+            decision.decision.lower(),
+        )
     )
     return decision
-
 
 
 def dispatch_external_action(
