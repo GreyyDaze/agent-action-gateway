@@ -90,7 +90,7 @@ class TraceStore:
                 """
             )
 
-    def append_trace(self, event: TraceEvent) -> None:
+    def append_trace(self, event: TraceEvent) -> int:
         """Persist a trace event after deterministic redaction."""
         with self._connect() as connection:
             connection.execute(
