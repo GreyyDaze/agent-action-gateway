@@ -8,6 +8,7 @@ from .fuses import FuseController, FuseTrippedError
 from .gate import evaluate
 from .locks import ApprovalStore, RiskRegistry
 from .models import TraceEvent
+from .phase6_trace import honest_status, suspicious_flags
 from .provider import RefundProvider
 from .receipts import execute_side_effect, resolve_unknown
 from .safety import check_action
@@ -189,9 +190,15 @@ def evaluate_tool_result(
         else:
             decision = ResultDecision("CONTINUE")
 
+    phase6_flags = suspicious_flags(
+        empty_result=not bool(result),
+        invariant_failed=checked is not None and not checked.agrees,
+        cross_check_failed=checked is not None and not checked.agrees,
+    )
     evidence = {
         "decision": decision.decision,
         "flags": decision.flags,
+        "phase6_suspicious_flags": phase6_flags,
         "missing": decision.missing,
         "cross_check_required": decision.cross_check_required,
         "cross_check": (
@@ -213,6 +220,7 @@ def evaluate_tool_result(
             task,
             evidence,
             decision.decision.lower(),
+            flags=phase6_flags,
         )
     )
     return decision
@@ -295,14 +303,21 @@ def execute_tool(
         batch=batch,
         cross_check=cross_check,
     )
+    trace_flags = suspicious_flags(empty_result=not bool(result))
+    status = honest_status(
+        blocked=decision.decision != "CONTINUE",
+        suspicious=bool(trace_flags),
+    )
     return {
-        "status": "allowed" if decision.decision == "CONTINUE" else "stopped",
+        "status": status,
         "decision": decision.decision,
         "result": result if decision.decision == "CONTINUE" else None,
         "flags": decision.flags,
+        "phase6_suspicious_flags": trace_flags,
         "missing": decision.missing,
         "cross_check_required": decision.cross_check_required,
     }
+
 
 def dispatch_external_action(
     store: TraceStore,
