@@ -13,6 +13,8 @@ class TraceEvent:
     flags: tuple[str, ...] = ()
     capture_class: str = "always"
     provider_metadata: dict[str, Any] | None = None
+    provider_evidence: dict[str, Any] | None = None
+    replay_of_trace_id: int | None = None
 
 
 @dataclass(frozen=True)
