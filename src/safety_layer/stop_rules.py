@@ -7,6 +7,8 @@ runtime state, tool results, environment labels, and policy inputs.
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .cross_check import CrossCheckResult
+
 
 class StopRuleError(RuntimeError):
     """Base error for a fail-closed stop-and-ask decision."""
@@ -150,6 +152,24 @@ class StopPolicy:
             "REPORT_PARTIAL",
             flags=("partial-result",),
             missing=missing_fields,
+        )
+
+    def cross_check_result(
+        self,
+        result: CrossCheckResult,
+        *,
+        batch: bool = False,
+    ) -> ResultDecision:
+        if result.agrees:
+            return self.empty_result(
+                cross_check_performed=True,
+                batch=batch,
+            )
+
+        return ResultDecision(
+            "BLOCK" if batch else "ASK",
+            flags=result.flags,
+            cross_check_required=False,
         )
 
     def high_stakes_read(
