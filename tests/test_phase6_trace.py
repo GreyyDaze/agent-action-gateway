@@ -75,5 +75,77 @@ class Phase6TraceTests(unittest.TestCase):
         self.assertEqual(honest_status(error=True), "degraded")
 
 
+
+class Phase6FailureWallTests(unittest.TestCase):
+    def test_same_error_step_and_config_are_one_group(self) -> None:
+        from safety_layer.phase6_trace import build_failure_wall
+        traces = [
+            {"id": 1, "run_id": "run-1", "step": 4, "event": "tool.execute", "status": "failed",
+             "output": {"error": {"type": "TimeoutError"}},
+             "provider_metadata": {"config": {"model": "m1", "timeout": 10}}},
+            {"id": 2, "run_id": "run-2", "step": 4, "event": "tool.execute", "status": "failed",
+             "output": {"error": {"type": "TimeoutError"}},
+             "provider_metadata": {"config": {"timeout": 10, "model": "m1"}}},
+        ]
+        groups = build_failure_wall(traces)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups[0].records), 2)
+
+    def test_different_config_does_not_merge(self) -> None:
+        from safety_layer.phase6_trace import build_failure_wall
+        traces = [
+            {"id": 1, "run_id": "run-1", "step": 4, "event": "tool.execute", "status": "failed",
+             "output": {"error": {"type": "TimeoutError"}},
+             "provider_metadata": {"config": {"model": "m1"}}},
+            {"id": 2, "run_id": "run-2", "step": 4, "event": "tool.execute", "status": "failed",
+             "output": {"error": {"type": "TimeoutError"}},
+             "provider_metadata": {"config": {"model": "m2"}}},
+        ]
+        self.assertEqual(len(build_failure_wall(traces)), 2)
+
+    def test_silent_wrong_run_is_grouped(self) -> None:
+        from safety_layer.phase6_trace import build_failure_wall
+        traces = [
+            {"id": 1, "run_id": "run-1", "step": 3, "event": "phase4.tool_result", "status": "completed",
+             "flags": ["empty-result"], "provider_metadata": {"config": {"model": "m1"}}},
+            {"id": 2, "run_id": "run-2", "step": 3, "event": "phase4.tool_result", "status": "completed",
+             "flags": ["empty-result"], "provider_metadata": {"config": {"model": "m1"}}},
+        ]
+        groups = build_failure_wall(traces)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0].signature.error_type, "silent-wrong:empty-result")
+
+    def test_confirmation_keeps_ownership_unknown(self) -> None:
+        from safety_layer.phase6_trace import build_failure_wall, confirm_failure_group
+        group = build_failure_wall([{"id": 1, "run_id": "run-1", "step": 1, "event": "tool",
+            "status": "failed", "output": {"error": {"type": "ValueError"}}}])[0]
+        confirm_failure_group(group)
+        self.assertEqual(group.state, "confirmed")
+        self.assertEqual(group.ownership, "unknown")
+
+    def test_human_can_merge_groups(self) -> None:
+        from safety_layer.phase6_trace import build_failure_wall, merge_failure_groups
+        first = build_failure_wall([{"id": 1, "run_id": "run-1", "step": 1, "event": "tool-a",
+            "status": "failed", "output": {"error": {"type": "ValueError"}}}])[0]
+        second = build_failure_wall([{"id": 2, "run_id": "run-2", "step": 2, "event": "tool-b",
+            "status": "failed", "output": {"error": {"type": "ValueError"}}}])[0]
+        merged = merge_failure_groups([first, second])
+        self.assertEqual(len(merged.records), 2)
+        self.assertEqual(merged.ownership, "unknown")
+
+    def test_human_can_split_group(self) -> None:
+        from safety_layer.phase6_trace import build_failure_wall, merge_failure_groups, split_failure_group
+        traces = [
+            {"id": 1, "run_id": "run-1", "step": 1, "event": "tool-a", "status": "failed",
+             "output": {"error": {"type": "ValueError"}}, "provider_metadata": {"config": {"model": "m1"}}},
+            {"id": 2, "run_id": "run-2", "step": 2, "event": "tool-b", "status": "failed",
+             "output": {"error": {"type": "ValueError"}}, "provider_metadata": {"config": {"model": "m1"}}},
+        ]
+        groups = build_failure_wall(traces)
+        split = split_failure_group(merge_failure_groups(groups), [g.signature for g in groups])
+        self.assertEqual(len(split), 2)
+        self.assertEqual({len(group.records) for group in split}, {1})
+
+
 if __name__ == "__main__":
     unittest.main()
