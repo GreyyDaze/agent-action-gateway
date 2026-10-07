@@ -12,7 +12,7 @@ import signal
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterator
 
 
@@ -113,6 +113,12 @@ class FuseBudget:
         acquire threading locks.
         """
         self._tripped_reason = reason
+
+    def remaining_wall_seconds(self) -> float | None:
+        """Return the remaining wall-clock budget without changing state."""
+        if self.limits.max_wall_seconds is None:
+            return None
+        return self.limits.max_wall_seconds - (self._clock() - self._started_at)
 
     def snapshot(self) -> FuseSnapshot:
         with self._lock:
@@ -245,6 +251,10 @@ class FuseController:
             raise FuseTrippedError("loop detected: repeated action made no progress")
         self.budget.consume_step(estimated_cost_usd)
 
+    def snapshot(self) -> FuseSnapshot:
+        """Return the current budget counters plus controller state."""
+        return replace(self.budget.snapshot(), degraded=self.degraded)
+
     @contextmanager
     def deadline_guard(self) -> Iterator[None]:
         """Interrupt a long-running Python call at the wall-clock deadline.
@@ -252,15 +262,17 @@ class FuseController:
         Unix main-thread only. Normal action-boundary checks remain the
         portable enforcement mechanism for other execution contexts.
         """
-        limit = self.budget.limits.max_wall_seconds
-        if limit is None:
+        if self.budget.limits.max_wall_seconds is None:
             yield
             return
         if threading.current_thread() is not threading.main_thread() or not hasattr(signal, "SIGALRM"):
             yield
             return
 
-        remaining = limit - (self.budget._clock() - self.budget._started_at)
+        remaining = self.budget.remaining_wall_seconds()
+        if remaining is None:
+            yield
+            return
         if remaining <= 0:
             self.budget.trip("wall-clock budget exhausted")
             raise FuseTrippedError("wall-clock budget exhausted")
