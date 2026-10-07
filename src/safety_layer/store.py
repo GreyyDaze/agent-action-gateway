@@ -150,9 +150,17 @@ class TraceStore:
 
     def snapshot(self) -> dict[str, Any]:
         with self._connect() as connection:
-            traces = [dict(row) for row in connection.execute("SELECT * FROM trace_events ORDER BY id")]
+            trace_rows = connection.execute("SELECT * FROM trace_events ORDER BY id").fetchall()
             receipts = [dict(row) for row in connection.execute("SELECT * FROM receipts ORDER BY id")]
             gates = [dict(row) for row in connection.execute("SELECT * FROM gate_verdicts ORDER BY id")]
+
+        traces = []
+        for row in trace_rows:
+            trace = dict(row)
+            trace["input"] = json.loads(trace["input_json"])
+            trace["output"] = json.loads(trace["output_json"])
+            traces.append(trace)
+
         return {"traces": traces, "receipts": receipts, "gate_verdicts": gates}
 
     def append_gate(self, verdict: GateVerdict) -> None:
