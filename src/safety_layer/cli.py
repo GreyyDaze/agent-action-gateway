@@ -7,6 +7,7 @@ from pathlib import Path
 from .gate_cli import main as gate_main
 from .mock_provider import MockProvider
 from .phase1_proof import main as chaos_main
+from .proof import main as proof_main
 from .refund_agent import make_refund_agent
 from .runtime import run
 from .store import TraceStore
@@ -26,6 +27,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     chaos = sub.add_parser("chaos", help="run the Phase 1 crash-injection proof")
     chaos.add_argument("--jobs", type=int, default=1000)
+
+    proof = sub.add_parser("proof", help="reproduce the Phase 1-6 proof suites")
+    proof.add_argument("--jobs", type=int, default=1000)
 
     gate = sub.add_parser("gate", help="run regression-gate commands")
     gate.add_argument("args", nargs=argparse.REMAINDER)
@@ -72,6 +76,14 @@ def main(argv: list[str] | None = None) -> int:
         try:
             sys.argv = ["safety chaos", "--jobs", str(args.jobs)]
             chaos_main()
+        finally:
+            sys.argv = old
+        return 0
+    if args.command == "proof":
+        old = sys.argv
+        try:
+            sys.argv = ["safety proof", "--jobs", str(args.jobs)]
+            proof_main()
         finally:
             sys.argv = old
         return 0
