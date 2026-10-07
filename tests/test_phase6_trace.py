@@ -147,5 +147,116 @@ class Phase6FailureWallTests(unittest.TestCase):
         self.assertEqual({len(group.records) for group in split}, {1})
 
 
+class Phase6FailureWallPersistenceTests(unittest.TestCase):
+    def _group(self, trace_id: int, run_id: str, error: str = "TimeoutError"):
+        from safety_layer.phase6_trace import build_failure_wall
+
+        return build_failure_wall([{
+            "id": trace_id,
+            "run_id": run_id,
+            "step": 4,
+            "event": "tool.execute",
+            "status": "failed",
+            "output": {"error": {"type": error}},
+            "provider_metadata": {"config": {"model": "m1"}},
+        }])[0]
+
+    def test_group_survives_store_reopen(self) -> None:
+        from safety_layer.failure_wall_store import FailureWallStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "failure-wall.db"
+            group = self._group(101, "run-101")
+            FailureWallStore(path).save_group(group)
+
+            reopened = FailureWallStore(path).get_group(group.group_id)
+
+            self.assertIsNotNone(reopened)
+            assert reopened is not None
+            self.assertEqual(reopened.signature, group.signature)
+            self.assertEqual(reopened.records, group.records)
+            self.assertEqual(reopened.state, "unconfirmed")
+            self.assertEqual(reopened.ownership, "unknown")
+
+    def test_confirmation_is_persistent_and_audited(self) -> None:
+        from safety_layer.failure_wall_store import FailureWallStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "failure-wall.db"
+            group = self._group(102, "run-102")
+            store = FailureWallStore(path)
+            store.save_group(group)
+
+            store.confirm(group.group_id)
+            reopened = FailureWallStore(path).get_group(group.group_id)
+
+            self.assertIsNotNone(reopened)
+            assert reopened is not None
+            self.assertEqual(reopened.state, "confirmed")
+            self.assertEqual(reopened.ownership, "unknown")
+            self.assertEqual(FailureWallStore(path).decisions(group.group_id)[0]["decision"], "confirm")
+
+    def test_reject_is_persistent_and_audited(self) -> None:
+        from safety_layer.failure_wall_store import FailureWallStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "failure-wall.db"
+            group = self._group(103, "run-103")
+            store = FailureWallStore(path)
+            store.save_group(group)
+
+            store.reject(group.group_id)
+            reopened = FailureWallStore(path).get_group(group.group_id)
+
+            self.assertIsNotNone(reopened)
+            assert reopened is not None
+            self.assertEqual(reopened.state, "rejected")
+            self.assertEqual(reopened.ownership, "unknown")
+            self.assertEqual(FailureWallStore(path).decisions(group.group_id)[0]["decision"], "reject")
+
+    def test_merge_persists_both_evidence_and_marks_sources_merged(self) -> None:
+        from safety_layer.failure_wall_store import FailureWallStore
+        from safety_layer.phase6_trace import merge_failure_groups
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "failure-wall.db"
+            store = FailureWallStore(path)
+            first = self._group(104, "run-104", "TimeoutError")
+            second = self._group(105, "run-105", "ValueError")
+            store.save_groups([first, second])
+
+            merged = merge_failure_groups([first, second])
+            store.merge([first.group_id, second.group_id], merged)
+
+            reopened = FailureWallStore(path).get_group(merged.group_id)
+            self.assertIsNotNone(reopened)
+            assert reopened is not None
+            self.assertEqual({r.trace_id for r in reopened.records}, {104, 105})
+            self.assertEqual(FailureWallStore(path).get_group(first.group_id).state, "merged")
+            self.assertEqual(FailureWallStore(path).get_group(second.group_id).state, "merged")
+            self.assertEqual(FailureWallStore(path).decisions(first.group_id)[0]["decision"], "merge")
+
+    def test_split_persists_result_groups_and_marks_source_split(self) -> None:
+        from safety_layer.failure_wall_store import FailureWallStore
+        from safety_layer.phase6_trace import merge_failure_groups, split_failure_group
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "failure-wall.db"
+            store = FailureWallStore(path)
+            first = self._group(106, "run-106")
+            second = self._group(107, "run-107")
+            merged = merge_failure_groups([first, second])
+            store.save_group(merged)
+
+            split = split_failure_group(merged, [first.signature])
+            split.append(second)
+            store.split(merged.group_id, split)
+
+            self.assertEqual(FailureWallStore(path).get_group(merged.group_id).state, "split")
+            self.assertEqual(len(FailureWallStore(path).get_group(first.group_id).records), 1)
+            self.assertEqual(len(FailureWallStore(path).get_group(second.group_id).records), 1)
+            self.assertEqual(FailureWallStore(path).decisions(merged.group_id)[0]["decision"], "split")
+
+
 if __name__ == "__main__":
     unittest.main()
