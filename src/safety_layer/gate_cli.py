@@ -53,6 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="repeat the gate evaluation this many times; useful for unchanged-code proof",
     )
+    check.add_argument(
+        "--wait-seconds",
+        type=float,
+        default=0.0,
+        help="wait this many seconds between real judge requests; useful for provider rate limits",
+    )
     return parser
 
 
@@ -83,6 +89,7 @@ def _run_check_once(args: argparse.Namespace, cases: tuple[GoldenCase, ...], sto
     summary = evaluate_cases(
         cases, _candidate_from_file(args.candidate_file), runs=runs,
         judge=judge, candidate_version=args.candidate_version,
+        judge_wait_seconds=args.wait_seconds,
     )
 
     if args.record_baseline and not summary.judge_available:
@@ -139,6 +146,8 @@ def _run_check_once(args: argparse.Namespace, cases: tuple[GoldenCase, ...], sto
 def run_check(args: argparse.Namespace) -> int:
     if args.repeat < 1:
         raise SystemExit("--repeat must be >= 1")
+    if args.wait_seconds < 0:
+        raise SystemExit("--wait-seconds must be >= 0")
     if args.record_baseline and args.repeat != 1:
         raise SystemExit("--record-baseline cannot be combined with --repeat > 1")
 
@@ -170,6 +179,8 @@ def run_check(args: argparse.Namespace) -> int:
         return 0 if false_fails == 0 and len(results) == args.repeat else 1
 
     return 0
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
