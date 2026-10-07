@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from safety_layer.cross_check import CrossCheckSpec, perform_cross_check
-from safety_layer.runtime import evaluate_tool_result, run
+from safety_layer.runtime import evaluate_tool_result, execute_tool, run
 from safety_layer.stop_rules import (
     AmbiguityBlockedError,
     ClarificationState,
@@ -203,6 +203,89 @@ class Phase4StopRulesTest(unittest.TestCase):
                 high_stakes=True,
             )
             self.assertEqual(decision.decision, "ASK")
+
+    def test_execute_tool_passes_allowed_result_to_agent_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            calls = []
+
+            outcome = execute_tool(
+                store,
+                "tool-e2e-1",
+                "find order",
+                lambda: calls.append("tool") or {"order_id": "ORD-100"},
+                required_fields=("order_id",),
+            )
+
+            self.assertEqual(calls, ["tool"])
+            self.assertEqual(outcome["decision"], "CONTINUE")
+            self.assertEqual(outcome["result"], {"order_id": "ORD-100"})
+
+    def test_execute_tool_hides_suspicious_result_and_stops(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            outcome = execute_tool(
+                store,
+                "tool-e2e-2",
+                "find order",
+                lambda: {},
+            )
+
+            self.assertEqual(outcome["decision"], "CROSS_CHECK")
+            self.assertIsNone(outcome["result"])
+            self.assertEqual(outcome["status"], "stopped")
+
+    def test_execute_tool_runs_exactly_one_second_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            calls = []
+            spec = CrossCheckSpec(
+                first_source="orders",
+                second_source="audit",
+                invariant_name="same-record-set",
+                second_source_fn=lambda: calls.append("second") or {},
+                invariant=lambda first, second: first == second,
+            )
+
+            outcome = execute_tool(
+                store,
+                "tool-e2e-3",
+                "find order",
+                lambda: {},
+                cross_check=spec,
+            )
+
+            self.assertEqual(calls, ["second"])
+            self.assertEqual(outcome["decision"], "ASK")
+            self.assertIsNone(outcome["result"])
+
+    def test_execute_tool_records_reason_and_cross_check_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            spec = CrossCheckSpec(
+                first_source="orders",
+                second_source="audit",
+                invariant_name="same-record-set",
+                second_source_fn=lambda: {"records": [{"id": "ORD-100"}]},
+                invariant=lambda first, second: first == second,
+            )
+
+            outcome = execute_tool(
+                store,
+                "tool-e2e-4",
+                "find order",
+                lambda: {},
+                cross_check=spec,
+            )
+            self.assertEqual(outcome["decision"], "ASK")
+            traces = [e for e in store.snapshot()["traces"] if e["run_id"] == "tool-e2e-4"]
+            evidence = traces[-1]["output"]
+            self.assertEqual(evidence["decision"], "ASK")
+            self.assertEqual(evidence["cross_check"]["first_source"], "orders")
+            self.assertEqual(evidence["cross_check"]["second_source"], "audit")
+            self.assertEqual(evidence["cross_check"]["invariant"], "same-record-set")
+            self.assertFalse(evidence["cross_check"]["agrees"])
+
 
     def test_environment_mismatch_is_blocked(self) -> None:
         with self.assertRaises(CrossEnvironmentError):
