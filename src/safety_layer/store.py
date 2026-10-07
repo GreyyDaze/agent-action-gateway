@@ -54,6 +54,12 @@ class TraceStore:
                     score REAL NOT NULL,
                     threshold REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS clarification_states (
+                    run_id TEXT PRIMARY KEY,
+                    attempts INTEGER NOT NULL,
+                    max_attempts INTEGER NOT NULL,
+                    asked_this_turn INTEGER NOT NULL
+                );
                 """
             )
 
@@ -107,6 +113,39 @@ class TraceStore:
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM receipts WHERE state='unknown' ORDER BY id").fetchall()
         return [self._receipt(row) for row in rows]
+
+    def save_clarification_state(self, run_id: str, state: Any) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO clarification_states(run_id, attempts, max_attempts, asked_this_turn)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    attempts=excluded.attempts,
+                    max_attempts=excluded.max_attempts,
+                    asked_this_turn=excluded.asked_this_turn
+                """,
+                (
+                    run_id,
+                    state.attempts,
+                    state.max_attempts,
+                    int(state.asked_this_turn),
+                ),
+            )
+
+    def load_clarification_state(self, run_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT attempts, max_attempts, asked_this_turn FROM clarification_states WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "attempts": row["attempts"],
+            "max_attempts": row["max_attempts"],
+            "asked_this_turn": bool(row["asked_this_turn"]),
+        }
 
     def snapshot(self) -> dict[str, Any]:
         with self._connect() as connection:
