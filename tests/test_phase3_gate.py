@@ -142,6 +142,8 @@ class Phase3GatePersistenceTest(unittest.TestCase):
                 store=store,
             )
             self.assertEqual(result.verdict, "PASS")
+            self.assertEqual(result.judge_provider, summary.judge_provider)
+            self.assertEqual(result.judge_model, summary.judge_model)
             self.assertEqual(store.evaluation_count(), 1)
             self.assertEqual(store.false_alarm_count(), 0)
             stored = store.get_baseline("push")
