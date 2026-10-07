@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+from .cross_check import CrossCheckSpec, perform_cross_check
 from .gate import evaluate
 from .locks import ApprovalStore, RiskRegistry
 from .models import TraceEvent
@@ -68,6 +69,57 @@ def run(
     trace_store.append_receipt(run_id, f"RECEIPT run={run_id} status=completed")
     gate = evaluate(run_id, trace_store)
     return {"run_id": run_id, "output": output, "gate": gate, "status": "completed"}
+
+
+def evaluate_tool_result(
+    store: TraceStore,
+    run_id: str,
+    task: str,
+    result: Mapping[str, Any],
+    *,
+    required_fields: tuple[str, ...] = (),
+    high_stakes: bool = False,
+    batch: bool = False,
+    cross_check: CrossCheckSpec | None = None,
+) -> ResultDecision:
+    """Apply Phase 4 policy to the result returned by a real tool."""
+    policy = StopPolicy()
+
+    if not result and cross_check is not None:
+        checked = perform_cross_check(result, cross_check)
+        decision = policy.cross_check_result(checked, batch=batch)
+        evidence = {
+            "decision": decision.decision,
+            "flags": decision.flags,
+            "cross_check": {
+                "first_source": checked.first_source,
+                "second_source": checked.second_source,
+                "invariant": checked.invariant_name,
+                "agrees": checked.agrees,
+            },
+        }
+    else:
+        decision = policy.empty_result(
+            cross_check_performed=False,
+            batch=batch,
+        ) if not result else policy.partial_result(
+            result,
+            [field for field in required_fields if result.get(field) in (None, "")],
+            missing_critical=high_stakes,
+            batch=batch,
+        )
+        evidence = {
+            "decision": decision.decision,
+            "flags": decision.flags,
+            "missing": decision.missing,
+            "cross_check_required": decision.cross_check_required,
+        }
+
+    store.append_trace(
+        TraceEvent(run_id, 3, "phase4.tool_result", task, evidence, decision.decision.lower())
+    )
+    return decision
+
 
 
 def dispatch_external_action(
