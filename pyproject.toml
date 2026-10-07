@@ -6,10 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "agent-safety-layer"
 version = "0.2.0"
 description = "Prevention-first safety and evaluation layer for AI agents"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
+license = { text = "MIT" }
+authors = [{ name = "Agent Safety Layer contributors" }]
+keywords = ["ai-agents", "safety", "evaluation", "guardrails", "ci"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9"]
 
 [project.scripts]
+safety = "safety_layer.cli:main"
 gate = "safety_layer.gate_cli:main"
 
 [tool.setuptools.packages.find]
