@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from safety_layer.runtime import run
 from safety_layer.stop_rules import (
     AmbiguityBlockedError,
     ClarificationState,
@@ -119,6 +120,33 @@ class Phase4StopRulesTest(unittest.TestCase):
 
             self.assertEqual(provider.refunds, [])
 
+
+    def test_run_stops_and_records_missing_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            result = run(
+                lambda task: "should not execute",
+                "refund request",
+                store,
+                required_inputs={"order_id": None},
+            )
+            self.assertEqual(result["status"], "needs_clarification")
+            events = store.list_trace(result["run_id"])
+            self.assertEqual(events[-1].status, "ask")
+
+    def test_run_batch_ambiguity_blocks_and_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            result = run(
+                lambda task: "should not execute",
+                "refund request",
+                store,
+                required_inputs={"order_id": None},
+                batch=True,
+            )
+            self.assertEqual(result["status"], "blocked")
+            events = store.list_trace(result["run_id"])
+            self.assertEqual(events[-1].status, "blocked")
 
 
 if __name__ == "__main__":
