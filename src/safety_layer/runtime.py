@@ -135,7 +135,7 @@ def run(
         "run_id": active_run_id,
         "output": output,
         "gate": gate,
-        "status": "completed",
+        "status": "degraded" if fuse is not None and fuse.degraded else "completed",
         "attempt": clarification_state.attempts,
     }
 
