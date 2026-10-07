@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from .models import GateVerdict, Receipt, TraceEvent
+from .phase6_trace import redact
 
 
 class TraceStore:
@@ -34,8 +35,28 @@ class TraceStore:
                     event TEXT NOT NULL,
                     input_json TEXT NOT NULL,
                     output_json TEXT NOT NULL,
-                    status TEXT NOT NULL
+                    status TEXT NOT NULL,
+                    flags_json TEXT NOT NULL DEFAULT '[]',
+                    capture_class TEXT NOT NULL DEFAULT 'always',
+                    provider_metadata_json TEXT NOT NULL DEFAULT '{}'
                 );
+                """
+            )
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(trace_events)").fetchall()
+            }
+            migrations = {
+                "flags_json": "ALTER TABLE trace_events ADD COLUMN flags_json TEXT NOT NULL DEFAULT '[]'",
+                "capture_class": "ALTER TABLE trace_events ADD COLUMN capture_class TEXT NOT NULL DEFAULT 'always'",
+                "provider_metadata_json": "ALTER TABLE trace_events ADD COLUMN provider_metadata_json TEXT NOT NULL DEFAULT '{}'",
+            }
+            for name, statement in migrations.items():
+                if name not in columns:
+                    connection.execute(statement)
+
+            connection.executescript(
+                """
                 CREATE TABLE IF NOT EXISTS receipts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id TEXT NOT NULL,
@@ -66,10 +87,26 @@ class TraceStore:
             )
 
     def append_trace(self, event: TraceEvent) -> None:
+        """Persist a trace event after deterministic redaction."""
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO trace_events(run_id, step, event, input_json, output_json, status) VALUES (?, ?, ?, ?, ?, ?)",
-                (event.run_id, event.step, event.event, json.dumps(event.input, default=str), json.dumps(event.output, default=str), event.status),
+                """
+                INSERT INTO trace_events(
+                    run_id, step, event, input_json, output_json, status,
+                    flags_json, capture_class, provider_metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.run_id,
+                    event.step,
+                    event.event,
+                    json.dumps(redact(event.input), default=str),
+                    json.dumps(redact(event.output), default=str),
+                    event.status,
+                    json.dumps(list(event.flags), sort_keys=True),
+                    event.capture_class,
+                    json.dumps(redact(event.provider_metadata or {}), sort_keys=True),
+                ),
             )
 
     def append_receipt(self, run_id: str, line: str) -> None:
@@ -77,8 +114,8 @@ class TraceStore:
         intent_key = f"phase0:{run_id}:{uuid4()}"
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO receipts(run_id, step_id, intent_key, action, arguments_json, state) VALUES (?, ?, ?, ?, ?, ?)",
-                (run_id, "phase0", intent_key, "legacy", json.dumps({"line": line}), "done"),
+                "INSERT INTO receipts(run_id, step_id, intent_key, action, arguments_json, state) VALUES (?, ?, ?, ?, ?, 'done')",
+                (run_id, "phase0", intent_key, "legacy", json.dumps({"line": line})),
             )
 
     def create_receipt(self, run_id: str, step_id: str, action: str, arguments: dict[str, Any]) -> Receipt:
@@ -118,39 +155,6 @@ class TraceStore:
             rows = connection.execute("SELECT * FROM receipts WHERE state='unknown' ORDER BY id").fetchall()
         return [self._receipt(row) for row in rows]
 
-    def save_clarification_state(self, run_id: str, state: Any) -> None:
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO clarification_states(run_id, attempts, max_attempts, asked_this_turn)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(run_id) DO UPDATE SET
-                    attempts=excluded.attempts,
-                    max_attempts=excluded.max_attempts,
-                    asked_this_turn=excluded.asked_this_turn
-                """,
-                (
-                    run_id,
-                    state.attempts,
-                    state.max_attempts,
-                    int(state.asked_this_turn),
-                ),
-            )
-
-    def load_clarification_state(self, run_id: str) -> dict[str, Any] | None:
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT attempts, max_attempts, asked_this_turn FROM clarification_states WHERE run_id = ?",
-                (run_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return {
-            "attempts": row["attempts"],
-            "max_attempts": row["max_attempts"],
-            "asked_this_turn": bool(row["asked_this_turn"]),
-        }
-
     def snapshot(self) -> dict[str, Any]:
         with self._connect() as connection:
             trace_rows = connection.execute("SELECT * FROM trace_events ORDER BY id").fetchall()
@@ -160,8 +164,10 @@ class TraceStore:
         traces = []
         for row in trace_rows:
             trace = dict(row)
-            trace["input"] = json.loads(trace["input_json"])
-            trace["output"] = json.loads(trace["output_json"])
+            trace["input"] = json.loads(trace.pop("input_json"))
+            trace["output"] = json.loads(trace.pop("output_json"))
+            trace["flags"] = json.loads(trace.pop("flags_json", "[]"))
+            trace["provider_metadata"] = json.loads(trace.pop("provider_metadata_json", "{}"))
             traces.append(trace)
 
         return {"traces": traces, "receipts": receipts, "gate_verdicts": gates}
@@ -185,3 +191,5 @@ class TraceStore:
             state=row["state"],
             provider_ref=row["provider_ref"],
         )
+
+
