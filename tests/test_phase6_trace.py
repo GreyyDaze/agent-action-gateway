@@ -243,8 +243,8 @@ class Phase6FailureWallPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "failure-wall.db"
             store = FailureWallStore(path)
-            first = self._group(106, "run-106")
-            second = self._group(107, "run-107")
+            first = self._group(106, "run-106", "TimeoutError")
+            second = self._group(107, "run-107", "ValueError")
             merged = merge_failure_groups([first, second])
             store.save_group(merged)
 
