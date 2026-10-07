@@ -59,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="wait this many seconds between real judge requests; useful for provider rate limits",
     )
+    check.add_argument(
+        "--detail",
+        action="store_true",
+        help="show detailed run, judge request, wait, and result progress",
+    )
     return parser
 
 
@@ -90,6 +95,7 @@ def _run_check_once(args: argparse.Namespace, cases: tuple[GoldenCase, ...], sto
         cases, _candidate_from_file(args.candidate_file), runs=runs,
         judge=judge, candidate_version=args.candidate_version,
         judge_wait_seconds=args.wait_seconds,
+        detail=args.detail,
     )
 
     if args.record_baseline and not summary.judge_available:
