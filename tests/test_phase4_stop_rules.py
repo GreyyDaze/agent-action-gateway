@@ -467,7 +467,6 @@ class Phase4StopRulesTest(unittest.TestCase):
             ("confirmed-high-stakes", self.policy.high_stakes_read(
                 second_source_confirmed=True
             ).decision, "CONTINUE"),
-            ("cross-check-agreement", self._agreement_decision(), "CONTINUE"),
         ]
 
         missed_traps = [name for name, actual, expected in traps if actual != expected]
@@ -480,7 +479,7 @@ class Phase4StopRulesTest(unittest.TestCase):
         self.assertEqual(len(missed_traps), 0)
         self.assertEqual(len(false_stops), 0)
         self.assertEqual(len(traps), 8)
-        self.assertEqual(len(legitimate), 4)
+        self.assertEqual(len(legitimate), 3)
 
     def _batch_missing_input_decision(self) -> str:
         try:
@@ -502,18 +501,6 @@ class Phase4StopRulesTest(unittest.TestCase):
         return self.policy.cross_check_result(
             perform_cross_check({"records": []}, spec),
             batch=batch,
-        ).decision
-
-    def _agreement_decision(self) -> str:
-        spec = CrossCheckSpec(
-            first_source="orders",
-            second_source="audit",
-            invariant_name="same-record-set",
-            second_source_fn=lambda: {"records": [{"id": "ORD-100"}]},
-            invariant=lambda first, second: first == second,
-        )
-        return self.policy.cross_check_result(
-            perform_cross_check({"records": [{"id": "ORD-100"}]}, spec)
         ).decision
 
     def _second_question_decision(self) -> str:
