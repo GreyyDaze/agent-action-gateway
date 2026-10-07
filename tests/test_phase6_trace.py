@@ -68,6 +68,80 @@ class Phase6TraceTests(unittest.TestCase):
             self.assertNotIn("secret-token-value", raw)
             self.assertNotIn("Bearer abc", raw)
 
+    def test_provider_evidence_is_persisted_and_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TraceStore(Path(directory) / "trace.db")
+            trace_id = store.append_trace(
+                TraceEvent(
+                    "run-provider",
+                    1,
+                    "provider.call",
+                    {"prompt": "x"},
+                    {"ok": True},
+                    "ok",
+                    provider_evidence={
+                        "provider": "example",
+                        "provider_version": "v1",
+                        "model": "model-a",
+                        "response_status": 200,
+                        "response_headers": {
+                            "x-request-id": "safe-id",
+                            "authorization": "Bearer secret",
+                        },
+                    },
+                )
+            )
+
+            trace = store.snapshot()["traces"][0]
+            self.assertEqual(trace["id"], trace_id)
+            self.assertEqual(trace["provider_evidence"]["provider"], "example")
+            self.assertEqual(trace["provider_evidence"]["provider_version"], "v1")
+            self.assertEqual(trace["provider_evidence"]["response_status"], 200)
+            self.assertEqual(
+                trace["provider_evidence"]["response_headers"]["authorization"],
+                "[REDACTED_SECRET]",
+            )
+
+    def test_replay_creates_new_trace_and_preserves_original_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TraceStore(Path(directory) / "trace.db")
+            original_id = store.append_trace(
+                TraceEvent(
+                    "run-original",
+                    2,
+                    "provider.call",
+                    {"request": "original"},
+                    {"error": {"type": "TimeoutError"}},
+                    "failed",
+                    flags=("provider-timeout",),
+                    provider_evidence={"provider": "example", "response_status": 504},
+                )
+            )
+
+            replay_id = store.append_replay(
+                original_id,
+                TraceEvent(
+                    "run-replay",
+                    2,
+                    "provider.call",
+                    {"request": "original"},
+                    {"ok": True},
+                    "ok",
+                    provider_evidence={"provider": "example", "response_status": 200},
+                ),
+            )
+
+            traces = store.snapshot()["traces"]
+            original = next(trace for trace in traces if trace["id"] == original_id)
+            replay = next(trace for trace in traces if trace["id"] == replay_id)
+
+            self.assertEqual(original["status"], "failed")
+            self.assertEqual(original["output"], {"error": {"type": "TimeoutError"}})
+            self.assertIsNone(original["replay_of_trace_id"])
+            self.assertEqual(replay["status"], "ok")
+            self.assertEqual(replay["replay_of_trace_id"], original_id)
+            self.assertNotEqual(replay["id"], original_id)
+
     def test_honest_status_never_uses_agent_success_claim(self) -> None:
         self.assertEqual(honest_status(), "ok")
         self.assertEqual(honest_status(suspicious=True), "degraded")
