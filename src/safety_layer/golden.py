@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from .evaluation_models import GOLDEN_SET_VERSION, GoldenCase
+
+if TYPE_CHECKING:
+    from .golden_promotion import GoldenCasePromotionStore
 
 
 DEFAULT_GOLDEN_SET_PATH = (
@@ -82,6 +85,29 @@ def _parse_case(raw_case: Any, seen_ids: set[str]) -> GoldenCase:
         catastrophic=bool(raw_case.get("catastrophic", False)),
         rubric=tuple(rubric),
     )
+
+
+def load_golden_cases(
+    path: str | Path = DEFAULT_GOLDEN_SET_PATH,
+    *,
+    promotion_store: "GoldenCasePromotionStore | None" = None,
+) -> tuple[GoldenCase, ...]:
+    """Load canonical golden-v1 cases plus explicitly promoted failures."""
+    cases = list(load_golden_set(path))
+    if promotion_store is None:
+        return tuple(cases)
+
+    existing_ids = {case.case_id for case in cases}
+    for promotion in promotion_store.list():
+        if promotion.case.case_id in existing_ids:
+            raise ValueError(
+                "duplicate golden case_id across canonical and promoted cases: "
+                f"{promotion.case.case_id}"
+            )
+        cases.append(promotion.case)
+        existing_ids.add(promotion.case.case_id)
+
+    return tuple(cases)
 
 
 def seed_golden_cases() -> tuple[GoldenCase, ...]:
