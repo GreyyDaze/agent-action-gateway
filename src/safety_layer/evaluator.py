@@ -22,6 +22,7 @@ def evaluate_cases(
     judge: Judge | None = None,
     candidate_version: str = "unknown",
     judge_wait_seconds: float = 0.0,
+    detail: bool = False,
 ) -> EvaluationSummary:
     """Evaluate deterministically first and use an explicit product judge for rubric cases."""
     if runs < 1:
@@ -44,6 +45,8 @@ def evaluate_cases(
     judge_request_count = 0
 
     for run_number in range(1, runs + 1):
+        if detail:
+            print(f"RUN | {run_number}/{runs} | starting")
         if not judge_available:
             break
         for case in cases:
@@ -55,9 +58,20 @@ def evaluate_cases(
             try:
                 if not is_deterministic(case):
                     if judge_request_count > 0 and judge_wait_seconds:
+                        if detail:
+                            print(f"WAIT | {judge_wait_seconds:.1f}s before next judge request")
                         sleep(judge_wait_seconds)
                     judge_request_count += 1
+                    if detail:
+                        provider_name = getattr(evaluator, "provider", "unknown")
+                        model_name = getattr(provider_name, "model", "unknown")
+                        provider_text = provider_name if isinstance(provider_name, str) else type(provider_name).__name__
+                        print(f"JUDGE-REQUEST | provider={provider_text} | model={model_name} | case={case.case_id} | request={judge_request_count}")
+                decision_started = perf_counter()
                 decision: JudgeDecision = evaluator.evaluate(case, output)
+                decision_seconds = perf_counter() - decision_started
+                if detail and not is_deterministic(case):
+                    print(f"JUDGE-RESULT | case={case.case_id} | label={decision.label.upper()} | score={decision.score:.4f} | latency={decision_seconds:.2f}s")
             except JudgeUnavailableError as exc:
                 judge_available = False
                 judge_error = str(exc)
