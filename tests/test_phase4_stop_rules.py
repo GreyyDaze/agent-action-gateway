@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from safety_layer.cross_check import CrossCheckSpec, perform_cross_check
-from safety_layer.runtime import run
+from safety_layer.runtime import evaluate_tool_result, run
 from safety_layer.stop_rules import (
     AmbiguityBlockedError,
     ClarificationState,
@@ -154,6 +154,55 @@ class Phase4StopRulesTest(unittest.TestCase):
                 new_turn=True,
             )
             self.assertEqual(third["status"], "completed")
+
+    def test_real_tool_result_is_traced_and_requires_cross_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            decision = evaluate_tool_result(
+                store,
+                "tool-run-1",
+                "find order",
+                {},
+            )
+            self.assertEqual(decision.decision, "CROSS_CHECK")
+            traces = [
+                event
+                for event in store.snapshot()["traces"]
+                if event["run_id"] == "tool-run-1"
+            ]
+            self.assertEqual(traces[-1]["event"], "phase4.tool_result")
+
+    def test_real_empty_tool_result_cross_check_disagreement_asks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            spec = CrossCheckSpec(
+                first_source="orders",
+                second_source="audit",
+                invariant_name="same-record-set",
+                second_source_fn=lambda: {"records": [{"id": "ORD-100"}]},
+                invariant=lambda first, second: first == second,
+            )
+            decision = evaluate_tool_result(
+                store,
+                "tool-run-2",
+                "find order",
+                {},
+                cross_check=spec,
+            )
+            self.assertEqual(decision.decision, "ASK")
+            self.assertIn("cross-check-disagreement", decision.flags)
+
+    def test_high_stakes_tool_result_requires_second_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            decision = evaluate_tool_result(
+                store,
+                "tool-run-3",
+                "read account",
+                {"account_id": "A-1"},
+                high_stakes=True,
+            )
+            self.assertEqual(decision.decision, "ASK")
 
     def test_environment_mismatch_is_blocked(self) -> None:
         with self.assertRaises(CrossEnvironmentError):
