@@ -22,3 +22,7 @@ gate = "safety_layer.gate_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.data-files]
+"data/golden" = ["data/golden/*.json"]
+"data/calibration" = ["data/calibration/*.json"]
