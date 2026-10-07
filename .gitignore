@@ -8,4 +8,7 @@ __pycache__/
 *.db-wal
 data/phase1-manual/
 src/agent_safety_layer.egg-info/
+build/
+dist/
+*.egg-info/
 

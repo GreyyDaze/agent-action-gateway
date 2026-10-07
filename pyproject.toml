@@ -23,6 +23,12 @@ gate = "safety_layer.gate_cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.data-files]
-"data/golden" = ["data/golden/golden-v1.json"]
-"data/calibration" = ["data/calibration/calibration-v1.json"]
+[tool.setuptools.package-data]
+# The golden set and calibration set are runtime artifacts owned by the
+# package, so they ship inside it and are loaded with importlib.resources.
+# data-files would install relative to sys.prefix (the venv root), which no
+# loader can locate reliably from an installed package.
+safety_layer = ["data/golden/*.json", "data/calibration/*.json"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["data/*.db", "data/*.db-shm", "data/*.db-wal"]

@@ -80,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
             sys.argv = old
         return 0
     if args.command == "proof":
+        import sys
         old = sys.argv
         try:
             sys.argv = ["safety proof", "--jobs", str(args.jobs)]

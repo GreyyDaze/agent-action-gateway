@@ -1,24 +1,31 @@
 from __future__ import annotations
 
 import json
+from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Any
 
 from .evaluation_models import CALIBRATION_MIN_AGREEMENT, CALIBRATION_SET_VERSION, CalibrationExample
 
 
-DEFAULT_CALIBRATION_SET_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "data"
-    / "calibration"
-    / "calibration-v1.json"
-)
+CALIBRATION_SET_RESOURCE = "data/calibration/calibration-v1.json"
+
+
+def default_calibration_set_path() -> Path:
+    """Materialize the packaged calibration set and return its concrete path.
+
+    The JSON ships as package data, so this works from a wheel, an editable
+    install, and a source checkout without guessing a filesystem layout.
+    """
+    resource = files(__package__).joinpath(CALIBRATION_SET_RESOURCE)
+    with as_file(resource) as materialized:
+        return Path(materialized)
 
 
 def load_calibration_set(
-    path: str | Path = DEFAULT_CALIBRATION_SET_PATH,
+    path: str | Path | None = None,
 ) -> tuple[CalibrationExample, ...]:
-    artifact_path = Path(path)
+    artifact_path = Path(path) if path is not None else default_calibration_set_path()
     try:
         payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
@@ -97,7 +104,7 @@ def load_calibration_set(
 
 
 def calibration_case_ids(
-    path: str | Path = DEFAULT_CALIBRATION_SET_PATH,
+    path: str | Path | None = None,
 ) -> tuple[str, ...]:
     return tuple(dict.fromkeys(example.case_id for example in load_calibration_set(path)))
 

@@ -6,7 +6,31 @@ import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
+def find_repo_root(start: Path | None = None) -> Path:
+    """Locate the source checkout that owns the phase proof suites.
+
+    The proof suites are repository tests, not packaged runtime data, so they
+    are not shipped inside the wheel. Resolve the checkout from the working
+    directory instead of guessing from __file__, which points at site-packages
+    for a non-editable install.
+    """
+    candidates = []
+    if start is not None:
+        candidates.append(Path(start).resolve())
+    candidates.append(Path.cwd().resolve())
+    for directory in (Path(__file__).resolve().parent,):
+        candidates.extend(directory.parents)
+
+    for candidate in candidates:
+        for node in (candidate, *candidate.parents):
+            if (node / "tests" / "test_phase2.py").is_file():
+                return node
+
+    raise SystemExit(
+        "phase proofs require a source checkout containing tests/test_phase2.py; "
+        "run this command from the repository root. The packaged wheel does not "
+        "include the proof suite."
+    )
 
 PROOFS = (
     ("P2", ["tests/test_phase2.py"], "0 destructive executions without valid fresh approval"),
@@ -17,18 +41,22 @@ PROOFS = (
 )
 
 
-def _run(command: list[str]) -> None:
+def _run(command: list[str], cwd: Path) -> None:
     print("$ " + " ".join(command))
-    result = subprocess.run(command, cwd=ROOT, text=True)
+    result = subprocess.run(command, cwd=cwd, text=True)
     if result.returncode:
         raise SystemExit(result.returncode)
 
 
-def run_proofs(jobs: int) -> None:
-    _run([sys.executable, "-m", "safety_layer.phase1_proof", "--jobs", str(jobs)])
+def run_proofs(jobs: int, *, root: Path | None = None) -> None:
+    repo_root = Path(root).resolve() if root is not None else find_repo_root()
+    _run(
+        [sys.executable, "-m", "safety_layer.phase1_proof", "--jobs", str(jobs)],
+        repo_root,
+    )
     print(f"P1 PROOF: 0 dupes / {jobs} crash jobs")
     for phase, paths, statement in PROOFS:
-        _run([sys.executable, "-m", "pytest", "-q", *paths])
+        _run([sys.executable, "-m", "pytest", "-q", *paths], repo_root)
         print(f"{phase} PROOF: PASS | {statement}")
     print("PHASE PROOFS: PASS")
 

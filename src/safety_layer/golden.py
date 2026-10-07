@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -10,14 +11,23 @@ if TYPE_CHECKING:
     from .golden_promotion import GoldenCasePromotionStore
 
 
-DEFAULT_GOLDEN_SET_PATH = (
-    Path(__file__).resolve().parents[2] / "data" / "golden" / "golden-v1.json"
-)
+GOLDEN_SET_RESOURCE = "data/golden/golden-v1.json"
 _ALLOWED_CHECK_TYPES = frozenset({"exact", "field-equality", "regex", "rubric"})
 
 
-def load_golden_set(path: str | Path = DEFAULT_GOLDEN_SET_PATH) -> tuple[GoldenCase, ...]:
-    artifact_path = Path(path)
+def default_golden_set_path() -> Path:
+    """Materialize the packaged golden set and return its concrete path.
+
+    The JSON ships as package data, so this works from a wheel, an editable
+    install, and a source checkout without guessing a filesystem layout.
+    """
+    resource = files(__package__).joinpath(GOLDEN_SET_RESOURCE)
+    with as_file(resource) as materialized:
+        return Path(materialized)
+
+
+def load_golden_set(path: str | Path | None = None) -> tuple[GoldenCase, ...]:
+    artifact_path = Path(path) if path is not None else default_golden_set_path()
     try:
         payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
@@ -88,7 +98,7 @@ def _parse_case(raw_case: Any, seen_ids: set[str]) -> GoldenCase:
 
 
 def load_golden_cases(
-    path: str | Path = DEFAULT_GOLDEN_SET_PATH,
+    path: str | Path | None = None,
     *,
     promotion_store: "GoldenCasePromotionStore | None" = None,
 ) -> tuple[GoldenCase, ...]:
