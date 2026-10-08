@@ -60,7 +60,7 @@ class FailurePromotionTests(unittest.TestCase):
             )[0]
             FailureWallStore(wall_path).save_group(group)
 
-            with self.assertRaisesRegex(ValueError, "must be confirmed"):
+            with self.assertRaisesRegex(ValueError, "not confirmed"):
                 promote_failure_group(
                     FailureWallStore(wall_path),
                     promotions,

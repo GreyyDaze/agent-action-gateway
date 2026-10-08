@@ -84,7 +84,7 @@ def run_proof() -> None:
     if false_fails != 0:
         raise AssertionError(f"unchanged-run false FAIL count: {false_fails}")
     if catastrophic_result.verdict != "FAIL":
-        raise AssertionError("a serious regression was hidden by the average score")
+        raise AssertionError("a bad case was hidden by the average score")
 
     print(
         f"P3 foundation: injected {drop_points:.1f}-pt drop caught | "

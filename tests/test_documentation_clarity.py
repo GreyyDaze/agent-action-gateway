@@ -225,7 +225,7 @@ class ErrorMessageClarityTest(unittest.TestCase):
             "too few": (
                 {"version": GOLDEN_SET_VERSION,
                  "cases": [case(i, catastrophic=i == 1) for i in range(1, 4)]},
-                "at least 10",
+                "need 10",
             ),
             "no catastrophic": (
                 {"version": GOLDEN_SET_VERSION, "cases": [case(i) for i in range(1, 13)]},
@@ -240,7 +240,7 @@ class ErrorMessageClarityTest(unittest.TestCase):
             "duplicate id": (
                 {"version": GOLDEN_SET_VERSION,
                  "cases": [case(1, catastrophic=True)] + [case(1) for _ in range(11)]},
-                "unique",
+                "duplicate",
             ),
             "missing field": (
                 {"version": GOLDEN_SET_VERSION,

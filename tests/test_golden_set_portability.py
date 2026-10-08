@@ -77,7 +77,7 @@ class GoldenSetPortabilityTest(unittest.TestCase):
         cases = [build_case(i, catastrophic=(i == 1)) for i in range(1, MIN_GOLDEN_CASES)]
         with self.assertRaises(ValueError) as caught:
             load_golden_set(write_set(cases))
-        self.assertIn("at least", str(caught.exception))
+        self.assertIn("too few cases", str(caught.exception))
 
     def test_rejects_a_set_without_a_catastrophic_case(self) -> None:
         cases = [build_case(i, catastrophic=False) for i in range(1, 13)]

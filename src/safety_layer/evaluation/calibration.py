@@ -125,10 +125,7 @@ def run_calibration(cases, judge):
     for example in examples:
         case = by_id.get(example.case_id)
         if case is None:
-            raise ValueError(
-                f'calibration example refers to case "{example.case_id}", '
-                f"which is not in the case file"
-            )
+            raise ValueError(f'unknown case_id "{example.case_id}"')
         try:
             decision = judge.evaluate(case, example.output)
         except JudgeUnavailableError:

@@ -167,9 +167,7 @@ def promote_failure_group(
 
     source_trace_ids = tuple(sorted({record.trace_id for record in group.records}))
     if not source_trace_ids:
-        raise ValueError(
-                "cannot promote a failure group until it has recorded evidence"
-            )
+        raise ValueError("failure group has no evidence")
 
     rubric_values = tuple(rubric)
     case = GoldenCase(
@@ -194,5 +192,5 @@ def promote_failure_group(
 def _require_confirmed_group(group: FailureGroup) -> None:
     if group.state != "confirmed":
         raise ValueError(
-            f"failure group must be confirmed before promotion: {group.group_id}"
+            f"failure group not confirmed: {group.group_id}"
         )

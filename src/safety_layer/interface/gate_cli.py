@@ -36,9 +36,7 @@ EXIT_UNCERTAIN = 3
 def _candidate_from_file(path: str):
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError(
-            "the --candidate-file must contain an object keyed by case_id"
-        )
+        raise ValueError("--candidate-file must be an object keyed by case_id")
 
     def candidate(case: GoldenCase) -> Any:
         if case.case_id not in payload:

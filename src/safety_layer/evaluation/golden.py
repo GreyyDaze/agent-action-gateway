@@ -43,18 +43,17 @@ def load_golden_set(path: str | Path | None = None) -> tuple[GoldenCase, ...]:
         raise ValueError(f"{artifact_path} is not valid JSON: {exc}") from exc
 
     if not isinstance(payload, dict):
-        raise ValueError(f"the top level of {artifact_path} must be a JSON object")
+        raise ValueError(f"{artifact_path} must contain a JSON object at the top level")
 
     version = payload.get("version")
     if version != GOLDEN_SET_VERSION:
         raise ValueError(
-            f'unsupported "version": {version!r}; this build reads '
-            f'"{GOLDEN_SET_VERSION}" only'
+            f'"version" must be "{GOLDEN_SET_VERSION}", got {version!r}'
         )
 
     raw_cases = payload.get("cases")
     if not isinstance(raw_cases, list) or not raw_cases:
-        raise ValueError('the "cases" key must be a non-empty list')
+        raise ValueError('"cases" must be a non-empty list')
 
     cases: list[GoldenCase] = []
     seen_ids: set[str] = set()
@@ -64,24 +63,23 @@ def load_golden_set(path: str | Path | None = None) -> tuple[GoldenCase, ...]:
 
     if len(cases) < MIN_GOLDEN_CASES:
         raise ValueError(
-            f"only {len(cases)} cases found; at least {MIN_GOLDEN_CASES} are "
-            f"needed for the comparison against the previous run to mean anything"
+            f"too few cases: found {len(cases)}, need {MIN_GOLDEN_CASES}"
         )
     if not any(case.catastrophic for case in cases):
-        raise ValueError('no case sets "catastrophic": true, so a serious failure would be averaged away instead of stopping the release')
+        raise ValueError('no case has "catastrophic": true')
 
     return tuple(cases)
 
 
 def _parse_case(raw_case: Any, seen_ids: set[str]) -> GoldenCase:
     if not isinstance(raw_case, dict):
-        raise ValueError("every entry in \"cases\" must be a JSON object")
+        raise ValueError('each entry in "cases" must be a JSON object')
 
     required = ("case_id", "task", "expected", "check_type", "source")
     missing = [field for field in required if field not in raw_case]
     if missing:
         raise ValueError(
-            "case is missing required field(s): " + ", ".join(missing)
+            "missing field(s): " + ", ".join(missing)
         )
 
     case_id = raw_case["case_id"]
@@ -89,7 +87,7 @@ def _parse_case(raw_case: Any, seen_ids: set[str]) -> GoldenCase:
     if not isinstance(case_id, str) or not case_id:
         raise ValueError('"case_id" must be a non-empty string')
     if case_id in seen_ids:
-        raise ValueError(f'two cases share the case_id "{case_id}"; each must be unique')
+        raise ValueError(f'duplicate case_id "{case_id}"')
     if check_type not in _ALLOWED_CHECK_TYPES:
         allowed = ", ".join(sorted(_ALLOWED_CHECK_TYPES))
         raise ValueError(f'unsupported "check_type": {check_type!r}; use one of {allowed}')
@@ -97,7 +95,7 @@ def _parse_case(raw_case: Any, seen_ids: set[str]) -> GoldenCase:
     seen_ids.add(case_id)
     rubric = raw_case.get("rubric", [])
     if not isinstance(rubric, list) or not all(isinstance(item, str) for item in rubric):
-        raise ValueError(f'the "rubric" for case "{case_id}" must be a list of strings')
+        raise ValueError(f'"rubric" for case "{case_id}" must be a list of strings')
 
     return GoldenCase(
         case_id=case_id,
@@ -124,8 +122,7 @@ def load_golden_cases(
     for promotion in promotion_store.list():
         if promotion.case.case_id in existing_ids:
             raise ValueError(
-                f'case_id "{promotion.case.case_id}" appears both in the case file '
-                f"and among promoted cases; each must be unique"
+                f'duplicate case_id "{promotion.case.case_id}"'
             )
         cases.append(promotion.case)
         existing_ids.add(promotion.case.case_id)
