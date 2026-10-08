@@ -30,6 +30,8 @@ print(result["status"])
 
 The wrapper records the run through the existing runtime, trace, receipt, and evaluation path. The external agent remains outside the safety layer.
 
+Full SDK boundary, limitations, and gate exit semantics: `docs/sdk.md`.
+
 ## CLI
 
 ~~~bash
@@ -84,18 +86,18 @@ The external agent and its model provider are not owned by this project.
 
 ## Proofs from Phases 1–6
 
-Run the phase-specific tests to reproduce the repository's proof evidence:
-
 | Phase | Proof |
 |---|---|
 | P1 | `0 dupes / 1,000 crash jobs` |
 | P2 | `0 destructive executions without valid fresh approval` |
-| P3 | injected regression is red; unchanged-run false-alarm proof |
+| P3 | `calibration 6/6 = 100%`; good candidate `PASS, score=1.0000`; catastrophic candidate `FAIL, score=0.9667`; unchanged proof `10/10, false-fails=0`; cost/runtime `$0.0004 / 0.8840 min` |
 | P4 | defined ambiguity traps caught with zero false stops on the legitimate suite |
 | P5 | zero budget overruns in the concurrency proof; loop detection passes |
 | P6 | planted silent-wrong cases flagged; deterministic failure groups separate equivalent and distinct signatures |
 
 The exact proof output belongs to the phase test/proof commands. Do not treat a green unit test as a stronger claim than the proof it actually runs.
+
+The complete recorded evidence is in `docs/PHASE7_PROOF.md`.
 
 ## SDK integration boundary
 
@@ -108,11 +110,17 @@ result = run(agent, task)
 print(result["status"])
 ~~~
 
-The \`agent\` callable is owned by your application. The safety layer receives the task, applies its deterministic runtime controls, records evidence, and evaluates the run. It does not own the agent's LLM provider or model loop.
+The `agent` callable is owned by your application. The safety layer receives the task, applies its deterministic runtime controls, records evidence, and evaluates the run. It does not own the agent's LLM provider or model loop.
 
-The current SDK is a lightweight wrapper around the existing runtime, not a universal agent framework. See \`docs/sdk.md\` for the supported boundary and current limitations.
+The current SDK is a lightweight wrapper around the existing runtime, not a universal agent framework. See `docs/sdk.md` for the supported boundary and current limitations.
 
 ## Scope and honest limits
+
+The current Phase 7 scope is explicit:
+
+- the 8 deferred edge cases are recorded in `ROADMAP.md`;
+- the 8 🟢 non-goal constraints from the Part 4 triage are recorded there;
+- broader PRD constraints remain authoritative and are not removed by the roadmap.
 
 This tool does **not** claim:
 
@@ -139,7 +147,7 @@ The dashboard currently exposes:
 - gate verdict history;
 - persisted Phase 5 fuse counters when a run supplies a fuse.
 
-The JSON state is also available at \`/api/state\`.
+The JSON state is also available at `/api/state`.
 
 ## Fresh-install proof
 
@@ -157,8 +165,10 @@ python -m safety_layer --help
 The Phase 7 acceptance target is:
 
 ~~~text
-fresh install -> full suite green -> phase proof numbers reproducible
+fresh install -> full suite green -> all proof numbers reproducible
 ~~~
+
+The final human acceptance step is a cold README walkthrough in a clean machine or sandbox. See `docs/PHASE7_PROOF.md`.
 
 ## Architecture
 
