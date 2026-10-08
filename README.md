@@ -17,20 +17,51 @@ python -m pip install ".[dev]"
 
 The package exposes the `safety` CLI.
 
-## 3-line adoption
+## Adoption
 
-Wrap an existing callable without rewriting the agent:
+Your agent obtains its tools from a session. It never receives the raw
+functions, so there is nothing to bypass.
+
+~~~python
+from safety_layer import session
+
+with session() as ctx:
+    refund = ctx.tool(refund_fn, action="refund", risk="destructive")
+    lookup = ctx.tool(lookup_fn, action="lookup", risk="read")
+    result = ctx.run(agent, task, tools={"refund": refund, "lookup": lookup})
+~~~
+
+Every call crosses the same pipeline, in this order:
+
+~~~text
+risk class → budgets → environment → approval → receipt → dispatch → result checks → trace
+~~~
+
+On by default, with no configuration:
+
+- unknown actions are treated as **destructive**
+- destructive actions need a **fresh approval bound to the exact payload**
+- runs are bounded by **step, time and spend** limits
+- **cross-environment** calls are refused
+- side effects get a **durable receipt**, so a crash cannot double-charge
+
+Run `python docs/examples/quickstart.py` to watch an unapproved refund get
+refused, then permitted once approved. That same file is executed by CI, so it
+cannot drift from this page.
+
+Full SDK boundary, limitations, and gate exit semantics: `docs/sdk.md`.
+
+### Observation only: `run()`
 
 ~~~python
 from safety_layer import run
 
 result = run(agent, task)
-print(result["status"])
+result["enforcement"]   # "observe"
 ~~~
 
-The wrapper records the run through the existing runtime, trace, receipt, and evaluation path. The external agent remains outside the safety layer.
-
-Full SDK boundary, limitations, and gate exit semantics: `docs/sdk.md`.
+`run()` records a trace. It does **not** authorize anything — tools it does not
+know about are not enforced. Use `session()` when you want protection.
 
 ## CLI
 

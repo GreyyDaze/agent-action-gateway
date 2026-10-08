@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .gateway import GatewayPolicy
+
 import argparse
+from pathlib import Path
 
 from ..evidence.failure_wall import build_failure_wall
 from ..providers.mock import MockProvider
@@ -33,7 +39,67 @@ def build_parser() -> argparse.ArgumentParser:
     wall = sub.add_parser("wall", help="group persisted failures from a trace database")
     wall.add_argument("--db", default="data/runtime.db")
 
+    gateway = sub.add_parser(
+        "gateway",
+        help="serve the HTTP gateway: deny-by-default routes holding upstream keys",
+    )
+    gateway.add_argument("--config", required=True, help="YAML or JSON route table")
+    gateway.add_argument("--db", default="data/runtime.db")
+    gateway.add_argument("--host", default="127.0.0.1")
+    gateway.add_argument("--port", type=int, default=8080)
+
     return parser
+
+
+def load_route_policy(path: str) -> GatewayPolicy:
+    """Build a gateway policy from a route table.
+
+    Kept here rather than in the gateway so the file format is a CLI concern
+    and the gateway stays a plain object.
+    """
+    import json
+
+    from ..interface.gateway import GatewayPolicy, Route
+
+    text = Path(path).read_text(encoding="utf-8")
+    try:
+        import yaml
+
+        document = yaml.safe_load(text)
+    except ImportError:
+        document = json.loads(text)
+    if not isinstance(document, dict):
+        raise ValueError("gateway config must be a mapping with a 'routes' list")
+    policy = GatewayPolicy(
+        session_environment=str(document.get("session_environment", "dev"))
+    )
+    for entry in document.get("routes", []):
+        policy.register(
+            Route(
+                path=str(entry["path"]),
+                upstream=str(entry["upstream"]),
+                action=str(entry["action"]),
+                risk=str(entry.get("risk", "destructive")),
+                method=str(entry.get("method", "POST")).upper(),
+                secret_env=str(entry.get("secret_env", "")),
+                environment=str(entry.get("environment", "prod")),
+            )
+        )
+    return policy
+
+
+def run_gateway(args: argparse.Namespace) -> int:
+
+    from ..interface.gateway import build_gateway_server
+    from ..storage.traces import TraceStore as Store
+
+    policy = load_route_policy(args.config)
+    server, handler = build_gateway_server(Store(args.db), policy, args.host, args.port)
+    print(f"Safety gateway on http://{args.host}:{server.server_address[1]}/")
+    print(f"access token: {getattr(handler, 'access_token', '')}")
+    print(f"registered routes: {len(policy.routes)} (anything else is refused)")
+    server.serve_forever()
+    return EXIT_PASS
 
 
 def run_demo(args: argparse.Namespace) -> int:
@@ -106,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
         return _delegate("safety gate", list(args.args), "gate_cli", "gate")
     if args.command == "wall":
         return run_wall(args)
+    if args.command == "gateway":
+        return run_gateway(args)
 
     parser.error("unknown command")
     return EXIT_USAGE

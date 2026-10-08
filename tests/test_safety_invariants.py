@@ -151,7 +151,8 @@ class DashboardApprovalBoundaryTest(unittest.TestCase):
             {"order_id": "ORD-100", "amount": 400},
             datetime.now(UTC) + timedelta(hours=1),
         )
-        self.server = build_server(str(self.db), "127.0.0.1", 0)
+        self.server, handler = build_server(str(self.db), "127.0.0.1", 0)
+        self.token = handler.access_token
         self.port = self.server.server_address[1]
         self.base = f"http://127.0.0.1:{self.port}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -162,7 +163,9 @@ class DashboardApprovalBoundaryTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def _csrf_token(self) -> str:
-        html = urllib.request.urlopen(self.base + "/", timeout=10).read().decode()
+        request = urllib.request.Request(self.base + "/")
+        request.add_header("Authorization", f"Bearer {self.token}")
+        html = urllib.request.urlopen(request, timeout=10).read().decode()
         return re.search(r"name='csrf_token' value='([^']+)'", html).group(1)
 
     def _post(self, fields: dict[str, str], origin: str | None = None) -> int:
@@ -173,16 +176,51 @@ class DashboardApprovalBoundaryTest(unittest.TestCase):
         )
         if origin is not None:
             request.add_header("Origin", origin)
+        request.add_header("Authorization", f"Bearer {self.token}")
         try:
             return urllib.request.urlopen(request, timeout=10).status
         except urllib.error.HTTPError as exc:
             return exc.code
 
-    def _get(self) -> str:
-        return urllib.request.urlopen(self.base + "/", timeout=10).read().decode()
+    def _get(self, *, authenticated: bool = True) -> str:
+        request = urllib.request.Request(self.base + "/")
+        if authenticated:
+            request.add_header("Authorization", f"Bearer {self.token}")
+        return urllib.request.urlopen(request, timeout=10).read().decode()
 
     def test_approval_form_embeds_a_csrf_token(self) -> None:
         self.assertIn("csrf_token", self._get())
+
+    def test_unauthenticated_read_is_refused(self) -> None:
+        """No token, no evidence. CSRF alone does not stop a local process."""
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            self._get(authenticated=False)
+        self.assertEqual(raised.exception.code, 401)
+
+    def test_unauthenticated_api_state_is_refused(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(self.base + "/api/state", timeout=10)
+        self.assertEqual(raised.exception.code, 401)
+
+    def test_unauthenticated_post_is_refused(self) -> None:
+        """A stolen CSRF token is useless without the dashboard token too."""
+        request = urllib.request.Request(
+            self.base + "/approvals/approve",
+            data=urllib.parse.urlencode(
+                {
+                    "approval_id": self.approval.approval_id,
+                    "approver": "attacker",
+                    "csrf_token": self._csrf_token(),
+                }
+            ).encode(),
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(raised.exception.code, 401)
+        self.assertEqual(
+            self.approvals.get(self.approval.approval_id).decision, "pending"
+        )
 
     def test_cross_origin_post_is_rejected(self) -> None:
         status = self._post(
@@ -212,7 +250,12 @@ class DashboardApprovalBoundaryTest(unittest.TestCase):
         self.assertEqual(self.approvals.get(self.approval.approval_id).decision, "pending")
 
     def test_responses_carry_security_headers(self) -> None:
-        response = urllib.request.urlopen(self.base + "/", timeout=10)
+        response = urllib.request.urlopen(
+            urllib.request.Request(
+                self.base + "/", headers={"Authorization": f"Bearer {self.token}"}
+            ),
+            timeout=10,
+        )
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertIn("Content-Security-Policy", response.headers)
@@ -280,3 +323,66 @@ class DeadCodeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PaymentRedactionTest(unittest.TestCase):
+    """FR-9: payment and identity data must not persist in the clear.
+
+    The original finding was that key-based PII redaction worked but payment
+    fields were stored in plaintext, which contradicted our own spec.
+    """
+
+    # Fields from the original finding. All must be redacted.
+    FINDING_FIELDS = (
+        ("card_number", "4111111111111111"),
+        ("card", "5555555555554444"),
+        ("pan", "4012888888881881"),
+        ("cvv", "123"),
+        ("cvc", "456"),
+        ("cvv2", "789"),
+        ("iban", "GB33BUKB20201555555555"),
+        ("account_number", "12345678901"),
+        ("full_name", "Jane Doe"),
+        ("first_name", "Jane"),
+        ("last_name", "Doe"),
+        ("ssn", "123-45-6789"),
+        ("phone", "+15551234567"),
+        ("address", "1 Main Street"),
+    )
+
+    def test_every_finding_field_is_redacted(self) -> None:
+        for field, value in self.FINDING_FIELDS:
+            with self.subTest(field=field):
+                redacted = redact({field: value})[field]
+                self.assertNotEqual(redacted, value, f"{field} leaked in plaintext")
+                self.assertTrue(redacted.startswith("[REDACTED"))
+
+    def test_card_numbers_are_redacted_inside_free_text(self) -> None:
+        self.assertNotIn("4111111111111111", redact("pay with 4111 1111 1111 1111 now"))
+
+    def test_identifiers_survive_redaction(self) -> None:
+        """The counter-test. Over-redaction destroys the evidence traces exist for."""
+        run_id = str(uuid.uuid4())
+        intent_key = f"run-1:{uuid.uuid4()}"
+        provider_ref = "mock-" + "a1b2c3" * 6
+        payment_intent = "pi_3ABCdefGHIjklmnop"
+        for payload in (
+            {"run_id": run_id},
+            {"intent_key": intent_key},
+            {"provider_ref": provider_ref},
+            {"payment_intent": payment_intent},
+        ):
+            for key, value in payload.items():
+                with self.subTest(key=key):
+                    self.assertEqual(redact(payload)[key], value, f"{key} was over-redacted")
+
+    def test_non_card_digit_runs_are_not_treated_as_cards(self) -> None:
+        """A long identifier that fails Luhn is evidence, not a card."""
+        self.assertEqual(redact("order-0000000001234567890"), "order-0000000001234567890")
+
+    def test_luhn_validation(self) -> None:
+        from safety_layer.evidence.redaction import luhn_valid
+
+        self.assertTrue(luhn_valid("4111111111111111"))
+        self.assertFalse(luhn_valid("4111111111111112"))
+        self.assertFalse(luhn_valid("123"))

@@ -4,16 +4,15 @@ from typing import Any
 from uuid import uuid4
 
 from ..core.cross_check import CrossCheckSpec, perform_cross_check
+from ..core.enforcement import EnforcementContext, enforce
 from ..core.fuses import FuseController, FuseTrippedError
 from ..core.locks import ApprovalStore, RiskRegistry
-from ..core.receipts import execute_side_effect
-from ..core.safety import check_action
+from ..core.safety import SafetyBlockedError
 from ..core.stop_rules import (
     AmbiguityBlockedError,
     ClarificationState,
     ResultDecision,
     StopPolicy,
-    enforce_environment,
     validate_required_input,
 )
 from ..evaluation.gate import record_run_status
@@ -133,6 +132,7 @@ def run(
             "output": None,
             "run_status": run_status.verdict,
             "status": "failed",
+            "enforcement": "observe",
             "attempt": clarification_state.attempts,
         }
 
@@ -146,6 +146,7 @@ def run(
         "output": output,
         "run_status": run_status.verdict,
         "status": "degraded" if fuse is not None and fuse.degraded else "completed",
+        "enforcement": "observe",
         "attempt": clarification_state.attempts,
     }
 
@@ -248,6 +249,12 @@ def execute_tool(
     cross_check: CrossCheckSpec | None = None,
     fuse: FuseController | None = None,
     action: str | None = None,
+    step_id: str | None = None,
+    registry: RiskRegistry | None = None,
+    approval_store: ApprovalStore | None = None,
+    approval_id: str | None = None,
+    session_environment: str = "prod",
+    target_environment: str | None = None,
     arguments: dict[str, Any] | None = None,
     estimated_cost_usd: float = 0.0,
     actual_cost_usd: float | None = None,
@@ -255,29 +262,40 @@ def execute_tool(
     state_changed: bool = False,
     write: bool = False,
 ) -> dict[str, Any]:
-    """Execute one external tool call through the execution limits boundary, then apply validation."""
+    """Execute one external tool call through the shared pipeline, then validate.
+
+    Pre-dispatch checks go through `enforce` so this path cannot drift from the
+    guarded one. Read-only calls carry no provider, so no receipt is written.
+    """
     if fuse is not None:
-        try:
-            fuse.before_dispatch(
-                action or task,
-                arguments or {},
+        decision = enforce(
+            EnforcementContext(
+                store=store,
+                run_id=run_id,
+                action=action or task,
+                arguments=arguments or {},
+                step_id=step_id or (action or task),
+                registry=registry,
+                approval_store=approval_store,
+                approval_id=approval_id,
+                session_environment=session_environment,
+                target_environment=target_environment,
+                fuse=fuse,
                 estimated_cost_usd=estimated_cost_usd,
                 new_information=new_information,
                 state_changed=state_changed,
                 write=write,
+                records_receipt=False,
+                task=task,
             )
-        except FuseTrippedError as exc:
-            store.append_trace(
-                TraceEvent(
-                    run_id,
-                    3,
-                    "fuse",
-                    task,
-                    str(exc),
-                    "blocked",
-                )
-            )
-            return {"status": "blocked", "decision": "FUSE", "result": None, "error": str(exc)}
+        )
+        if decision.blocked:
+            return {
+                "status": "blocked",
+                "decision": decision.decision,
+                "result": None,
+                "error": decision.error,
+            }
     try:
         result = tool_fn()
     except Exception as exc:
@@ -302,7 +320,7 @@ def execute_tool(
             )
             return {"status": "blocked", "decision": "FUSE", "result": None, "error": str(exc)}
 
-    decision = evaluate_tool_result(
+    result_decision = evaluate_tool_result(
         store,
         run_id,
         task,
@@ -314,21 +332,21 @@ def execute_tool(
     )
     trace_flags = suspicious_flags(empty_result=not bool(result))
     evidence_status = honest_status(
-        blocked=decision.decision != "CONTINUE",
+        blocked=result_decision.decision != "CONTINUE",
         suspicious=bool(trace_flags),
     )
     # Preserve the validation/5 public status contract. observability evidence is
     # exposed separately so observability does not silently change behavior.
-    status = "allowed" if decision.decision == "CONTINUE" else "stopped"
+    status = "allowed" if result_decision.decision == "CONTINUE" else "stopped"
     return {
         "status": status,
         "evidence_status": evidence_status,
-        "decision": decision.decision,
-        "result": result if decision.decision == "CONTINUE" else None,
-        "flags": decision.flags,
+        "decision": result_decision.decision,
+        "result": result if result_decision.decision == "CONTINUE" else None,
+        "flags": result_decision.flags,
         "evidence_suspicious_flags": trace_flags,
-        "missing": decision.missing,
-        "cross_check_required": decision.cross_check_required,
+        "missing": result_decision.missing,
+        "cross_check_required": result_decision.cross_check_required,
     }
 
 
@@ -354,30 +372,40 @@ def dispatch_external_action(
     new_information: bool = False,
     state_changed: bool = False,
 ) -> str:
-    """Authorize a proposed action, then execute it through the durable receipt boundary."""
+    """Authorize a proposed action, then execute it through the shared pipeline.
+
+    A thin adapter: the ordering lives in core.enforcement.enforce so every
+    caller, guarded or not, crosses the same checks in the same sequence.
+    """
     if registry is None or approval_store is None:
         raise RuntimeError("approval safety policy is required for external action dispatch")
-    if fuse is not None:
-        fuse.before_dispatch(
-            action,
-            arguments,
+    decision = enforce(
+        EnforcementContext(
+            store=store,
+            run_id=run_id,
+            action=action,
+            arguments=arguments,
+            step_id=step_id,
+            target=order_id,
+            provider=provider,
+            registry=registry,
+            approval_store=approval_store,
+            approval_id=approval_id,
+            current_state=current_state,
+            now=now,
+            session_environment=session_environment,
+            target_environment=target_environment,
+            fuse=fuse,
             estimated_cost_usd=estimated_cost_usd,
+            actual_cost_usd=actual_cost_usd,
             new_information=new_information,
             state_changed=state_changed,
-            write=True,
+            task=action,
         )
-    enforce_environment(session_environment, target_environment or session_environment)
-    check_action(
-        approval_store,
-        registry,
-        action,
-        arguments,
-        approval_id=approval_id,
-        current_state=current_state,
-        now=now,
     )
-    result = execute_side_effect(store, provider, run_id, step_id, arguments, order_id)
-    if fuse is not None and actual_cost_usd is not None:
-        fuse.budget.reconcile_cost(estimated_cost_usd, actual_cost_usd)
-    return result
+    if decision.blocked:
+        # Re-raise the original refusal so existing callers keep catching the
+        # exception type they were written against.
+        raise decision.exc or SafetyBlockedError(decision.error or decision.decision)
+    return decision.provider_ref or ""
 

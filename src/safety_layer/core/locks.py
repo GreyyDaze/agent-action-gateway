@@ -15,6 +15,14 @@ class ApprovalError(RuntimeError):
     pass
 
 
+class SafetyBlockedError(ApprovalError):
+    """An action was refused by policy before it could reach the world.
+
+    Raised rather than returned, because a caller that ignores a refusal is
+    exactly the failure this product exists to prevent.
+    """
+
+
 class ApprovalUnavailableError(ApprovalError):
     pass
 

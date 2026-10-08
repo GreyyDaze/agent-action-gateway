@@ -70,6 +70,8 @@ ignore = [
 "src/safety_layer/providers/mock.py" = ["ARG002"]
 "src/safety_layer/evaluation/judge.py" = ["ARG002"]
 "src/safety_layer/core/stop_rules.py" = ["ARG002"]
+"src/safety_layer/interface/gateway.py" = ["ARG002"]
+"docs/examples/*" = ["ARG001"]
 
 [tool.mypy]
 python_version = "3.11"

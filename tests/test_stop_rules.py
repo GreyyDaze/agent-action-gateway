@@ -524,7 +524,16 @@ class StopRulesTest(unittest.TestCase):
         enforce_environment("prod", "prod")
 
     def test_invalid_environment_is_rejected(self) -> None:
+        # `dev` became a real environment when the adopter-facing session was
+        # added; an unknown label must still be rejected outright.
         with self.assertRaises(ValueError):
+            enforce_environment("not-an-environment", "prod")
+        with self.assertRaises(ValueError):
+            enforce_environment("prod", "not-an-environment")
+
+    def test_dev_is_a_real_environment_and_is_isolated(self) -> None:
+        enforce_environment("dev", "dev")
+        with self.assertRaises(CrossEnvironmentError):
             enforce_environment("dev", "prod")
 
     def test_external_dispatch_blocks_cross_environment_before_provider_call(self) -> None:

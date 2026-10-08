@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import secrets
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -9,6 +10,17 @@ from urllib.parse import parse_qs, urlparse
 
 from ..core.locks import ApprovalError, ApprovalStore
 from ..storage.traces import TraceStore
+
+_CHALLENGE_PAGE = (
+    "<!doctype html><meta charset='utf-8'><title>Dashboard locked</title>"
+    "<body style='font-family:system-ui;max-width:40rem;margin:4rem auto'>"
+    "<h1>Dashboard locked</h1>"
+    "<p>This dashboard holds run evidence and the approval queue, so every "
+    "route requires the token printed when the server started.</p>"
+    "<p>Open <code>/?token=&lt;token&gt;</code>, or send "
+    "<code>Authorization: Bearer &lt;token&gt;</code>.</p>"
+    "</body>"
+)
 
 
 def _json(value: object) -> str:
@@ -31,6 +43,9 @@ class Handler(BaseHTTPRequestHandler):
     store: TraceStore
     approvals: ApprovalStore
     csrf_token: str
+    #: Bearer token required on every route. Printed at startup so the
+    #: operator, and only the operator, can read the evidence.
+    access_token: str
     allowed_origins: frozenset[str]
 
     def _security_headers(self) -> None:
@@ -52,6 +67,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _send_auth_challenge(self) -> None:
+        """401 with instructions, rather than a bare refusal.
+
+        The token is printed to the operator's terminal at startup, so the
+        remedy is always available without guessing.
+        """
+        body = _CHALLENGE_PAGE.encode("utf-8")
+        self.send_response(401)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("WWW-Authenticate", 'Bearer realm="safety-dashboard"')
+        self._security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_json(self, payload: object, status: int = 200) -> None:
         encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
         self.send_response(status)
@@ -60,6 +90,23 @@ class Handler(BaseHTTPRequestHandler):
         self._security_headers()
         self.end_headers()
         self.wfile.write(encoded)
+
+    def _authorized(self, query: dict[str, list[str]] | None = None) -> bool:
+        """Every route needs the per-process token.
+
+        CSRF stops another site driving the browser. This stops any local
+        process or user on the machine, which CSRF does not.
+        """
+        header = self.headers.get("Authorization", "")
+        presented = header[7:] if header.startswith("Bearer ") else None
+        if presented is None:
+            presented = (self.headers.get("X-Safety-Token") or None)
+        if presented is None and query:
+            candidates = query.get("token") or [""]
+            presented = candidates[0]
+        if presented is None:
+            return False
+        return secrets.compare_digest(presented, self.access_token)
 
     def _origin_is_trusted(self) -> bool:
         """Reject approval writes that were initiated by another site.
@@ -74,14 +121,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/api/state":
-            self._send_json(self.store.dashboard_snapshot())
-            return
-        if parsed.path != "/":
+        query = parse_qs(parsed.query)
+        if parsed.path != "/" and parsed.path != "/api/state":
             self.send_error(404)
             return
 
-        selected_run = parse_qs(parsed.query).get("run", [None])[0]
+        if not self._authorized(query):
+            self._send_auth_challenge()
+            return
+
+        if parsed.path == "/api/state":
+            self._send_json(self.store.dashboard_snapshot())
+            return
+
+        selected_run = query.get("run", [None])[0]
         snapshot = self.store.dashboard_snapshot()
         pending = self.approvals.pending()
         runs = snapshot["runs"]
@@ -157,6 +210,9 @@ table{{width:100%;background:#fff;border-collapse:collapse}} td,th{{padding:.7re
         if self.path not in {"/approvals/approve", "/approvals/deny"}:
             self.send_error(404)
             return
+        if not self._authorized(parse_qs(self.path.partition("?")[2])):
+            self.send_error(401, "dashboard token required")
+            return
         if not self._origin_is_trusted():
             self.send_error(403, "cross-origin approval request rejected")
             return
@@ -191,7 +247,9 @@ table{{width:100%;background:#fff;border-collapse:collapse}} td,th{{padding:.7re
         self.end_headers()
 
 
-def build_server(path: str, host: str, port: int) -> ThreadingHTTPServer:
+def build_server(
+    path: str, host: str, port: int, token: str | None = None
+) -> tuple[ThreadingHTTPServer, type[Handler]]:
     """Create a dashboard server with per-instance state.
 
     State lives on a generated subclass rather than being mutated onto the
@@ -203,6 +261,7 @@ def build_server(path: str, host: str, port: int) -> ThreadingHTTPServer:
     """
     store = TraceStore(path)
     csrf_token = secrets.token_urlsafe(32)
+    access_token = token or secrets.token_urlsafe(32)
 
     class BoundHandler(Handler):
         pass
@@ -211,6 +270,7 @@ def build_server(path: str, host: str, port: int) -> ThreadingHTTPServer:
     bound.store = store
     bound.approvals = ApprovalStore(store)
     bound.csrf_token = csrf_token
+    bound.access_token = access_token
 
     server = ThreadingHTTPServer((host, port), bound)
     # server_address is (host, port); decode because the socket family may
@@ -221,11 +281,27 @@ def build_server(path: str, host: str, port: int) -> ThreadingHTTPServer:
     bound.allowed_origins = frozenset(
         {f"http://{bound_host}:{bound_port}", f"https://{bound_host}:{bound_port}"}
     )
-    return server
+    return server, bound
 
 
-def serve(path: str, host: str, port: int) -> None:
-    build_server(path, host, port).serve_forever()
+def serve(path: str, host: str, port: int, token: str | None = None) -> None:
+    """Start the dashboard, printing the access token to the operator.
+
+    Binding beyond loopback is refused unless a token was supplied explicitly:
+    an exposed dashboard without authentication would leak every trace and let
+    anyone approve destructive actions.
+    """
+    resolved = token or os.environ.get("SAFETY_DASHBOARD_TOKEN")
+    if host not in {"127.0.0.1", "localhost", "::1"} and not resolved:
+        raise SystemExit(
+            f"refusing to bind {host}: a dashboard reachable off-host needs an "
+            "explicit SAFETY_DASHBOARD_TOKEN"
+        )
+    server, handler = build_server(path, host, port, resolved)
+    print(f"Safety dashboard on http://{host}:{server.server_address[1]}/")
+    print(f"access token: {handler.access_token}")
+    print("Pass it as ?token=... or 'Authorization: Bearer ...'. Keep it private.")
+    server.serve_forever()
 
 
 if __name__ == "__main__":

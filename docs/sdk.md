@@ -23,8 +23,8 @@ safety_layer/
 ├── evaluation/  golden set, judges, verdict engine, regression gate
 │   └── providers/  hosted evaluation judges (optional)
 ├── providers/   external action adapters: HTTP, Stripe, test doubles
-├── runtime/     run orchestration
-├── interface/   CLI commands and the local dashboard
+├── runtime/     run orchestration, the session and tool guard
+├── interface/   CLI commands, the local dashboard, the HTTP gateway
 └── proofs/      verification scripts and manual drills
 ```
 
@@ -58,18 +58,38 @@ The optional LLM judge belongs only to evaluation. It must not become the author
 
 ## What `run()` does
 
-`run(agent, task)` enters the existing runtime path and returns the run result.
+There are two entry points, and they do different things. Confusing them is how
+an adopter ends up unprotected while believing otherwise.
 
-The runtime is responsible for the controls already implemented in the project:
+### `session()` — the enforced path
 
-- stop-and-ask rules;
-- destructive-action approval;
-- receipt and idempotency handling;
-- step/time/spend/loop controls;
-- trace evidence and suspicious-result flags;
-- evaluation/gate evidence where configured.
+`session()` is where enforcement lives. Tools handed to the agent come from the
+session, so the agent never holds the raw function and cannot route around the
+policy.
 
-The exact action boundary remains the application's integration responsibility. The SDK wrapper is not a universal agent framework.
+| Control | Where it runs |
+|---|---|
+| Risk classification (unknown = destructive) | on every call |
+| Step / time / spend budgets | before dispatch, on every call |
+| Cross-environment blocking | before dispatch |
+| Destructive approval (payload digest, expiry, single use) | before dispatch |
+| Durable receipt and idempotency | around dispatch |
+| Stop rules on the result | after dispatch |
+| Trace and honest status | every call |
+
+### `run()` — the observation path
+
+`run(agent, task)` records a trace and returns a result. It reports
+`"enforcement": "observe"`.
+
+**It does not authorize, budget, or receipt anything.** An agent that reaches a
+payment API directly through `run()` is not stopped, because `run()` was never
+given the tools.
+
+> Tools not obtained from a session are not enforced. That is true by
+> construction rather than by omission, and it is the one sentence that matters.
+
+The SDK wrapper is not a universal agent framework.
 
 ## Result status
 

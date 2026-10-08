@@ -2,10 +2,17 @@
 
 Key-based redaction is authoritative: a value is secret because of the field it
 sits in, not because of how it happens to look. Value-based redaction is limited
-to credential shapes that are secrets by construction, because a generic "long
-string" heuristic also matches every uuid, idempotency key and provider
-reference the product depends on for evidence.
+to credential and payment shapes that are sensitive by construction.
+
+The counter-test matters as much as the rule. A generic "32+ alphanumeric
+characters" heuristic also matches every uuid, idempotency key and provider
+reference the product depends on for evidence. Destroying those would make the
+trace useless for the one job it has: proving what happened. So identifiers are
+deliberately preserved, and payment data is caught by a Luhn check rather than
+by digit count.
 """
+
+from __future__ import annotations
 
 import re
 from collections.abc import Mapping
@@ -19,11 +26,22 @@ _PII_KEYS = re.compile(
     r"(email|phone|telephone|mobile|ssn|social[_-]?security|address|dob|date[_-]?of[_-]?birth)",
     re.IGNORECASE,
 )
+# Payment and identity fields. Key-based, so a card stored under an unexpected
+# name is still caught by the value patterns below.
+_PAYMENT_KEYS = re.compile(
+    r"(^|_|\b)(card|card_?number|cc_?number|ccid|cvv|cvv2|cvc|cvn|"
+    r"iban|pan|pan_?number|routing_?number|account_?number|acct_?number|"
+    r"sort_?code|swift|bic|taxpayer_?id|national_?id|passport)"
+    r"($|_|\b)",
+    re.IGNORECASE,
+)
+# Names are only caught by key. Detecting them by shape would redact ordinary
+# words and break the evidence the traces exist to hold.
+_NAME_KEYS = re.compile(r"^(full_?name|first_?name|last_?name|surname|given_?name)$", re.IGNORECASE)
+
 _EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _BEARER = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+\b", re.IGNORECASE)
-# Credential shapes only. A bare "32+ alphanumeric characters" heuristic also
-# matches every uuid, idempotency key and provider reference the product relies
-# on for evidence, so those are deliberately not redacted.
+# Credential shapes only.
 _VENDOR_TOKEN = re.compile(
     r"\b(?:"
     r"sk-[A-Za-z0-9]{16,}"              # OpenAI-style
@@ -33,14 +51,51 @@ _VENDOR_TOKEN = re.compile(
     r"|xox[abprs]-[A-Za-z0-9-]{10,}"    # Slack
     r")\b"
 )
+# Digit runs that could be a payment card. Validated by Luhn before redacting so
+# ordinary long identifiers are left alone.
+_CARD_CANDIDATE = re.compile(r"(?<![\d-])(\d[\d -]{11,25}\d)(?![\d-])")
+_IBAN = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b")
+_SSN = re.compile(r"(?<![\d-])\d{3}-\d{2}-\d{4}(?![\d-])")
+
+REDACTED_SECRET = "[REDACTED_SECRET]"
+REDACTED_PII = "[REDACTED_PII]"
+REDACTED_PAN = "[REDACTED_PAN]"
+
+
+def luhn_valid(digits: str) -> bool:
+    """Standard mod-10 check. Used to tell a card number from an identifier."""
+    cleaned = re.sub(r"[ -]", "", digits)
+    if not cleaned.isdigit() or not (13 <= len(cleaned) <= 19):
+        return False
+    total = 0
+    for index, character in enumerate(reversed(cleaned)):
+        value = int(character)
+        if index % 2 == 1:
+            value *= 2
+            if value > 9:
+                value -= 9
+        total += value
+    return total % 10 == 0
+
+
+def _redact_card_numbers(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        return REDACTED_PAN if luhn_valid(match.group(1)) else match.group(0)
+
+    return _CARD_CANDIDATE.sub(replace, text)
 
 
 def redact(value: Any, *, _key: str | None = None) -> Any:
-    """Recursively redact common secrets and direct PII before persistence."""
-    if _key and _SECRET_KEYS.search(_key):
-        return "[REDACTED_SECRET]"
-    if _key and _PII_KEYS.search(_key):
-        return "[REDACTED_PII]"
+    """Recursively redact secrets, PII and payment data before persistence."""
+    if _key:
+        if _SECRET_KEYS.search(_key):
+            return REDACTED_SECRET
+        if _NAME_KEYS.match(_key):
+            return REDACTED_PII
+        if _PAYMENT_KEYS.search(_key):
+            return REDACTED_PAN if _is_cardish(value) else REDACTED_SECRET
+        if _PII_KEYS.search(_key):
+            return REDACTED_PII
 
     if isinstance(value, Mapping):
         return {str(k): redact(v, _key=str(k)) for k, v in value.items()}
@@ -50,11 +105,16 @@ def redact(value: Any, *, _key: str | None = None) -> Any:
         return tuple(redact(item) for item in value)
     if isinstance(value, str):
         text = _EMAIL.sub("[REDACTED_EMAIL]", value)
-        text = _BEARER.sub("Bearer [REDACTED_SECRET]", text)
-        # Do NOT apply a generic "long string" heuristic here. Durable evidence
-        # depends on identifiers: run_ids, intent keys, provider references and
-        # replay links are all 32+ characters, and redacting them destroys the
-        # ability to join a trace back to its own row. Value-based redaction is
-        # limited to shapes that are credentials by construction.
-        return _VENDOR_TOKEN.sub("[REDACTED_SECRET]", text)
+        text = _BEARER.sub(f"Bearer {REDACTED_SECRET}", text)
+        text = _redact_card_numbers(text)
+        text = _IBAN.sub(REDACTED_SECRET, text)
+        text = _SSN.sub(REDACTED_PII, text)
+        return _VENDOR_TOKEN.sub(REDACTED_SECRET, text)
     return value
+
+
+def _is_cardish(value: Any) -> bool:
+    """A payment field holds a card number rather than an account or token."""
+    if isinstance(value, str):
+        return luhn_valid(value)
+    return False

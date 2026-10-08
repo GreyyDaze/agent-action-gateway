@@ -100,6 +100,13 @@ class FuseBudget:
                 self._trip_locked("spend budget exhausted")
 
     def trip(self, reason: str) -> None:
+        """Record a refusal reason without raising.
+
+        Used by the loop detector, which refuses a call without holding the
+        budget lock. Without recording it the snapshot reported `tripped=False`
+        while refusing every subsequent call, so a dashboard would show a
+        healthy budget for a run that was already dead.
+        """
         """Trip the fuse without taking a lock.
 
         Used by the signal handler because Python signal handlers must not
@@ -199,6 +206,11 @@ class FuseController:
         self._availability_lock = threading.Lock()
 
     @property
+    def limits(self) -> FuseLimits:
+        """The configured budget limits, for callers that report or test policy."""
+        return self.budget.limits
+
+    @property
     def degraded(self) -> bool:
         return not self._available
 
@@ -241,7 +253,10 @@ class FuseController:
             new_information=new_information,
             state_changed=state_changed,
         ):
-            raise FuseTrippedError("loop detected: repeated action made no progress")
+            reason = "loop detected: repeated action made no progress"
+            # Record it so the snapshot and the dashboard agree with reality.
+            self.budget.trip(reason)
+            raise FuseTrippedError(reason)
         self.budget.consume_step(estimated_cost_usd)
 
     def snapshot(self) -> FuseSnapshot:

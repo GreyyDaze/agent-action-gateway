@@ -1,11 +1,9 @@
 from datetime import datetime
 from typing import Any
 
-from .locks import ApprovalStore, RiskRegistry, authorize
+from .locks import ApprovalError, ApprovalStore, RiskRegistry, SafetyBlockedError, authorize
 
-
-class SafetyBlockedError(RuntimeError):
-    pass
+__all__ = ["SafetyBlockedError", "check_action", "authorize", "ApprovalStore", "RiskRegistry", "ApprovalError"]
 
 
 def check_action(

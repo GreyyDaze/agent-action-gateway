@@ -188,15 +188,23 @@ class StopPolicy:
         )
 
 
+ENVIRONMENTS = frozenset({"dev", "staging", "prod"})
+
+
 def enforce_environment(
     session_environment: str,
     target_environment: str,
 ) -> None:
-    """Reject cross-environment actions before the external dispatch."""
-    if session_environment not in {"staging", "prod"}:
-        raise ValueError("session environment must be 'staging' or 'prod'")
-    if target_environment not in {"staging", "prod"}:
-        raise ValueError("target environment must be 'staging' or 'prod'")
+    """Reject cross-environment actions before the external dispatch.
+
+    `dev` is included because an adopter's local session is a real environment
+    with the same isolation expectation as staging: a dev session reaching a
+    production tool is the same class of mistake.
+    """
+    if session_environment not in ENVIRONMENTS:
+        raise ValueError(f"session environment must be one of {sorted(ENVIRONMENTS)}")
+    if target_environment not in ENVIRONMENTS:
+        raise ValueError(f"target environment must be one of {sorted(ENVIRONMENTS)}")
     if session_environment != target_environment:
         raise CrossEnvironmentError(
             f"cross-environment action blocked: session={session_environment}, "
