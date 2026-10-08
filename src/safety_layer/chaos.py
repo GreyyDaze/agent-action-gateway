@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-from .provider import HttpRefundProvider
+from .provider import HttpExternalActionProvider
 from .receipts import resolve_unknown
 from .store import TraceStore
 
@@ -98,7 +98,7 @@ def initialize_provider_db(path: str | Path) -> None:
 
 def worker(provider_url: str, db_path: str, run_id: str, step_id: str, kill_point: int) -> None:
     store = TraceStore(db_path)
-    provider = HttpRefundProvider(provider_url)
+    provider = HttpExternalActionProvider(provider_url)
     receipt = store.create_receipt(run_id, step_id, "external_action", {"order_id": "ORD-100"})
     if kill_point == 0:
         os.kill(os.getpid(), signal.SIGKILL)
@@ -152,7 +152,7 @@ def run_proof(jobs: int) -> tuple[int, int]:
                         f"crash worker failed: job={index} exitcode={process.exitcode}"
                     )
 
-                resolve_unknown(store, HttpRefundProvider(provider_url))
+                resolve_unknown(store, HttpExternalActionProvider(provider_url))
 
             unknown = len(store.unknown_receipts())
             provider_actions = count_provider_actions(str(provider_db))

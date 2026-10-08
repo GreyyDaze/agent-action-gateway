@@ -50,19 +50,25 @@ A replay is only considered comparable when the run records the model, prompt, a
 
 ## Provider adapters
 
-The external action boundary is a two-method protocol:
+The external action boundary is a two-method protocol, `ExternalActionProvider`:
 
 ```python
 refund(order_id, intent_key) -> provider_ref
 find_refund(intent_key, order_id=None) -> provider_ref | None
 ```
 
-`order_id` is the safety layer's generic name for whatever the action targets.
-Adapters may ignore it when they can reconcile by key alone.
+The method names are historical. `order_id` is this package's generic name for
+whatever the action targets: a PaymentIntent on Stripe, a file path for a
+delete tool, a row id for a database write. Nothing in the safety layer assumes
+a payment domain, and unregistered actions are treated as destructive
+regardless of what they do.
+
+Adapters may ignore `order_id` when they can reconcile by key alone. The older
+`RefundProvider` and `HttpRefundProvider` names remain importable as aliases.
 
 | Adapter | Status | Reconciliation strategy |
 |---|---|---|
-| `HttpRefundProvider` | generic HTTP, requires a lookup-by-key endpoint | `GET /refunds/{intent_key}` |
+| `HttpExternalActionProvider` | generic HTTP, requires a lookup-by-key endpoint | `GET /refunds/{intent_key}` |
 | `StripeRefundProvider` | Stripe test mode | replays the create request with the same `Idempotency-Key` |
 | `MockPaymentProvider` | test double only | in-memory lookup |
 

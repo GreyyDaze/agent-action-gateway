@@ -11,13 +11,13 @@ import tempfile
 from pathlib import Path
 
 from .chaos import ProviderHandler, initialize_provider_db
-from .provider import HttpRefundProvider
+from .provider import HttpExternalActionProvider
 from .receipts import resolve_unknown
 from .store import TraceStore
 
 
 def crash_worker(provider_url: str, db_path: str, intent_key: str) -> None:
-    provider_ref = HttpRefundProvider(provider_url).refund("ORD-100", intent_key)
+    provider_ref = HttpExternalActionProvider(provider_url).refund("ORD-100", intent_key)
     del provider_ref
     os.kill(os.getpid(), signal.SIGKILL)
 
@@ -59,7 +59,7 @@ def main() -> None:
             if process.exitcode != -signal.SIGKILL:
                 raise RuntimeError(f"expected SIGKILL, got exitcode={process.exitcode}")
 
-            resolve_unknown(store, HttpRefundProvider(url))
+            resolve_unknown(store, HttpExternalActionProvider(url))
             row = store.snapshot()["receipts"][0]
             with sqlite3.connect(provider_db) as db:
                 actions = db.execute(

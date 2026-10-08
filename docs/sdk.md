@@ -88,6 +88,30 @@ The evaluation path may use the supported hosted judge providers defined by the 
 
 Evaluation/proof runs are pinned to their configured provider/model. They must not silently change provider during a comparison.
 
+### External action providers
+
+The external tool boundary is the `ExternalActionProvider` interface:
+
+```python
+refund(order_id, intent_key) -> provider_ref
+find_refund(intent_key, order_id=None) -> provider_ref | None
+```
+
+The method names are historical. `order_id` is the generic name for whatever an
+action targets, so the same interface guards a payment refund, a file delete,
+or a database write. Unregistered actions default to destructive regardless of
+domain.
+
+| Adapter | Use |
+|---|---|
+| `HttpExternalActionProvider` | any HTTP tool exposing a lookup-by-key endpoint |
+| `StripeRefundProvider` | Stripe test mode; reconciles by replaying the idempotent request |
+| `MockPaymentProvider` | test double only |
+
+See `docs/receipt-guarantees.md` for reconciliation strategies, the failure
+classification that decides whether a retry is safe, and the Stripe 24-hour
+idempotency limit.
+
 Provider outages, authentication errors, and rate limits must surface as evaluation availability problems, not as safety-policy bypasses.
 
 ## Credentials

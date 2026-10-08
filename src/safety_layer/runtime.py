@@ -9,7 +9,7 @@ from .gate import record_run_status
 from .locks import ApprovalStore, RiskRegistry
 from .models import TraceEvent
 from .trace import honest_status, suspicious_flags
-from .provider import RefundProvider
+from .provider import ExternalActionProvider
 from .receipts import execute_side_effect
 from .safety import check_action
 from .stop_rules import (
@@ -336,7 +336,7 @@ def execute_tool(
 
 def dispatch_external_action(
     store: TraceStore,
-    provider: RefundProvider,
+    provider: ExternalActionProvider,
     run_id: str,
     step_id: str,
     arguments: dict[str, Any],

@@ -15,6 +15,7 @@ control, rather than against a stub that agrees with whatever we wrote.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import tempfile
@@ -30,6 +31,7 @@ from safety_layer.locks import ApprovalStore, RiskRegistry
 from safety_layer.receipts import UnresolvableReceiptError, execute_side_effect, resolve_unknown
 from safety_layer.runtime import dispatch_external_action
 from safety_layer.store import TraceStore
+from safety_layer.provider import ExternalActionProvider as ExternalActionProviderProtocol
 from safety_layer.stripe_provider import (
     METADATA_KEY,
     StripeProviderError,
@@ -332,6 +334,71 @@ class StripeThroughSafetyLayerTest(unittest.TestCase):
         self.store.create_receipt("run-stripe-3", "step-1", "external_action", {"note": "no target"})
         with self.assertRaises(UnresolvableReceiptError):
             resolve_unknown(self.store, self.provider)
+
+
+class ProviderIsDomainNeutralTest(unittest.TestCase):
+    """The provider interface must not assume the product is about refunds.
+
+    The safety layer guards irreversible side effects generally. A reviewer
+    should be able to wire a file delete or a database write without the
+    framework insisting on a payment vocabulary.
+    """
+
+    def test_protocol_and_http_adapter_use_generic_names(self) -> None:
+        from safety_layer.provider import (
+            ExternalActionProvider,
+            HttpExternalActionProvider,
+        )
+
+        self.assertEqual(ExternalActionProvider.__name__, "ExternalActionProvider")
+        self.assertEqual(
+            HttpExternalActionProvider.__name__, "HttpExternalActionProvider"
+        )
+
+    def test_legacy_refund_names_remain_importable(self) -> None:
+        from safety_layer.provider import (
+            ExternalActionProvider,
+            HttpExternalActionProvider,
+            HttpRefundProvider,
+            RefundProvider,
+        )
+
+        self.assertIs(RefundProvider, ExternalActionProvider)
+        self.assertIs(HttpRefundProvider, HttpExternalActionProvider)
+
+    def test_receipt_dependencies_do_not_mention_refunds(self) -> None:
+        """The enforcement core must stay free of domain vocabulary.
+
+        If refunds ever leak back into fuses/locks/stop-rules, the product has
+        quietly become domain-locked even though the adapter layer is generic.
+        """
+        import safety_layer.fuses as fuses
+        import safety_layer.locks as locks
+        import safety_layer.stop_rules as stop_rules
+        import safety_layer.store as store
+        import safety_layer.trace as trace
+
+        for module in (fuses, locks, stop_rules, store, trace):
+            source = inspect.getsource(module).lower()
+            with self.subTest(module=module.__name__):
+                self.assertNotIn("refund", source)
+                self.assertNotIn("order_id", source)
+
+    def test_a_non_refund_tool_satisfies_the_same_interface(self) -> None:
+        """A delete tool needs no changes to the provider contract."""
+
+        class FileDeleteProvider:
+            provider = "filesystem"
+
+            def refund(self, order_id: str, intent_key: str) -> str:
+                return f"deleted:{order_id}"
+
+            def find_refund(self, intent_key: str, order_id: str | None = None):
+                return None
+
+        provider: ExternalActionProviderProtocol = FileDeleteProvider()
+        self.assertEqual(provider.refund("/etc/hosts", "intent-x"), "deleted:/etc/hosts")
+        self.assertIsNone(provider.find_refund("intent-x", "/etc/hosts"))
 
 
 @unittest.skipUnless(

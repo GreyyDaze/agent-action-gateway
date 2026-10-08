@@ -1,6 +1,6 @@
 from typing import Any
 
-from .provider import RefundProvider
+from .provider import ExternalActionProvider
 from .store import TraceStore
 
 
@@ -18,7 +18,7 @@ class UnresolvableReceiptError(RuntimeError):
 
 def execute_side_effect(
     store: TraceStore,
-    provider: RefundProvider,
+    provider: ExternalActionProvider,
     run_id: str,
     step_id: str,
     arguments: dict[str, Any],
@@ -45,7 +45,7 @@ def execute_side_effect(
     return provider_ref
 
 
-def resolve_unknown(store: TraceStore, provider: RefundProvider) -> int:
+def resolve_unknown(store: TraceStore, provider: ExternalActionProvider) -> int:
     resolved = 0
     for receipt in store.unknown_receipts():
         # The persisted target is checked before anything is asked of the
