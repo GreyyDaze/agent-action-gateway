@@ -42,6 +42,6 @@ class MockPaymentProvider:
         self.refunds.append({"intent_key": intent_key, "order_id": order_id, "provider_ref": provider_ref})
         return provider_ref
 
-    def find_refund(self, intent_key: str) -> str | None:
+    def find_refund(self, intent_key: str, order_id: str | None = None) -> str | None:
         item = next((item for item in self.refunds if item["intent_key"] == intent_key), None)
         return None if item is None else item["provider_ref"]

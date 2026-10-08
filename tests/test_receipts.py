@@ -33,7 +33,7 @@ class ReceiptLifecycleTest(unittest.TestCase):
     def test_timeout_after_provider_acceptance_resolves_without_retry(self):
         class TimeoutProvider(MockPaymentProvider):
             def refund(self, order_id: str, intent_key: str) -> str:
-                provider_ref = super().refund(order_id, intent_key)
+                _ = super().refund(order_id, intent_key)
                 raise TimeoutError("response lost after provider accepted request")
 
         with tempfile.TemporaryDirectory() as tmp:

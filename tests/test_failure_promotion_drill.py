@@ -56,7 +56,7 @@ class FailurePromotionDrillTests(unittest.TestCase):
                 "confirm",
             )
 
-            promotion = promote_failure_group(
+            promote_failure_group(
                 wall,
                 promotions,
                 group.group_id,

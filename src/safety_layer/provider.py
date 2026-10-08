@@ -7,7 +7,15 @@ from urllib.request import Request, urlopen
 
 class RefundProvider(Protocol):
     def refund(self, order_id: str, intent_key: str) -> str: ...
-    def find_refund(self, intent_key: str) -> str | None: ...
+
+    def find_refund(self, intent_key: str, order_id: str | None = None) -> str | None:
+        """Report whether the effect already happened for this intent key.
+
+        `order_id` is the target the receipt persisted, passed so providers
+        whose reconciliation needs it (for example one that replays an
+        idempotent request) can be queried without a lookup-by-key endpoint.
+        Providers that reconcile by key alone may ignore it.
+        """
 
 
 class HttpRefundProvider:
@@ -28,7 +36,7 @@ class HttpRefundProvider:
         with urlopen(request, timeout=self.timeout) as response:
             return json.loads(response.read())["provider_ref"]
 
-    def find_refund(self, intent_key: str) -> str | None:
+    def find_refund(self, intent_key: str, order_id: str | None = None) -> str | None:
         request = Request(f"{self.base_url}/refunds/{intent_key}", method="GET")
         try:
             with urlopen(request, timeout=self.timeout) as response:

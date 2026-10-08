@@ -9,8 +9,6 @@ from safety_layer.evaluation_models import (
     Baseline,
     GoldenCase,
     GOLDEN_SET_VERSION,
-    JUDGE_PROMPT_VERSION,
-    JUDGE_VERSION,
 )
 from safety_layer.evaluation_store import EvaluationStore
 from safety_layer.evaluator import evaluate_cases
