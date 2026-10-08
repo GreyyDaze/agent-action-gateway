@@ -85,7 +85,7 @@ def test_proof_command_runs_and_prints_phase_proofs() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "P1 PROOF" in result.stdout
-    assert "PHASE PROOFS: PASS" in result.stdout
+    assert "VERIFICATION SUITES: PASS" in result.stdout
 
 
 def test_dashboard_snapshot_exposes_runs_and_budget_counters(tmp_path: Path) -> None:

@@ -5,7 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from .models import GateVerdict, Receipt, TraceEvent
-from .phase6_trace import redact
+from .trace import redact
 
 
 class TraceStore:

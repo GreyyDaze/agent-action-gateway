@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_documentation_scope_documents_exist() -> None:
     assert (ROOT / "docs" / "sdk.md").is_file()
     assert (ROOT / "ROADMAP.md").is_file()
-    assert (ROOT / "docs" / "release-proof.md").is_file()
-    assert (ROOT / "docs" / "release-handoff.md").is_file()
+    assert (ROOT / "docs" / "history" / "release-proof.md").is_file()
+    assert (ROOT / "docs" / "history" / "release-handoff.md").is_file()
 
 
 def test_documentation_roadmap_has_eight_deferred_and_eight_non_goals() -> None:

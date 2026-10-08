@@ -23,7 +23,7 @@ def find_repo_root(start: Path | None = None) -> Path:
 
     for candidate in candidates:
         for node in (candidate, *candidate.parents):
-            if (node / "tests" / "test_phase2.py").is_file():
+            if (node / "tests" / "test_approvals.py").is_file():
                 return node
 
     raise SystemExit(
@@ -51,7 +51,7 @@ def _run(command: list[str], cwd: Path) -> None:
 def run_proofs(jobs: int, *, root: Path | None = None) -> None:
     repo_root = Path(root).resolve() if root is not None else find_repo_root()
     _run(
-        [sys.executable, "-m", "safety_layer.phase1_proof", "--jobs", str(jobs)],
+        [sys.executable, "-m", "safety_layer.chaos", "--jobs", str(jobs)],
         repo_root,
     )
     print(f"P1 PROOF: 0 dupes / {jobs} crash jobs")
