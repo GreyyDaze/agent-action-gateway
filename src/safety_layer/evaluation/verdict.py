@@ -1,3 +1,4 @@
+"""The outcome of a judgement, including its uncertainty."""
 from .models import EvaluationSummary, GateResult
 
 LANE_RUNS = {"push": 3, "full": 10}

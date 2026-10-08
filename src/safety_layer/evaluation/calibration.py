@@ -1,3 +1,4 @@
+"""Judge calibration against a labelled set."""
 from __future__ import annotations
 
 import json

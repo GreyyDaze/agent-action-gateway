@@ -1,3 +1,4 @@
+"""Starts and stops the pieces that make up a run."""
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any

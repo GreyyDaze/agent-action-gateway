@@ -1,3 +1,4 @@
+"""Durable storage for evaluations, calibrations and promotions."""
 from __future__ import annotations
 
 from pathlib import Path

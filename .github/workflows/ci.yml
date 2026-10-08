@@ -62,7 +62,7 @@ jobs:
           python -m pip install --upgrade pip build
           python -m build --wheel
 
-      - name: Assert evaluation artifacts are inside the wheel
+      - name: Assert packaged datasets are inside the wheel
         run: |
           python - <<'PY'
           import glob, sys, zipfile
@@ -89,8 +89,8 @@ jobs:
           "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer import run; print('SDK import OK')"
           "$RUNNER_TEMP/wheelenv/bin/safety" --help
 
-  proofs:
-    # The verification suites are the product's own acceptance criteria.
+  verification:
+    # Each suite verifies a named guarantee rather than a phase of work.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

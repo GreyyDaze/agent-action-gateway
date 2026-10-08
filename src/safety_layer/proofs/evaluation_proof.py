@@ -1,3 +1,4 @@
+"""Verification that the gate catches real regressions."""
 from __future__ import annotations
 
 from dataclasses import replace

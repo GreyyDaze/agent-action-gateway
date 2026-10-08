@@ -1,3 +1,4 @@
+"""A read-only local dashboard for recorded evidence."""
 from __future__ import annotations
 
 import argparse

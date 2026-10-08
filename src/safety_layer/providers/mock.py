@@ -1,3 +1,4 @@
+"""An in-memory provider for tests and the quickstart."""
 from dataclasses import dataclass
 
 

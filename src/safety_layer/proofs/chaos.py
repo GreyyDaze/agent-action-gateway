@@ -1,3 +1,4 @@
+"""Verification that the system stays safe under failure injection."""
 from __future__ import annotations
 
 import argparse

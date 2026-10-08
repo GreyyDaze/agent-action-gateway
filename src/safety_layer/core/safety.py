@@ -1,3 +1,4 @@
+"""Shared safety state carried through a run."""
 from datetime import datetime
 from typing import Any
 

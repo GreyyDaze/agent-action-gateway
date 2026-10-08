@@ -1,3 +1,4 @@
+"""Durable storage for the grouped failure signatures."""
 from __future__ import annotations
 
 import json

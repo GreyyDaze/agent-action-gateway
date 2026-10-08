@@ -1,3 +1,4 @@
+"""Judge adapter for the hosted Gemini models."""
 from __future__ import annotations
 
 import json

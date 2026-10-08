@@ -1,3 +1,4 @@
+"""A scripted agent used to demonstrate the quickstart."""
 from .mock import MockProvider
 
 

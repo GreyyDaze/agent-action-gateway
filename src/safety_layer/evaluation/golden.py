@@ -1,3 +1,4 @@
+"""The golden set of labelled agent outputs."""
 from __future__ import annotations
 
 import json

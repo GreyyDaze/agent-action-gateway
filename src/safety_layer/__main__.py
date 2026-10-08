@@ -1,3 +1,4 @@
+"""Command-line entry point: ``python -m safety_layer``."""
 from __future__ import annotations
 
 from .interface.cli import main

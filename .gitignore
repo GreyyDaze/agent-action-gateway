@@ -1,16 +1,40 @@
+# Python
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.venv/
-.env
-*.db
-*.db-shm
-*.db-wal
-data/phase1-manual/
-src/agent_safety_layer.egg-info/
+*.egg
 build/
 dist/
 *.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+
+# Coverage
 .coverage
 .coverage.*
 htmlcov/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+
+# Manual verification output
+data/phase1-manual/

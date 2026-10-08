@@ -1,3 +1,4 @@
+"""The ``gate`` command, for running the regression gate."""
 from __future__ import annotations
 
 import argparse

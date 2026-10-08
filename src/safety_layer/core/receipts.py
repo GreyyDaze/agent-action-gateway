@@ -1,3 +1,4 @@
+"""Durable receipts, so a retried action cannot happen twice."""
 from typing import Any
 
 from ..providers.base import ExternalActionProvider

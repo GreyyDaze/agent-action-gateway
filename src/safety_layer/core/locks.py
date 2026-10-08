@@ -1,3 +1,4 @@
+"""Single-writer locks that keep concurrent writers from interleaving."""
 import hashlib
 import json
 import sqlite3

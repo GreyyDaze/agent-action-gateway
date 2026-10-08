@@ -1,3 +1,4 @@
+"""A repeatable manual form of the chaos suite."""
 from __future__ import annotations
 
 import argparse

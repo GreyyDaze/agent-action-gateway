@@ -1,3 +1,4 @@
+"""The records a run produces as it executes."""
 from dataclasses import dataclass
 from typing import Any
 

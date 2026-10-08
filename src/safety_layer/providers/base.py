@@ -1,3 +1,4 @@
+"""The interface every external action adapter implements."""
 import json
 from http.client import RemoteDisconnected
 from typing import Protocol

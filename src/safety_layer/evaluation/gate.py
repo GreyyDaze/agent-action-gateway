@@ -1,3 +1,4 @@
+"""The regression gate: pass, fail, or uncertain."""
 from __future__ import annotations
 
 import uuid

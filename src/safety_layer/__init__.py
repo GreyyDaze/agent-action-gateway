@@ -29,14 +29,12 @@ from .core.fuses import (
 from .runtime.orchestrator import run
 from .runtime.session import DEFAULT_FUSE_LIMITS, SafetySession, session
 
+# The names below are what a consumer needs. The remaining imports stay
+# reachable so that existing `from safety_layer import X` calls keep working,
+# but they are not advertised as part of the public surface.
 __all__ = [
+    "FuseLimits",
+    "SafetySession",
     "run",
     "session",
-    "SafetySession",
-    "DEFAULT_FUSE_LIMITS",
-    "FuseBudget",
-    "FuseController",
-    "FuseLimits",
-    "FuseTrippedError",
-    "FuseUnavailableError",
 ]

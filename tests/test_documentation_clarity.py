@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import re
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -95,14 +96,54 @@ class NoInternalJargonTest(unittest.TestCase):
                 self.assertGreater(len(guarantee.split()), 1)
 
 
+class PackagingMetadataTest(unittest.TestCase):
+    """Metadata an installed user can act on."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        with (ROOT / "pyproject.toml").open("rb") as handle:
+            cls.config = tomllib.load(handle)
+
+    def test_project_links_are_declared(self) -> None:
+        urls = self.config["project"].get("urls", {})
+        for key in ("Homepage", "Repository", "Issues"):
+            with self.subTest(url=key):
+                self.assertIn(key, urls, f"[project.urls] is missing {key}")
+                self.assertTrue(str(urls[key]).startswith("https://"))
+
+    def test_package_name_matches_the_repository(self) -> None:
+        """A mismatched name publishes to the wrong PyPI project."""
+        name = self.config["project"]["name"]
+        self.assertEqual(
+            name,
+            "agent-safety-eval-layer",
+            "package name must match the repository to avoid a PyPI collision",
+        )
+
+    def test_version_is_a_release_version(self) -> None:
+        version = self.config["project"]["version"]
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+
+    def test_license_file_exists(self) -> None:
+        declared = str(self.config["project"].get("license", {}).get("text", "")).upper()
+        if declared:
+            self.assertTrue(
+                (ROOT / "LICENSE").is_file(),
+                "a license is declared in metadata but no LICENSE file exists",
+            )
+
+
 class PublicSurfaceTest(unittest.TestCase):
     """__all__ should name what a consumer needs, not every internal type."""
 
     def test_public_surface_is_minimal(self) -> None:
+        """Advertising internals invites callers to depend on them."""
         import safety_layer
 
-        self.assertIn("run", safety_layer.__all__)
-        self.assertIn("session", safety_layer.__all__)
+        self.assertEqual(
+            sorted(safety_layer.__all__),
+            ["FuseLimits", "SafetySession", "run", "session"],
+        )
 
     def test_documented_entry_points_are_importable(self) -> None:
         import safety_layer

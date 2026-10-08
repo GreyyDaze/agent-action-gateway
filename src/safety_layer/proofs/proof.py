@@ -1,3 +1,4 @@
+"""Runs each guarantee suite and reports whether it holds."""
 from __future__ import annotations
 
 import argparse

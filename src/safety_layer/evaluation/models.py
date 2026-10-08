@@ -1,3 +1,4 @@
+"""Records describing judgements and verdicts."""
 from dataclasses import dataclass
 from typing import Any
 

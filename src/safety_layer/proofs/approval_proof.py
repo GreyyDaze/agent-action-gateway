@@ -1,3 +1,4 @@
+"""Verification that approvals cannot be reused or altered."""
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
