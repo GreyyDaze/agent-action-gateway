@@ -84,8 +84,8 @@ jobs:
           "$RUNNER_TEMP/wheelenv/bin/python" -m pip install dist/*.whl
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/wheelenv/bin/python" -c "import safety_layer, pathlib; print(pathlib.Path(safety_layer.__file__).resolve())"
-          "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer.golden import load_golden_set; print(len(load_golden_set()))"
-          "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer.calibration import load_calibration_set; print(len(load_calibration_set()))"
+          "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer.evaluation.golden import load_golden_set; print(len(load_golden_set()))"
+          "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer.evaluation.calibration import load_calibration_set; print(len(load_calibration_set()))"
           "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer import run; print('SDK import OK')"
           "$RUNNER_TEMP/wheelenv/bin/safety" --help
 
