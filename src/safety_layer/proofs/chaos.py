@@ -173,7 +173,7 @@ def main() -> None:
         raise SystemExit(
             f"P1 FAILED: provider_actions={actions} expected={args.jobs} unknown={unknown}"
         )
-    print(f"P1: 0 dupes / {args.jobs} crash jobs")
+    print(f"CRASH SAFETY: 0 dupes / {args.jobs} crash jobs")
 
 
 if __name__ == "__main__":

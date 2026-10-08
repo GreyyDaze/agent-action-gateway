@@ -83,8 +83,17 @@ def test_proof_command_runs_and_prints_phase_proofs() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert "P1 PROOF" in result.stdout
-    assert "VERIFICATION SUITES: PASS" in result.stdout
+    assert "CRASH SAFETY" in result.stdout
+    assert "ALL GUARANTEES HOLD" in result.stdout
+    # Labelled by guarantee, so the output is meaningful without the build plan.
+    for guarantee in (
+        "APPROVAL SAFETY",
+        "REGRESSION GATE",
+        "STOP RULES",
+        "BUDGETS AND LOOPS",
+        "FAILURE WALL",
+    ):
+        assert guarantee in result.stdout
 
 
 def test_dashboard_snapshot_exposes_runs_and_budget_counters(tmp_path: Path) -> None:

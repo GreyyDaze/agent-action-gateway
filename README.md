@@ -119,12 +119,12 @@ The external agent and its model provider are not owned by this project.
 
 | Guarantee | Proof |
 |---|---|
-| P1 | `0 dupes / 1,000 crash jobs` |
-| P2 | `0 destructive executions without valid fresh approval` |
-| P3 | `calibration 6/6 = 100%`; good candidate `PASS, score=1.0000`; catastrophic candidate `FAIL, score=0.9667`; unchanged proof `10/10, false-fails=0`; cost/runtime `$0.0004 / 0.8840 min` |
-| P4 | defined ambiguity traps caught with zero false stops on the legitimate suite |
-| P5 | zero budget overruns in the concurrency proof; loop detection passes |
-| P6 | planted silent-wrong cases flagged; deterministic failure groups separate equivalent and distinct signatures |
+| **Crash safety** | `0 dupes / 1,000 crash jobs` |
+| **Approval safety** | `0 destructive executions without valid fresh approval` |
+| **Regression gate** | calibration `6/6 = 100%`; good candidate `PASS, score=1.0000`; catastrophic candidate `FAIL, score=0.9667`; unchanged proof `10/10, false-fails=0`; cost `$0.0004` / `0.8840 min` |
+| **Stop rules** | defined ambiguity traps caught, zero false stops on the legitimate suite |
+| **Budgets and loops** | zero budget overruns in the concurrency proof; loop detection passes |
+| **Failure wall** | planted silent-wrong cases flagged; deterministic groups separate equivalent and distinct signatures |
 
 The exact proof output belongs to the verification commands. Do not treat a green unit test as a stronger claim than the proof it actually runs.
 

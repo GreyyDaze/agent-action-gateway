@@ -32,12 +32,39 @@ def find_repo_root(start: Path | None = None) -> Path:
         "include the proof suite."
     )
 
+# Labelled by the guarantee each suite proves rather than by build-phase
+# number, so the output is meaningful to someone who has never seen the plan.
 PROOFS = (
-    ("P2", ["tests/test_approvals.py"], "0 destructive executions without valid fresh approval"),
-    ("P3", ["tests/test_evaluation.py", "tests/test_gate.py"], "injected regression caught; unchanged-run false-alarm checks"),
-    ("P4", ["tests/test_stop_rules.py"], "defined traps caught; legitimate suite has zero false stops"),
-    ("P5", ["tests/test_fuses.py"], "zero budget overruns; loop detection trips; pagination passes"),
-    ("P6", ["tests/test_failure_wall.py", "tests/test_silent_failures.py", "tests/test_failure_promotion_drill.py", "tests/test_trace.py"], "planted silent-wrong cases flagged; failure signatures group correctly"),
+    (
+        "APPROVAL SAFETY",
+        ["tests/test_approvals.py"],
+        "0 destructive executions without valid fresh approval",
+    ),
+    (
+        "REGRESSION GATE",
+        ["tests/test_evaluation.py", "tests/test_gate.py"],
+        "injected regression caught; unchanged-run false-alarm checks",
+    ),
+    (
+        "STOP RULES",
+        ["tests/test_stop_rules.py"],
+        "defined traps caught; legitimate suite has zero false stops",
+    ),
+    (
+        "BUDGETS AND LOOPS",
+        ["tests/test_fuses.py"],
+        "zero budget overruns; loop detection trips; pagination passes",
+    ),
+    (
+        "FAILURE WALL",
+        [
+            "tests/test_failure_wall.py",
+            "tests/test_silent_failures.py",
+            "tests/test_failure_promotion_drill.py",
+            "tests/test_trace.py",
+        ],
+        "planted silent-wrong cases flagged; failure signatures group correctly",
+    ),
 )
 
 
@@ -54,11 +81,11 @@ def run_proofs(jobs: int, *, root: Path | None = None) -> None:
         [sys.executable, "-m", "safety_layer.proofs.chaos", "--jobs", str(jobs)],
         repo_root,
     )
-    print(f"P1 PROOF: 0 dupes / {jobs} crash jobs")
-    for phase, paths, statement in PROOFS:
+    print(f"CRASH SAFETY: PASS | 0 dupes / {jobs} crash jobs")
+    for guarantee, paths, statement in PROOFS:
         _run([sys.executable, "-m", "pytest", "-q", *paths], repo_root)
-        print(f"{phase} PROOF: PASS | {statement}")
-    print("VERIFICATION SUITES: PASS")
+        print(f"{guarantee}: PASS | {statement}")
+    print("ALL GUARANTEES HOLD")
 
 
 def main(argv: list[str] | None = None) -> int:
