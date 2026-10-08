@@ -1,6 +1,9 @@
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from safety_layer.evaluation_models import (
     Baseline,
@@ -12,7 +15,7 @@ from safety_layer.evaluation_models import (
 from safety_layer.evaluation_store import EvaluationStore
 from safety_layer.evaluator import evaluate_cases
 from safety_layer.gate import check_compatibility, run_gate
-from safety_layer.gate_cli import build_parser
+from safety_layer.gate_cli import EXIT_UNCERTAIN, build_parser, run_check
 from safety_layer.golden import seed_golden_cases
 from safety_layer.judge import JudgeDecision, UnavailableRubricJudge
 
@@ -164,6 +167,48 @@ class Phase3GatePersistenceTest(unittest.TestCase):
             )
             self.assertEqual(result.verdict, "FAIL")
             self.assertEqual(store.false_alarm_count(), 1)
+
+
+class GateCliVerdictExitTest(unittest.TestCase):
+    """The CLI must not report an untrustworthy run as a false regression."""
+
+    def _args(self, directory: str, *, repeat: int = 1, unchanged: bool = False):
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "check",
+                "--lane", "push",
+                "--candidate-version", "v1",
+                "--candidate-file", str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "phase3-good-candidate.json"),
+                "--db", str(Path(directory) / "evaluations.db"),
+                "--repeat", str(repeat),
+                "--unchanged",
+            ]
+        )
+        return args
+
+    def test_uncertain_run_returns_dedicated_exit_code(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            args = self._args(directory)
+            args.unchanged = unchanged_flag = True
+            self.assertTrue(unchanged_flag)
+            with mock.patch("safety_layer.gate_cli._build_judge", return_value=UnavailableRubricJudge("no key")):
+                exit_code = run_check(args)
+            self.assertEqual(exit_code, EXIT_UNCERTAIN)
+
+    def test_uncertain_run_is_not_reported_as_a_false_alarm(self) -> None:
+        """A judge outage must not be counted as a regression in the proof."""
+        with tempfile.TemporaryDirectory() as directory:
+            args = self._args(directory, repeat=3)
+            buffer = io.StringIO()
+            with mock.patch("safety_layer.gate_cli._build_judge", return_value=UnavailableRubricJudge("no key")):
+                with contextlib.redirect_stdout(buffer):
+                    exit_code = run_check(args)
+            output = buffer.getvalue()
+            self.assertEqual(exit_code, EXIT_UNCERTAIN)
+            self.assertIn("status=UNCERTAIN", output)
+            self.assertNotIn("status=FAIL", output)
+            self.assertIn("false-fails=0", output)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,11 @@ from .calibration import run_calibration
 from .gate import run_gate
 from .judge import ProductControlledJudge, UnavailableRubricJudge
 
+# Distinct exit codes so CI can tell a regression from an untrustworthy run.
+EXIT_PASS = 0
+EXIT_FAIL = 1
+EXIT_UNCERTAIN = 2
+
 
 def _candidate_from_file(path: str):
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -162,29 +167,42 @@ def run_check(args: argparse.Namespace) -> int:
     results = []
     for _ in range(args.repeat):
         result = _run_check_once(args, cases, store)
-        if result is not None:
-            results.append(result)
-            if result.verdict != "PASS":
-                if args.repeat > 1:
-                    print(
-                        "UNCHANGED-PROOF | runs={}/{} | false-fails={} | status=FAIL".format(
-                            len(results), args.repeat,
-                            sum(item.verdict == "FAIL" for item in results),
-                        )
-                    )
-                return 1
+        if result is None:
+            continue
+        results.append(result)
+        if result.verdict == "PASS":
+            continue
+        if result.verdict == "UNCERTAIN":
+            # Uncertain means the gate could not reach a trustworthy verdict,
+            # typically an unavailable judge or an incompatible baseline. That
+            # is not evidence of a regression and must never be reported as a
+            # false alarm in the unchanged-code proof.
+            if args.repeat > 1:
+                _print_unchanged_proof(results, args.repeat, status="UNCERTAIN")
+            return EXIT_UNCERTAIN
+        if args.repeat > 1:
+            _print_unchanged_proof(results, args.repeat, status="FAIL")
+        return EXIT_FAIL
 
     if args.repeat > 1:
         false_fails = sum(result.verdict == "FAIL" for result in results)
-        print(
-            "UNCHANGED-PROOF | runs={}/{} | false-fails={} | status={}".format(
-                len(results), args.repeat, false_fails,
-                "PASS" if false_fails == 0 and len(results) == args.repeat else "FAIL",
-            )
-        )
-        return 0 if false_fails == 0 and len(results) == args.repeat else 1
+        uncertain = any(result.verdict == "UNCERTAIN" for result in results)
+        status = "UNCERTAIN" if uncertain else "PASS" if false_fails == 0 else "FAIL"
+        _print_unchanged_proof(results, args.repeat, status=status)
+        if uncertain:
+            return EXIT_UNCERTAIN
+        return EXIT_FAIL if false_fails else EXIT_PASS
 
-    return 0
+    return EXIT_PASS
+
+
+def _print_unchanged_proof(results, repeat: int, *, status: str) -> None:
+    false_fails = sum(result.verdict == "FAIL" for result in results)
+    print(
+        "UNCHANGED-PROOF | runs={}/{} | false-fails={} | uncertain={} | status={}".format(
+            len(results), repeat, false_fails, status == "UNCERTAIN", status,
+        )
+    )
 
 
 def main() -> None:
