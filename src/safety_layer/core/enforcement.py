@@ -7,12 +7,12 @@ on anyone's path.
 
 Ordering is deliberate and load-bearing:
 
-1. risk classification  - fail closed on unknown actions (E3.4)
-2. fuse before dispatch - cheap local check, before anything expensive (E2.5)
-3. environment          - a staging session must not reach production (R-04)
-4. approval             - digest, expiry, single use (E3.5, R-07/08/09)
+1. risk classification  - an action with no declared risk is destructive
+2. budgets              - checked before anything expensive happens
+3. environment          - a non-production session must not reach production
+4. approval             - bound to exact arguments, expiring, single use
 5. dispatch             - receipt write-before, provider call, write-after
-6. result validation    - stop rules applied to what came back (E1.1)
+6. result validation    - check what came back against the stop rules
 7. evidence             - trace and honest status
 
 Steps 1-4 never call the provider. A failure at any of them means zero side
@@ -161,11 +161,11 @@ def _trace(ctx: EnforcementContext, event: str, output: Any, status: str) -> Non
 
 def enforce(ctx: EnforcementContext) -> Decision:
     """Authorize and dispatch one action. Never raises for a policy refusal."""
-    # 1. risk classification - unknown actions default to destructive (E3.4).
+    # 1. Risk classification: an undeclared action is treated as destructive.
     registry = ctx.registry if isinstance(ctx.registry, RiskRegistry) else None
     risk = registry.classify(ctx.action) if registry else "destructive"
 
-    # 2. fuse, before anything expensive is consulted (E2.5).
+    # 2. Budgets, before anything expensive is consulted.
     if ctx.fuse is not None:
         try:
             ctx.fuse.before_dispatch(
@@ -181,7 +181,7 @@ def enforce(ctx: EnforcementContext) -> Decision:
             return Decision(BLOCKED, "FUSE", error=str(exc), risk=risk, exc=exc,
                             evidence_status=honest_status(blocked=True))
 
-    # 3. environment, before authorization or dispatch (R-04).
+    # 3. Environment, before authorization or dispatch.
     try:
         enforce_environment(
             ctx.session_environment,
@@ -192,7 +192,7 @@ def enforce(ctx: EnforcementContext) -> Decision:
         return Decision(BLOCKED, "ENVIRONMENT", error=str(exc), risk=risk, exc=exc,
                         evidence_status=honest_status(blocked=True))
 
-    # 4. approval, exact payload, single use (E3.5).
+    # 4. Approval, bound to exact arguments, consumed on use.
     if ctx.approval_store is not None and risk != "read":
         try:
             authorize(
@@ -281,7 +281,7 @@ def validate_result(
     batch: bool = False,
     cross_check: Any = None,
 ) -> Decision:
-    """Apply stop rules to a tool result (E1.1). No side effect occurs here."""
+    """Check a tool result against the stop rules. No side effect occurs here."""
     from .stop_rules import ResultDecision, StopPolicy
 
     policy = StopPolicy()

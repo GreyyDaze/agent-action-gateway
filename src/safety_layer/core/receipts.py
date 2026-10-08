@@ -9,9 +9,9 @@ ORDER_ID_KEY = "order_id"
 class UnresolvableReceiptError(RuntimeError):
     """A receipt cannot be resolved because it lacks a replayable target.
 
-    Rule R-11 requires an uncertain side effect to be resolved before any
+    An uncertain side effect must be resolved with the provider before any
     retry. Without a durable target the retry cannot be dispatched safely, so
-    this must fail loudly rather than guess.
+    this fails loudly rather than guessing.
     """
 
 

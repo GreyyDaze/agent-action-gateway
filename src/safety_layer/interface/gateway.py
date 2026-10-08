@@ -7,8 +7,8 @@ That ordering is the whole security property. The agent never receives an
 upstream credential, so bypassing the gateway does not merely violate policy,
 it has nothing to bypass with.
 
-Deny-by-default follows the same rule as action classification (E3.4): a route
-nobody registered is refused, not forwarded.
+Deny-by-default matches how action risk is handled: a route nobody
+registered is refused, never forwarded.
 """
 
 from __future__ import annotations

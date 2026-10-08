@@ -147,7 +147,7 @@ class StripeRefundProvider:
             ) from exc
         except (TimeoutError, RemoteDisconnected, ConnectionError) as exc:
             # The request may have been received. Leave the receipt unresolved
-            # rather than retrying, which is the rule R-11 requirement.
+            # rather than retrying, which would risk a second charge.
             raise StripeProviderError(
                 "Stripe connection failed after the request was sent; the refund "
                 "may or may not have been applied, resolve it before retrying"

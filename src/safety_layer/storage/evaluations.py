@@ -71,7 +71,7 @@ class EvaluationStore(SqliteStore):
                     ON false_alarm_ledger(created_at);
                 """]
         # Provider/model identity columns were added after the first release so
-        # FR-14/FR-18 evidence can be recorded without recreating the table.
+        # provider and model identity can be recorded without recreating the table.
         additions = []
         for table in ("evaluation_runs", "baselines"):
             if not self._table_exists(table):

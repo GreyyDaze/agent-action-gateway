@@ -127,8 +127,8 @@ class SafetySession:
     ) -> Callable[..., dict[str, Any]]:
         """Return a guarded callable that routes every call through `enforce`.
 
-        `risk` defaults to destructive (E3.4): a tool nobody classified is not
-        silently safe.
+        `risk` defaults to destructive: a tool nobody classified is never
+        treated as safe.
         """
         resolved_risk = risk or "destructive"
         self.registry.register(action, resolved_risk)

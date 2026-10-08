@@ -95,7 +95,7 @@ pytest -q tests/test_fuses.py
 pytest -q tests/test_failure_wall.py tests/test_silent_failures.py tests/test_failure_promotion_drill.py tests/test_trace.py
 ~~~
 
-P3 semantic judge calibration is provider-dependent. The deterministic gate tests run without credentials; the hosted judge path is documented separately below.
+Semantic-judge calibration needs a provider credential. The deterministic gate tests run without one; the hosted judge path is documented separately below.
 
 For the dashboard:
 

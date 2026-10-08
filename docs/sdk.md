@@ -77,6 +77,53 @@ policy.
 | Stop rules on the result | after dispatch |
 | Trace and honest status | every call |
 
+#### Using a session
+
+```python
+from safety_layer import session
+
+with session() as ctx:
+    refund = ctx.tool(refund_fn, action="refund", risk="destructive")
+    result = ctx.run(agent, task, tools={"refund": refund})
+```
+
+| Method | Purpose |
+|---|---|
+| `session(store=..., environment=..., limits=...)` | open a session; every argument has a working default |
+| `ctx.tool(fn, action=..., risk=...)` | wrap a function so every call is checked. `risk` defaults to `destructive` |
+| `ctx.run(agent, task, tools={...})` | run an agent with the guarded tools it may use |
+| `ctx.request_approval(action, arguments)` | create an approval bound to those exact arguments |
+| `ctx.approve(id, approver)` / `ctx.deny(id, approver)` | decide a pending approval |
+| `ctx.pending_approvals()` | list approvals waiting on a person |
+
+A guarded tool returns a dict rather than raising, so an agent can read what
+happened and correct itself:
+
+| Key | Meaning |
+|---|---|
+| `status` | `allowed` or `blocked` |
+| `decision` | `ALLOW`, `APPROVAL`, `FUSE`, `ENVIRONMENT`, `DISPATCH`, or a result-check name |
+| `result` | the tool's return value, or `None` when refused |
+| `error` | why it was refused, when refused |
+| `missing` | required fields the result did not contain |
+| `needs_approval` | true when the refusal is resolved by getting an approval |
+| `risk` | the risk class applied |
+
+Default budgets are 50 steps, 600 seconds and $2.00 per session. Override them
+with `limits=FuseLimits(...)`.
+
+The approval flow:
+
+```python
+approval = ctx.request_approval("refund", {"order_id": "ORD-100", "amount": 400})
+ctx.approve(approval.approval_id, "operator")
+
+refund(order_id="ORD-100", amount=400, approval_id=approval.approval_id)  # allowed
+refund(order_id="ORD-100", amount=500, approval_id=approval.approval_id)  # blocked: payload changed
+```
+
+An approval is bound to the exact arguments, expires, and is consumed on use.
+
 ### `run()` — the observation path
 
 `run(agent, task)` records a trace and returns a result. It reports
@@ -164,27 +211,33 @@ Keys may be supplied through environment variables or local developer secret con
 - evaluation artifacts;
 - normal runtime records.
 
-## Rule reference
+## What is enforced, and when
 
-The SDK sits at the external-agent boundary. The deterministic rules remain defined by the project specification:
+These run inside a `session()`, in this order, before any tool reaches the
+outside world:
 
-- R-01: missing required state -> stop;
-- R-02: ambiguous critical input -> ask/queue;
-- R-03: suspicious empty lookup -> cross-check/flag;
-- R-04: cross-environment action -> block;
-- R-05: exhausted budget -> stop before dispatch;
-- R-06: detected loop -> stop;
-- R-07: destructive action without approval -> block;
-- R-08: expired approval -> block;
-- R-09: changed approved payload -> block;
-- R-10: safety service unavailable for write -> fail-closed;
-- R-11: uncertain side effect -> resolve before retry;
-- R-12: duplicate intent -> dedupe according to provider semantics;
-- R-13: required evidence missing -> degraded/uncertain;
-- R-14: catastrophic regression case -> FAIL;
-- R-15: incompatible judge/baseline -> UNCERTAIN.
+| Check | Behaviour |
+|---|---|
+| Required input missing | stop |
+| Critical input ambiguous | ask, or block in headless mode |
+| Suspiciously empty lookup | cross-check with a second source, then flag |
+| Cross-environment action | block |
+| Budget exhausted | stop before the action is sent |
+| Repeated action making no progress | stop |
+| Destructive action without approval | block |
+| Approval expired | block |
+| Payload changed after approval | block |
+| Safety service unavailable for a write | block; reads continue |
+| Side effect outcome unknown | resolve with the provider before retrying |
+| Duplicate request for the same intent | deduplicate according to the provider |
+| Required evidence missing | report the run as degraded |
+| A catastrophic case fails in the gate | FAIL regardless of the average |
+| Judge or baseline incompatible | UNCERTAIN |
 
-See `docs/problem-breakdown.md` for the edge cases and `docs/PRD.md` for the normative product contract.
+None of this needs configuration. The defaults are the safe side: an action
+whose risk class was never declared is treated as destructive.
+
+`docs/PRD.md` is the normative contract.
 
 ## Current limitations
 
@@ -227,4 +280,4 @@ safety --help
 safety proof --jobs 1000
 ```
 
-For the full acceptance workflow, use the Phase 7 proof document.
+For the full acceptance workflow, use the recorded proof in `docs/history/release-proof.md`.
