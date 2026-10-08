@@ -10,7 +10,7 @@ from .verdict import decide
 
 
 class ProofRubricJudge:
-    """Test-only rubric judge used to keep the Phase 3 proof offline."""
+    """Test-only rubric judge used to keep the evaluation proof offline."""
 
     version = "proof-rubric-judge-v1"
     prompt_version = "proof-rubric-prompt-v1"

@@ -1,4 +1,4 @@
-"""Deterministic Phase 5 execution fuses.
+"""Deterministic execution limits execution fuses.
 
 Fuses are local, deterministic circuit breakers at the action boundary.
 They enforce budgets before dispatch and never judge the agent's goal.

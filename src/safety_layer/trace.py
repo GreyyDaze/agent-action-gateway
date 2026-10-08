@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 _SECRET_KEYS = re.compile(
     r"(api[_-]?key|authorization|password|passwd|secret|token|access[_-]?token|refresh[_-]?token)",
@@ -94,7 +95,7 @@ def honest_status(
     unresolved: bool = False,
     error: bool = False,
 ) -> str:
-    """Compute the Phase 6 run status from evidence, never an agent success claim."""
+    """Compute the observability run status from evidence, never an agent success claim."""
     if blocked:
         return "blocked"
     if suspicious or unresolved or error:
@@ -197,7 +198,7 @@ def _failure_config(trace: Mapping[str, Any]) -> Mapping[str, Any]:
 def failure_record(trace: Mapping[str, Any]) -> FailureRecord | None:
     """Turn a persisted trace into a Failure Wall record.
 
-    Only explicit failures or suspicious Phase 6 traces enter the wall.
+    Only explicit failures or suspicious observability traces enter the wall.
     """
     status = str(trace.get("status", "")).lower()
     flags = tuple(str(flag) for flag in trace.get("flags", ()))

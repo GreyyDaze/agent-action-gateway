@@ -6,12 +6,12 @@ from pathlib import Path
 
 from .gate_cli import main as gate_main
 from .mock_provider import MockProvider
-from .phase1_proof import main as chaos_main
+from .chaos import main as chaos_main
 from .proof import main as proof_main
 from .refund_agent import make_refund_agent
 from .runtime import run
 from .store import TraceStore
-from .phase6_trace import build_failure_wall
+from .trace import build_failure_wall
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,10 +25,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("task", nargs="?", default="Process the refund for Ava")
     run_parser.add_argument("--db", default="data/runtime.db")
 
-    chaos = sub.add_parser("chaos", help="run the Phase 1 crash-injection proof")
+    chaos = sub.add_parser("chaos", help="run the crash recovery crash-injection proof")
     chaos.add_argument("--jobs", type=int, default=1000)
 
-    proof = sub.add_parser("proof", help="reproduce the Phase 1-6 proof suites")
+    proof = sub.add_parser("proof", help="reproduce the crash recovery-6 proof suites")
     proof.add_argument("--jobs", type=int, default=1000)
 
     gate = sub.add_parser("gate", help="run regression-gate commands")

@@ -118,7 +118,7 @@ def count_provider_actions(path: str) -> int:
 def run_proof(jobs: int) -> tuple[int, int]:
     context = multiprocessing.get_context("spawn")
 
-    with tempfile.TemporaryDirectory(prefix="phase1-proof-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="crash-proof-") as tmp:
         root = Path(tmp)
         receipt_db = root / "runtime.db"
         provider_db = root / "provider.db"

@@ -8,7 +8,7 @@ from .fuses import FuseController, FuseTrippedError
 from .gate import evaluate
 from .locks import ApprovalStore, RiskRegistry
 from .models import TraceEvent
-from .phase6_trace import honest_status, suspicious_flags
+from .trace import honest_status, suspicious_flags
 from .provider import RefundProvider
 from .receipts import execute_side_effect, resolve_unknown
 from .safety import check_action
@@ -40,7 +40,7 @@ def run(
     new_turn: bool = False,
     fuse: FuseController | None = None,
 ) -> dict[str, Any]:
-    """Run the agent with durable Phase 4 clarification state."""
+    """Run the agent with durable validation clarification state."""
     trace_store = store or TraceStore()
     active_run_id = run_id or str(uuid4())
     stop_policy = StopPolicy()
@@ -67,7 +67,7 @@ def run(
         except AmbiguityBlockedError as exc:
             trace_store.save_clarification_state(active_run_id, clarification_state)
             trace_store.append_trace(
-                TraceEvent(active_run_id, 0, "phase4", task, str(exc), "blocked")
+                TraceEvent(active_run_id, 0, "validation", task, str(exc), "blocked")
             )
             return {
                 "run_id": active_run_id,
@@ -81,7 +81,7 @@ def run(
 
         if proposal.decision == "ASK":
             trace_store.append_trace(
-                TraceEvent(active_run_id, 0, "phase4", task, proposal.missing_fields, "ask")
+                TraceEvent(active_run_id, 0, "validation", task, proposal.missing_fields, "ask")
             )
             return {
                 "run_id": active_run_id,
@@ -97,7 +97,7 @@ def run(
             fuse.budget.check()
         except FuseTrippedError as exc:
             trace_store.append_trace(
-                TraceEvent(active_run_id, 0, "phase5.fuse", task, str(exc), "blocked")
+                TraceEvent(active_run_id, 0, "fuse", task, str(exc), "blocked")
             )
             return {
                 "run_id": active_run_id,
@@ -113,7 +113,7 @@ def run(
             with fuse.deadline_guard():
                 output = agent_fn(task)
     except FuseTrippedError as exc:
-        trace_store.append_trace(TraceEvent(active_run_id, 1, "phase5.fuse", task, str(exc), "blocked"))
+        trace_store.append_trace(TraceEvent(active_run_id, 1, "fuse", task, str(exc), "blocked"))
         _persist_fuse(trace_store, active_run_id, fuse)
         return {
             "run_id": active_run_id,
@@ -159,7 +159,7 @@ def evaluate_tool_result(
     batch: bool = False,
     cross_check: CrossCheckSpec | None = None,
 ) -> ResultDecision:
-    """Apply Phase 4 policy to the result returned by a real tool."""
+    """Apply validation policy to the result returned by a real tool."""
     policy = StopPolicy()
     checked = None
 
@@ -198,7 +198,7 @@ def evaluate_tool_result(
         else:
             decision = ResultDecision("CONTINUE")
 
-    phase6_flags = suspicious_flags(
+    evidence_flags = suspicious_flags(
         empty_result=not bool(result),
         invariant_failed=checked is not None and not checked.agrees,
         cross_check_failed=checked is not None and not checked.agrees,
@@ -206,7 +206,7 @@ def evaluate_tool_result(
     evidence = {
         "decision": decision.decision,
         "flags": decision.flags,
-        "phase6_suspicious_flags": phase6_flags,
+        "evidence_suspicious_flags": evidence_flags,
         "missing": decision.missing,
         "cross_check_required": decision.cross_check_required,
         "cross_check": (
@@ -224,11 +224,11 @@ def evaluate_tool_result(
         TraceEvent(
             run_id,
             3,
-            "phase4.tool_result",
+            "tool.result",
             task,
             evidence,
             decision.decision.lower(),
-            flags=phase6_flags,
+            flags=evidence_flags,
         )
     )
     return decision
@@ -254,7 +254,7 @@ def execute_tool(
     state_changed: bool = False,
     write: bool = False,
 ) -> dict[str, Any]:
-    """Execute one external tool call through the Phase 5 boundary, then apply Phase 4."""
+    """Execute one external tool call through the execution limits boundary, then apply validation."""
     if fuse is not None:
         try:
             fuse.before_dispatch(
@@ -270,7 +270,7 @@ def execute_tool(
                 TraceEvent(
                     run_id,
                     3,
-                    "phase5.fuse",
+                    "fuse",
                     task,
                     str(exc),
                     "blocked",
@@ -284,7 +284,7 @@ def execute_tool(
             TraceEvent(
                 run_id,
                 3,
-                "phase4.tool_result",
+                "tool.result",
                 task,
                 {"decision": "BLOCK", "flags": ("tool-error",), "error": str(exc)},
                 "blocked",
@@ -297,7 +297,7 @@ def execute_tool(
             fuse.budget.reconcile_cost(estimated_cost_usd, actual_cost_usd)
         except FuseTrippedError as exc:
             store.append_trace(
-                TraceEvent(run_id, 3, "phase5.fuse", task, str(exc), "blocked")
+                TraceEvent(run_id, 3, "fuse", task, str(exc), "blocked")
             )
             return {"status": "blocked", "decision": "FUSE", "result": None, "error": str(exc)}
 
@@ -312,11 +312,11 @@ def execute_tool(
         cross_check=cross_check,
     )
     trace_flags = suspicious_flags(empty_result=not bool(result))
-    phase6_status = honest_status(
+    evidence_status = honest_status(
         blocked=decision.decision != "CONTINUE",
         suspicious=bool(trace_flags),
     )
-    # Preserve the Phase 4/5 public status contract. Phase 6 evidence is
+    # Preserve the validation/5 public status contract. observability evidence is
     # exposed separately so observability does not silently change behavior.
     if decision.decision == "CONTINUE":
         status = "allowed"
@@ -324,11 +324,11 @@ def execute_tool(
         status = "stopped"
     return {
         "status": status,
-        "phase6_status": phase6_status,
+        "evidence_status": evidence_status,
         "decision": decision.decision,
         "result": result if decision.decision == "CONTINUE" else None,
         "flags": decision.flags,
-        "phase6_suspicious_flags": trace_flags,
+        "evidence_suspicious_flags": trace_flags,
         "missing": decision.missing,
         "cross_check_required": decision.cross_check_required,
     }
@@ -358,7 +358,7 @@ def dispatch_external_action(
 ) -> str:
     """Authorize a proposed action, then execute it through the durable receipt boundary."""
     if registry is None or approval_store is None:
-        raise RuntimeError("Phase 2 safety policy is required for external action dispatch")
+        raise RuntimeError("approval safety policy is required for external action dispatch")
     if fuse is not None:
         fuse.before_dispatch(
             action,

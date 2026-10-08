@@ -12,7 +12,7 @@ from safety_layer.runtime import dispatch_external_action, execute_tool, run
 from safety_layer.store import TraceStore
 
 
-class Phase5FusesTest(unittest.TestCase):
+class FuseTest(unittest.TestCase):
     def test_concurrent_consumption_never_exceeds_step_cap(self) -> None:
         budget = FuseBudget(FuseLimits(max_steps=25))
         successes = 0

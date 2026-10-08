@@ -8,10 +8,10 @@ from safety_layer.golden_promotion import (
     GoldenCasePromotionStore,
     promote_failure_group,
 )
-from safety_layer.phase6_trace import build_failure_wall
+from safety_layer.trace import build_failure_wall
 
 
-class Phase6GoldenPromotionTests(unittest.TestCase):
+class FailurePromotionTests(unittest.TestCase):
     def _confirmed_group(self, path: Path):
         wall = FailureWallStore(path)
         group = build_failure_wall(
@@ -155,7 +155,7 @@ class Phase6GoldenPromotionTests(unittest.TestCase):
                     check_type="exact",
                 )
 
-    def test_promoted_case_is_an_explicit_phase3_golden_overlay(self) -> None:
+    def test_promoted_case_is_an_explicit_evaluation_golden_overlay(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             wall, group = self._confirmed_group(
                 Path(directory) / "failure-wall.db"

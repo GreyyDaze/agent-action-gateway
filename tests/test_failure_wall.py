@@ -1,9 +1,9 @@
 import unittest
 
-from safety_layer.phase6_trace import build_failure_wall, suspicious_flags
+from safety_layer.trace import build_failure_wall, suspicious_flags
 
 
-class Phase6FinalProofTests(unittest.TestCase):
+class FailureWallProofTests(unittest.TestCase):
     """Deterministic acceptance proof for Phase 6 silent-wrong and clustering."""
 
     def test_all_planted_silent_wrong_cases_are_flagged(self) -> None:

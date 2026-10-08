@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from safety_layer.models import TraceEvent
-from safety_layer.phase6_trace import (
+from safety_layer.trace import (
     classify_capture,
     honest_status,
     redact,
@@ -12,11 +12,11 @@ from safety_layer.phase6_trace import (
 from safety_layer.store import TraceStore
 
 
-class Phase6TraceTests(unittest.TestCase):
+class TraceEvidenceTests(unittest.TestCase):
     def test_silent_wrong_signals_are_recorded(self) -> None:
         flags = suspicious_flags(invariant_failed=True)
         self.assertIn("invariant-failed", flags)
-        decision = classify_capture(event="phase4.tool_result", flags=flags)
+        decision = classify_capture(event="tool.result", flags=flags)
         self.assertTrue(decision.capture)
         self.assertEqual(decision.capture_class, "always")
 
@@ -150,9 +150,9 @@ class Phase6TraceTests(unittest.TestCase):
 
 
 
-class Phase6FailureWallTests(unittest.TestCase):
+class FailureWallGroupingTests(unittest.TestCase):
     def test_same_error_step_and_config_are_one_group(self) -> None:
-        from safety_layer.phase6_trace import build_failure_wall
+        from safety_layer.trace import build_failure_wall
         traces = [
             {"id": 1, "run_id": "run-1", "step": 4, "event": "tool.execute", "status": "failed",
              "output": {"error": {"type": "TimeoutError"}},
@@ -166,7 +166,7 @@ class Phase6FailureWallTests(unittest.TestCase):
         self.assertEqual(len(groups[0].records), 2)
 
     def test_different_config_does_not_merge(self) -> None:
-        from safety_layer.phase6_trace import build_failure_wall
+        from safety_layer.trace import build_failure_wall
         traces = [
             {"id": 1, "run_id": "run-1", "step": 4, "event": "tool.execute", "status": "failed",
              "output": {"error": {"type": "TimeoutError"}},
@@ -178,11 +178,11 @@ class Phase6FailureWallTests(unittest.TestCase):
         self.assertEqual(len(build_failure_wall(traces)), 2)
 
     def test_silent_wrong_run_is_grouped(self) -> None:
-        from safety_layer.phase6_trace import build_failure_wall
+        from safety_layer.trace import build_failure_wall
         traces = [
-            {"id": 1, "run_id": "run-1", "step": 3, "event": "phase4.tool_result", "status": "completed",
+            {"id": 1, "run_id": "run-1", "step": 3, "event": "tool.result", "status": "completed",
              "flags": ["empty-result"], "provider_metadata": {"config": {"model": "m1"}}},
-            {"id": 2, "run_id": "run-2", "step": 3, "event": "phase4.tool_result", "status": "completed",
+            {"id": 2, "run_id": "run-2", "step": 3, "event": "tool.result", "status": "completed",
              "flags": ["empty-result"], "provider_metadata": {"config": {"model": "m1"}}},
         ]
         groups = build_failure_wall(traces)
@@ -190,7 +190,7 @@ class Phase6FailureWallTests(unittest.TestCase):
         self.assertEqual(groups[0].signature.error_type, "silent-wrong:empty-result")
 
     def test_confirmation_keeps_ownership_unknown(self) -> None:
-        from safety_layer.phase6_trace import build_failure_wall, confirm_failure_group
+        from safety_layer.trace import build_failure_wall, confirm_failure_group
         group = build_failure_wall([{"id": 1, "run_id": "run-1", "step": 1, "event": "tool",
             "status": "failed", "output": {"error": {"type": "ValueError"}}}])[0]
         confirm_failure_group(group)
@@ -198,7 +198,7 @@ class Phase6FailureWallTests(unittest.TestCase):
         self.assertEqual(group.ownership, "unknown")
 
     def test_human_can_merge_groups(self) -> None:
-        from safety_layer.phase6_trace import build_failure_wall, merge_failure_groups
+        from safety_layer.trace import build_failure_wall, merge_failure_groups
         first = build_failure_wall([{"id": 1, "run_id": "run-1", "step": 1, "event": "tool-a",
             "status": "failed", "output": {"error": {"type": "ValueError"}}}])[0]
         second = build_failure_wall([{"id": 2, "run_id": "run-2", "step": 2, "event": "tool-b",
@@ -208,7 +208,7 @@ class Phase6FailureWallTests(unittest.TestCase):
         self.assertEqual(merged.ownership, "unknown")
 
     def test_human_can_split_group(self) -> None:
-        from safety_layer.phase6_trace import build_failure_wall, merge_failure_groups, split_failure_group
+        from safety_layer.trace import build_failure_wall, merge_failure_groups, split_failure_group
         traces = [
             {"id": 1, "run_id": "run-1", "step": 1, "event": "tool-a", "status": "failed",
              "output": {"error": {"type": "ValueError"}}, "provider_metadata": {"config": {"model": "m1"}}},
@@ -221,9 +221,9 @@ class Phase6FailureWallTests(unittest.TestCase):
         self.assertEqual({len(group.records) for group in split}, {1})
 
 
-class Phase6FailureWallPersistenceTests(unittest.TestCase):
+class FailureWallPersistenceTests(unittest.TestCase):
     def _group(self, trace_id: int, run_id: str, error: str = "TimeoutError"):
-        from safety_layer.phase6_trace import build_failure_wall
+        from safety_layer.trace import build_failure_wall
 
         return build_failure_wall([{
             "id": trace_id,
@@ -290,7 +290,7 @@ class Phase6FailureWallPersistenceTests(unittest.TestCase):
 
     def test_merge_persists_both_evidence_and_marks_sources_merged(self) -> None:
         from safety_layer.failure_wall_store import FailureWallStore
-        from safety_layer.phase6_trace import merge_failure_groups
+        from safety_layer.trace import merge_failure_groups
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "failure-wall.db"
@@ -312,7 +312,7 @@ class Phase6FailureWallPersistenceTests(unittest.TestCase):
 
     def test_split_persists_result_groups_and_marks_source_split(self) -> None:
         from safety_layer.failure_wall_store import FailureWallStore
-        from safety_layer.phase6_trace import merge_failure_groups, split_failure_group
+        from safety_layer.trace import merge_failure_groups, split_failure_group
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "failure-wall.db"

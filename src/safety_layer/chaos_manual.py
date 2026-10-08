@@ -10,7 +10,7 @@ import threading
 import tempfile
 from pathlib import Path
 
-from .phase1_proof import ProviderHandler, initialize_provider_db
+from .chaos import ProviderHandler, initialize_provider_db
 from .provider import HttpRefundProvider
 from .receipts import resolve_unknown
 from .store import TraceStore
@@ -23,7 +23,7 @@ def crash_worker(provider_url: str, db_path: str, intent_key: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run one visible Phase 1 crash/recovery drill")
+    parser = argparse.ArgumentParser(description="Run one visible crash recovery crash/recovery drill")
     parser.add_argument("--kill-after-dispatch", action="store_true")
     args = parser.parse_args()
 
@@ -33,7 +33,7 @@ def main() -> None:
 
     context = multiprocessing.get_context("spawn")
 
-    with tempfile.TemporaryDirectory(prefix="phase1-manual-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="crash-manual-") as tmp:
         root = Path(tmp)
         receipt_db = root / "runtime.db"
         provider_db = root / "provider.db"

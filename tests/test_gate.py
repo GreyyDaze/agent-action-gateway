@@ -68,7 +68,7 @@ def baseline(summary, lane: str = "push", judge_version: str | None = None):
     )
 
 
-class Phase3GatePersistenceTest(unittest.TestCase):
+class GatePersistenceTest(unittest.TestCase):
     def test_repeat_option_supports_real_unchanged_proof(self) -> None:
         args = build_parser().parse_args([
             "check",
@@ -179,7 +179,7 @@ class GateCliVerdictExitTest(unittest.TestCase):
                 "check",
                 "--lane", "push",
                 "--candidate-version", "v1",
-                "--candidate-file", str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "phase3-good-candidate.json"),
+                "--candidate-file", str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "evaluation-good-candidate.json"),
                 "--db", str(Path(directory) / "evaluations.db"),
                 "--repeat", str(repeat),
                 "--unchanged",

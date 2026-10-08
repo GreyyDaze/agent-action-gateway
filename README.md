@@ -37,13 +37,13 @@ Full SDK boundary, limitations, and gate exit semantics: `docs/sdk.md`.
 ~~~bash
 safety run "Process the refund for Ava"
 safety chaos --jobs 1000
-safety gate check --lane push --candidate-version v1 --candidate-file tests/fixtures/phase3-good-candidate.json
+safety gate check --lane push --candidate-version v1 --candidate-file tests/fixtures/evaluation-good-candidate.json
 safety wall --db data/runtime.db
 ~~~
 
 The commands are thin interfaces over the existing implementation. Safety policy is not duplicated in the CLI.
 
-### Reproduce the phase proofs
+### Reproduce the verification proofs
 
 From the repository root after installation:
 
@@ -53,15 +53,15 @@ safety proof --jobs 1000
 
 This runs the deterministic P1 crash proof and the P2-P6 proof suites. It prints one labeled proof result per phase and exits non-zero on failure.
 
-For individual proofs:
+For individual verification suites:
 
 ~~~bash
-python -m safety_layer.phase1_proof --jobs 1000
-pytest -q tests/test_phase2.py
-pytest -q tests/test_phase3.py tests/test_phase3_gate.py
-pytest -q tests/test_phase4_stop_rules.py
-pytest -q tests/test_phase5_fuses.py
-pytest -q tests/test_phase6_final_proof.py tests/test_phase6_planted_failures.py tests/test_phase6_promotion_drill.py tests/test_phase6_trace.py
+python -m safety_layer.chaos --jobs 1000
+pytest -q tests/test_approvals.py
+pytest -q tests/test_evaluation.py tests/test_gate.py
+pytest -q tests/test_stop_rules.py
+pytest -q tests/test_fuses.py
+pytest -q tests/test_failure_wall.py tests/test_silent_failures.py tests/test_failure_promotion_drill.py tests/test_trace.py
 ~~~
 
 P3 semantic judge calibration is provider-dependent. The deterministic gate tests run without credentials; the hosted judge path is documented separately below.
@@ -97,7 +97,7 @@ The external agent and its model provider are not owned by this project.
 
 The exact proof output belongs to the phase test/proof commands. Do not treat a green unit test as a stronger claim than the proof it actually runs.
 
-The complete recorded evidence is in `docs/PHASE7_PROOF.md`.
+The complete recorded evidence is in `docs/history/release-proof.md`.
 
 ## SDK integration boundary
 
@@ -168,7 +168,7 @@ The Phase 7 acceptance target is:
 fresh install -> full suite green -> all proof numbers reproducible
 ~~~
 
-The final human acceptance step is a cold README walkthrough in a clean machine or sandbox. See `docs/PHASE7_PROOF.md`.
+The final human acceptance step is a cold README walkthrough in a clean machine or sandbox. See `docs/history/release-proof.md`.
 
 ## Architecture
 

@@ -53,7 +53,7 @@ def good(case: GoldenCase) -> object:
     return case.expected
 
 
-class Phase3GateTest(unittest.TestCase):
+class EvaluationTest(unittest.TestCase):
     def test_canonical_golden_set_is_versioned_and_validated(self) -> None:
         cases = load_golden_set()
         self.assertEqual(len(cases), 30)

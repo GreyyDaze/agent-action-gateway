@@ -7,7 +7,7 @@ from safety_layer.receipts import execute_side_effect, resolve_unknown
 from safety_layer.store import TraceStore
 
 
-class Phase1ReceiptTest(unittest.TestCase):
+class ReceiptLifecycleTest(unittest.TestCase):
     def test_write_before_and_idempotent_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = TraceStore(Path(tmp) / "runtime.db")

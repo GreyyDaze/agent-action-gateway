@@ -17,7 +17,7 @@ from safety_layer.runtime import dispatch_external_action
 from safety_layer.store import TraceStore
 
 
-class Phase4StopRulesTest(unittest.TestCase):
+class StopRulesTest(unittest.TestCase):
     def setUp(self) -> None:
         self.policy = StopPolicy()
 
@@ -170,7 +170,7 @@ class Phase4StopRulesTest(unittest.TestCase):
                 for event in store.snapshot()["traces"]
                 if event["run_id"] == "tool-run-1"
             ]
-            self.assertEqual(traces[-1]["event"], "phase4.tool_result")
+            self.assertEqual(traces[-1]["event"], "tool.result")
 
     def test_real_empty_tool_result_cross_check_disagreement_asks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -417,7 +417,7 @@ class Phase4StopRulesTest(unittest.TestCase):
                 self.assertEqual(outcome["status"], "allowed")
                 self.assertEqual(outcome["result"], {"records": [page]})
 
-    def test_phase4_proof_traps_and_legitimate_paths(self) -> None:
+    def test_stop_rule_matrix(self) -> None:
         traps = [
             self.policy.missing_input(ClarificationState(), ["order_id"]).decision,
             self.policy.empty_result(cross_check_performed=False).decision,
@@ -434,8 +434,8 @@ class Phase4StopRulesTest(unittest.TestCase):
         self.assertEqual(legitimate, ["CONTINUE", "CONTINUE", "ASK"])
 
 
-    def test_phase4_proof_matrix_has_zero_missed_traps_and_false_stops(self) -> None:
-        """Lock the Phase 4 proof set to explicit traps and legitimate paths."""
+    def test_stop_rule_proof_matrix(self) -> None:
+        """Lock the validation proof set to explicit traps and legitimate paths."""
         traps = [
             ("missing-critical", self.policy.missing_input(
                 ClarificationState(), ["order_id"]
@@ -474,7 +474,7 @@ class Phase4StopRulesTest(unittest.TestCase):
             name for name, actual, expected in legitimate if actual != expected
         ]
 
-        self.assertEqual(missed_traps, [], f"missed Phase 4 traps: {missed_traps}")
+        self.assertEqual(missed_traps, [], f"missed validation traps: {missed_traps}")
         self.assertEqual(false_stops, [], f"false stops on legitimate paths: {false_stops}")
         self.assertEqual(len(missed_traps), 0)
         self.assertEqual(len(false_stops), 0)

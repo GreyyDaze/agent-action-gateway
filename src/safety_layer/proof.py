@@ -27,17 +27,17 @@ def find_repo_root(start: Path | None = None) -> Path:
                 return node
 
     raise SystemExit(
-        "phase proofs require a source checkout containing tests/test_phase2.py; "
+        "verification proofs require a source checkout containing tests/test_approvals.py; "
         "run this command from the repository root. The packaged wheel does not "
         "include the proof suite."
     )
 
 PROOFS = (
-    ("P2", ["tests/test_phase2.py"], "0 destructive executions without valid fresh approval"),
-    ("P3", ["tests/test_phase3.py", "tests/test_phase3_gate.py"], "injected regression caught; unchanged-run false-alarm checks"),
-    ("P4", ["tests/test_phase4_stop_rules.py"], "defined traps caught; legitimate suite has zero false stops"),
-    ("P5", ["tests/test_phase5_fuses.py"], "zero budget overruns; loop detection trips; pagination passes"),
-    ("P6", ["tests/test_phase6_final_proof.py", "tests/test_phase6_planted_failures.py", "tests/test_phase6_promotion_drill.py", "tests/test_phase6_trace.py"], "planted silent-wrong cases flagged; failure signatures group correctly"),
+    ("P2", ["tests/test_approvals.py"], "0 destructive executions without valid fresh approval"),
+    ("P3", ["tests/test_evaluation.py", "tests/test_gate.py"], "injected regression caught; unchanged-run false-alarm checks"),
+    ("P4", ["tests/test_stop_rules.py"], "defined traps caught; legitimate suite has zero false stops"),
+    ("P5", ["tests/test_fuses.py"], "zero budget overruns; loop detection trips; pagination passes"),
+    ("P6", ["tests/test_failure_wall.py", "tests/test_silent_failures.py", "tests/test_failure_promotion_drill.py", "tests/test_trace.py"], "planted silent-wrong cases flagged; failure signatures group correctly"),
 )
 
 
@@ -58,11 +58,11 @@ def run_proofs(jobs: int, *, root: Path | None = None) -> None:
     for phase, paths, statement in PROOFS:
         _run([sys.executable, "-m", "pytest", "-q", *paths], repo_root)
         print(f"{phase} PROOF: PASS | {statement}")
-    print("PHASE PROOFS: PASS")
+    print("VERIFICATION SUITES: PASS")
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="safety proof", description="Reproduce the deterministic Phase 1-6 proof suites.")
+    parser = argparse.ArgumentParser(prog="safety proof", description="Reproduce the deterministic verification suites.")
     parser.add_argument("--jobs", type=int, default=1000)
     args = parser.parse_args(argv)
     if args.jobs < 1:

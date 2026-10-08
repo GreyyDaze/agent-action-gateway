@@ -15,7 +15,7 @@ def evaluate(
     score: float = 1.0,
     threshold: float = 0.8,
 ) -> GateVerdict:
-    """Phase 0 gate kept for the reference safety-run path."""
+    """baseline gate kept for the reference safety-run path."""
     verdict = "PASS" if score >= threshold else "FAIL"
     result = GateVerdict(
         run_id=run_id,

@@ -55,7 +55,7 @@ def planted_failure_output(case: GoldenCase) -> object:
     raise ValueError(f"unsupported golden check type: {case.check_type}")
 
 
-class Phase6PlantedFailureProofTests(unittest.TestCase):
+class SilentFailureProofTests(unittest.TestCase):
     def test_all_thirty_canonical_cases_have_a_detectable_planted_failure(self) -> None:
         cases = load_golden_set()
         self.assertEqual(len(cases), 30)

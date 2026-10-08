@@ -10,7 +10,7 @@ from safety_layer.safety import SafetyBlockedError, check_action
 from safety_layer.store import TraceStore
 
 
-class Phase2LocksTest(unittest.TestCase):
+class ApprovalLockTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.store = TraceStore(Path(self.tmp.name) / "runtime.db")

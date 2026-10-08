@@ -9,14 +9,14 @@ from typing import Any, Iterable
 
 from .evaluation_models import GoldenCase
 from .failure_wall_store import FailureWallStore
-from .phase6_trace import FailureGroup
+from .trace import FailureGroup
 
 _ALLOWED_CHECK_TYPES = frozenset({"exact", "field-equality", "regex", "rubric"})
 
 
 @dataclass(frozen=True)
 class GoldenCasePromotion:
-    """A Phase 3 golden case promoted from confirmed Phase 6 evidence."""
+    """A evaluation golden case promoted from confirmed observability evidence."""
 
     case: GoldenCase
     failure_group_id: str
@@ -162,7 +162,7 @@ def promote_failure_group(
     catastrophic: bool = False,
     rubric: Iterable[str] = (),
 ) -> GoldenCasePromotion:
-    """Promote a confirmed Failure Wall group into a Phase 3 golden case.
+    """Promote a confirmed Failure Wall group into a evaluation golden case.
 
     The expected result is supplied by the human promoting the case. The
     failure trace is evidence, not the expected answer.

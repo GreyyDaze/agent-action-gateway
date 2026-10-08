@@ -5,11 +5,11 @@ import sqlite3
 from pathlib import Path
 from typing import Iterable
 
-from .phase6_trace import FailureGroup, FailureRecord, FailureSignature
+from .trace import FailureGroup, FailureRecord, FailureSignature
 
 
 class FailureWallStore:
-    """Durable SQLite repository for Phase 6 Failure Wall records and decisions."""
+    """Durable SQLite repository for observability Failure Wall records and decisions."""
 
     def __init__(self, path: str | Path = "data/runtime.db") -> None:
         self.path = Path(path)

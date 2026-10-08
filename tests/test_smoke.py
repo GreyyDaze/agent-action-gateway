@@ -8,7 +8,7 @@ from safety_layer.runtime import run
 from safety_layer.store import TraceStore
 
 
-class Phase0SmokeTest(unittest.TestCase):
+class SmokeTest(unittest.TestCase):
     def test_full_run_wires_trace_receipt_and_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TraceStore(Path(tmp) / "runtime.db")

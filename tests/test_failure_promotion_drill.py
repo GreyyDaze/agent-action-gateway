@@ -10,11 +10,11 @@ from safety_layer.golden_promotion import (
     GoldenCasePromotionStore,
     promote_failure_group,
 )
-from safety_layer.phase6_trace import build_failure_wall
+from safety_layer.trace import build_failure_wall
 
 
-class Phase6PromotionDrillTests(unittest.TestCase):
-    def test_human_confirmation_to_phase3_evaluation_end_to_end(self) -> None:
+class FailurePromotionDrillTests(unittest.TestCase):
+    def test_human_confirmation_to_evaluation_end_to_end(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             wall = FailureWallStore(root / "failure-wall.db")

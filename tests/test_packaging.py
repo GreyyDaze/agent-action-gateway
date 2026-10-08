@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_module_cli_exposes_phase7_commands() -> None:
+def test_module_cli_exposes_packaging_commands() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "safety_layer", "--help"],
         cwd=ROOT,

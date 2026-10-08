@@ -9,7 +9,7 @@ class Order:
 
 
 class MockProvider:
-    """Reference provider for Phase 0; no safety guards are applied yet."""
+    """Reference provider for baseline; no safety guards are applied yet."""
 
     def __init__(self) -> None:
         self.orders = {
