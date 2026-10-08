@@ -14,6 +14,11 @@ if TYPE_CHECKING:
 GOLDEN_SET_RESOURCE = "data/golden/golden-v1.json"
 _ALLOWED_CHECK_TYPES = frozenset({"exact", "field-equality", "regex", "rubric"})
 
+# A golden set has to be large enough for a baseline comparison to mean
+# something. This is a floor, not a target: the shipped set is an example,
+# and an adopter's own set is free to be any size at or above it.
+MIN_GOLDEN_CASES = 10
+
 
 def default_golden_set_path() -> Path:
     """Materialize the packaged golden set and return its concrete path.
@@ -57,10 +62,13 @@ def load_golden_set(path: str | Path | None = None) -> tuple[GoldenCase, ...]:
     for raw_case in raw_cases:
         cases.append(_parse_case(raw_case, seen_ids))
 
-    if len(cases) != 30:
-        raise ValueError(f"golden-v1 must contain exactly 30 cases, got {len(cases)}")
+    if len(cases) < MIN_GOLDEN_CASES:
+        raise ValueError(
+            f"golden set must contain at least {MIN_GOLDEN_CASES} cases, "
+            f"got {len(cases)}"
+        )
     if not any(case.catastrophic for case in cases):
-        raise ValueError("golden-v1 must contain at least one catastrophic case")
+        raise ValueError("golden set must contain at least one catastrophic case")
 
     return tuple(cases)
 

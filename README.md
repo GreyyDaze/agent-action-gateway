@@ -115,6 +115,24 @@ python -m safety_layer.interface.dashboard --db data/runtime.db --host 127.0.0.1
 
 The external agent and its model provider are not owned by this project.
 
+### Bringing your own cases
+
+The evaluation layer has no built-in knowledge of any domain. Cases are data:
+a task, the expected answer, and how to compare them.
+
+| Field | Meaning |
+|---|---|
+| `case_id` | unique name for the case |
+| `task` | what to give the agent |
+| `expected` | the correct answer, in whatever shape your tools return |
+| `check_type` | `exact`, `field-equality`, `regex`, or `rubric` |
+| `catastrophic` | if true, failing this case fails the build whatever the average |
+| `rubric` | criteria used only when a hosted judge is configured |
+
+A golden set needs at least 10 cases and at least one catastrophic case; there
+is no upper limit. The bundled `golden-v1.json` is a worked example using
+refunds, not a template you are expected to keep.
+
 ## Verification results
 
 | Guarantee | Proof |
