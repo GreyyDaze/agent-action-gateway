@@ -100,10 +100,10 @@ def initialize_provider_db(path: str | Path) -> None:
 def worker(provider_url: str, db_path: str, run_id: str, step_id: str, kill_point: int) -> None:
     store = TraceStore(db_path)
     provider = HttpExternalActionProvider(provider_url)
-    receipt = store.create_receipt(run_id, step_id, "external_action", {"order_id": "ORD-100"})
+    receipt = store.create_receipt(run_id, step_id, "external_action", {"target": "ORD-100"})
     if kill_point == 0:
         os.kill(os.getpid(), signal.SIGKILL)
-    provider_ref = provider.refund("ORD-100", receipt.intent_key)
+    provider_ref = provider.execute("ORD-100", receipt.intent_key)
     if kill_point == 1:
         os.kill(os.getpid(), signal.SIGKILL)
     store.mark_done(receipt.intent_key, provider_ref)

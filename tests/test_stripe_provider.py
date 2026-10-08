@@ -164,10 +164,10 @@ class StripeContractTest(unittest.TestCase):
 
     def test_rejects_oversized_idempotency_key(self) -> None:
         with self.assertRaises(ValueError):
-            self.provider.refund("pi_123", "k" * 256)
+            self.provider.execute("pi_123", "k" * 256)
 
     def test_sends_form_encoded_body_and_idempotency_key(self) -> None:
-        refund_id = self.provider.refund("pi_123", "intent-1", amount=2500)
+        refund_id = self.provider.execute("pi_123", "intent-1", amount=2500)
         self.assertEqual(refund_id, "re_1LocalContractTest")
         sent = StripeLikeHandler.refund_calls["intent-1"]
         self.assertEqual(sent["payment_intent"], "pi_123")
@@ -177,44 +177,44 @@ class StripeContractTest(unittest.TestCase):
     def test_rejects_unauthorized_server(self) -> None:
         bad = StripeRefundProvider("sk_test_wrong_key", api_base=self.base)
         with self.assertRaisesRegex(StripeProviderError, "rejected"):
-            bad.refund("pi_123", "intent-auth")
+            bad.execute("pi_123", "intent-auth")
 
     # -- idempotency semantics -------------------------------------------
 
     def test_same_intent_key_creates_one_refund(self) -> None:
-        first = self.provider.refund("pi_123", "intent-2")
-        second = self.provider.refund("pi_123", "intent-2")
+        first = self.provider.execute("pi_123", "intent-2")
+        second = self.provider.execute("pi_123", "intent-2")
         self.assertEqual(first, second)
         # A real double-charge would appear as two distinct Stripe objects; the
         # contract server stores exactly one record per key.
         self.assertEqual(len(StripeLikeHandler.refund_calls), 1)
 
     def test_different_intent_keys_create_separate_refunds(self) -> None:
-        self.provider.refund("pi_123", "intent-a")
-        self.provider.refund("pi_123", "intent-b")
+        self.provider.execute("pi_123", "intent-a")
+        self.provider.execute("pi_123", "intent-b")
         self.assertEqual(len(StripeLikeHandler.refund_calls), 2)
 
-    def test_find_refund_replays_instead_of_searching(self) -> None:
-        created = self.provider.refund("pi_123", "intent-3")
-        found = self.provider.find_refund("intent-3", order_id="pi_123")
+    def test_find_replays_instead_of_searching(self) -> None:
+        created = self.provider.execute("pi_123", "intent-3")
+        found = self.provider.find("intent-3", target="pi_123")
         self.assertEqual(found, created)
         self.assertEqual(len(StripeLikeHandler.refund_calls), 1)
 
-    def test_find_refund_requires_a_target(self) -> None:
-        with self.assertRaisesRegex(StripeProviderError, "requires the persisted target"):
-            self.provider.find_refund("intent-4")
+    def test_find_requires_a_target(self) -> None:
+        with self.assertRaisesRegex(StripeProviderError, "needs the persisted target"):
+            self.provider.find("intent-4")
 
     # -- failure classification -----------------------------------------
 
     def test_client_error_is_retryable(self) -> None:
         StripeLikeHandler.force_status = 400
         with self.assertRaisesRegex(StripeProviderError, "rejected"):
-            self.provider.refund("pi_123", "intent-5")
+            self.provider.execute("pi_123", "intent-5")
 
     def test_server_error_leaves_outcome_unknown(self) -> None:
         StripeLikeHandler.force_status = 500
         with self.assertRaisesRegex(StripeProviderError, "outcome unknown"):
-            self.provider.refund("pi_123", "intent-6")
+            self.provider.execute("pi_123", "intent-6")
 
     def test_unreachable_host_is_classified_as_not_sent(self) -> None:
         """A connection that never established cannot have double-charged.
@@ -226,7 +226,7 @@ class StripeContractTest(unittest.TestCase):
             TEST_KEY, api_base="http://127.0.0.1:9/v1"
         )
         with self.assertRaisesRegex(StripeProviderError, "was not sent"):
-            provider.refund("pi_123", "intent-unreachable")
+            provider.execute("pi_123", "intent-unreachable")
 
     def test_post_send_disconnect_is_treated_as_ambiguous(self) -> None:
         """A dropped connection after the request left is NOT retryable."""
@@ -239,7 +239,7 @@ class StripeContractTest(unittest.TestCase):
             TEST_KEY, api_base=self.base, transport=dropping_transport
         )
         with self.assertRaisesRegex(StripeProviderError, "may or may not have been applied"):
-            provider.refund("pi_123", "intent-drop")
+            provider.execute("pi_123", "intent-drop")
 
     def test_timeout_is_treated_as_ambiguous(self) -> None:
         def timing_out(request, timeout):
@@ -249,7 +249,7 @@ class StripeContractTest(unittest.TestCase):
             TEST_KEY, api_base=self.base, transport=timing_out
         )
         with self.assertRaisesRegex(StripeProviderError, "may or may not have been applied"):
-            provider.refund("pi_123", "intent-timeout")
+            provider.execute("pi_123", "intent-timeout")
 
     def test_malformed_response_is_reported(self) -> None:
         def garbage(request, timeout):
@@ -259,7 +259,7 @@ class StripeContractTest(unittest.TestCase):
             TEST_KEY, api_base=self.base, transport=garbage
         )
         with self.assertRaisesRegex(StripeProviderError, "non-JSON"):
-            provider.refund("pi_123", "intent-badjson")
+            provider.execute("pi_123", "intent-badjson")
 
 
 class StripeThroughSafetyLayerTest(unittest.TestCase):
@@ -340,6 +340,9 @@ class StripeThroughSafetyLayerTest(unittest.TestCase):
             resolve_unknown(self.store, self.provider)
 
 
+SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "safety_layer"
+
+
 class ProviderIsDomainNeutralTest(unittest.TestCase):
     """The provider interface must not assume the product is about refunds.
 
@@ -359,16 +362,43 @@ class ProviderIsDomainNeutralTest(unittest.TestCase):
             HttpExternalActionProvider.__name__, "HttpExternalActionProvider"
         )
 
-    def test_legacy_refund_names_remain_importable(self) -> None:
+    def test_interface_methods_are_not_named_after_one_domain(self) -> None:
+        """The methods a provider implements must not be about refunds.
+
+        An adopter wiring a file delete should not have to write a method
+        called `refund`. This is the whole reason the interface was renamed.
+        """
         from safety_layer.providers.base import (
             ExternalActionProvider,
             HttpExternalActionProvider,
-            HttpRefundProvider,
-            RefundProvider,
         )
+        from safety_layer.providers.mock import MockProvider
 
-        self.assertIs(RefundProvider, ExternalActionProvider)
-        self.assertIs(HttpRefundProvider, HttpExternalActionProvider)
+        for holder in (ExternalActionProvider, HttpExternalActionProvider):
+            methods = {n for n in dir(holder) if not n.startswith("_")}
+            with self.subTest(protocol=holder.__name__):
+                self.assertIn("execute", methods)
+                self.assertIn("find", methods)
+                self.assertNotIn("refund", methods)
+                self.assertNotIn("find_refund", methods)
+
+        # The demo's own tool keeps its domain name; only the framework
+        # interface is generic.
+        self.assertIn("refund", {n for n in dir(MockProvider) if not n.startswith("_")})
+
+    def test_no_provider_defines_a_refund_named_interface_method(self) -> None:
+        """Any adapter added later must follow the same naming."""
+        import re
+
+        offenders: list[str] = []
+        pattern = re.compile(r"def (find_refund|refund)\(\s*self,\s*order_id[^)]*intent_key")
+        for module in sorted((SOURCE_ROOT / "providers").glob("*.py")):
+            for number, line in enumerate(
+                module.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if pattern.search(line):
+                    offenders.append(f"{module.name}:{number}")
+        self.assertEqual(offenders, [], f"refund-named interface methods: {offenders}")
 
     def test_receipt_dependencies_do_not_mention_refunds(self) -> None:
         """The enforcement core must stay free of domain vocabulary.
@@ -394,15 +424,15 @@ class ProviderIsDomainNeutralTest(unittest.TestCase):
         class FileDeleteProvider:
             provider = "filesystem"
 
-            def refund(self, order_id: str, intent_key: str) -> str:
-                return f"deleted:{order_id}"
+            def execute(self, target: str, intent_key: str) -> str:
+                return f"deleted:{target}"
 
-            def find_refund(self, intent_key: str, order_id: str | None = None):
+            def find(self, intent_key: str, target: str | None = None):
                 return None
 
         provider: ExternalActionProviderProtocol = FileDeleteProvider()
-        self.assertEqual(provider.refund("/etc/hosts", "intent-x"), "deleted:/etc/hosts")
-        self.assertIsNone(provider.find_refund("intent-x", "/etc/hosts"))
+        self.assertEqual(provider.execute("/etc/hosts", "intent-x"), "deleted:/etc/hosts")
+        self.assertIsNone(provider.find("intent-x", "/etc/hosts"))
 
 
 @unittest.skipUnless(
@@ -422,8 +452,8 @@ class StripeLiveTestModeTest(unittest.TestCase):
             self.skipTest("set STRIPE_TEST_PAYMENT_INTENT to run the live check")
         provider = StripeRefundProvider()
         key = f"safety-live-{os.getpid()}"
-        first = provider.refund(intent, key, amount=100)
-        second = provider.refund(intent, key, amount=100)
+        first = provider.execute(intent, key, amount=100)
+        second = provider.execute(intent, key, amount=100)
         self.assertEqual(first, second)
         self.assertTrue(first.startswith("re_"))
 

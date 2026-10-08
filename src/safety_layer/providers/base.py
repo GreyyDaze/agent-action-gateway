@@ -16,9 +16,9 @@ class ExternalActionProvider(Protocol):
     for a database write.
     """
 
-    def refund(self, order_id: str, intent_key: str) -> str: ...
+    def execute(self, target: str, intent_key: str) -> str: ...
 
-    def find_refund(self, intent_key: str, order_id: str | None = None) -> str | None:
+    def find(self, intent_key: str, target: str | None = None) -> str | None:
         """Report whether the effect already happened for this intent key.
 
         `order_id` is the target the receipt persisted, passed so providers
@@ -40,8 +40,8 @@ class HttpExternalActionProvider:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def refund(self, order_id: str, intent_key: str) -> str:
-        payload = json.dumps({"order_id": order_id, "intent_key": intent_key}).encode()
+    def execute(self, target: str, intent_key: str) -> str:
+        payload = json.dumps({"order_id": target, "intent_key": intent_key}).encode()
         request = Request(
             f"{self.base_url}/refunds",
             data=payload,
@@ -51,16 +51,10 @@ class HttpExternalActionProvider:
         with urlopen(request, timeout=self.timeout) as response:
             return json.loads(response.read())["provider_ref"]
 
-    def find_refund(self, intent_key: str, order_id: str | None = None) -> str | None:
+    def find(self, intent_key: str, target: str | None = None) -> str | None:
         request = Request(f"{self.base_url}/refunds/{intent_key}", method="GET")
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read())["provider_ref"]
         except (URLError, RemoteDisconnected):
             return None
-
-
-# Backwards-compatible aliases. The package is not yet published, but the
-# refund-specific names appeared in the SDK surface, so they keep working.
-RefundProvider = ExternalActionProvider
-HttpRefundProvider = HttpExternalActionProvider

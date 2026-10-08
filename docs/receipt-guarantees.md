@@ -53,18 +53,17 @@ A replay is only considered comparable when the run records the model, prompt, a
 The external action boundary is a two-method protocol, `ExternalActionProvider`:
 
 ```python
-refund(order_id, intent_key) -> provider_ref
-find_refund(intent_key, order_id=None) -> provider_ref | None
+execute(target, intent_key) -> provider_ref
+find(intent_key, target=None) -> provider_ref | None
 ```
 
-The method names are historical. `order_id` is this package's generic name for
-whatever the action targets: a PaymentIntent on Stripe, a file path for a
-delete tool, a row id for a database write. Nothing in the safety layer assumes
+`target` is whatever the action acts on: a PaymentIntent on Stripe, a file
+path for a delete tool, a row id for a database write. Nothing in the safety layer assumes
 a payment domain, and unregistered actions are treated as destructive
 regardless of what they do.
 
 Adapters may ignore `order_id` when they can reconcile by key alone. The older
-`RefundProvider` and `HttpRefundProvider` names remain importable as aliases.
+The provider interface uses generic method names (`execute`, `find`); no refund-specific names remain.
 
 | Adapter | Status | Reconciliation strategy |
 |---|---|---|
@@ -78,7 +77,7 @@ Stripe has no "look up the result of idempotency key K" endpoint. It does
 guarantee that re-sending a POST with the same `Idempotency-Key` returns the
 originally stored response instead of creating a second refund.
 
-So `StripeRefundProvider.find_refund` replays the create call rather than
+So `StripeRefundProvider.find` replays the create call rather than
 searching. This is strictly safer than a search would be: the provider, not this
 client, decides whether the effect already happened.
 

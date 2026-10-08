@@ -174,13 +174,13 @@ class StripeRefundProvider:
 
     # -- provider contract ----------------------------------------------
 
-    def refund(
-        self, order_id: str, intent_key: str, amount: int | None = None
+    def execute(
+        self, target: str, intent_key: str, amount: int | None = None
     ) -> str:
         """Perform or idempotently replay the refund. Returns the refund id."""
-        return self._post_refund(order_id, intent_key, amount).refund_id
+        return self._post_refund(target, intent_key, amount).refund_id
 
-    def find_refund(self, intent_key: str, order_id: str | None = None) -> str | None:
+    def find(self, intent_key: str, target: str | None = None) -> str | None:
         """Report whether the effect already happened.
 
         Stripe cannot be queried by idempotency key, so this replays the create
@@ -190,14 +190,14 @@ class StripeRefundProvider:
         Returns None only when the replay itself cannot be answered, which the
         caller must treat as unresolved rather than as "did not happen".
         """
-        if order_id is None:
+        if target is None:
             # Without the target a replay cannot be constructed. The receipt
             # persists it precisely so this path is never taken.
             raise StripeProviderError(
-                "find_refund requires the persisted target to replay the "
-                "idempotent request against Stripe"
+                "find() needs the persisted target to replay the idempotent "
+                "request against Stripe"
             )
-        return self._post_refund(order_id, intent_key, None).refund_id
+        return self._post_refund(target, intent_key, None).refund_id
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         # Never expose the key, not even partially.

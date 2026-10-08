@@ -33,7 +33,7 @@ class GuardedReceiptTest(unittest.TestCase):
 
     def _guarded_refund(self, ctx):
         return ctx.tool(
-            lambda order_id, intent_key: self.provider.refund(order_id, intent_key),
+            lambda order_id, intent_key: self.provider.execute(order_id, intent_key),
             action="refund",
             risk="destructive",
             provider=self.provider,
@@ -117,7 +117,7 @@ class ApprovalSingleUseTest(unittest.TestCase):
                 approval = ctx.request_approval("refund", {"order_id": "ORD-1"})
                 ctx.approve(approval.approval_id, "operator")
                 refund = ctx.tool(
-                    lambda order_id, intent_key: provider.refund(order_id, intent_key),
+                    lambda order_id, intent_key: provider.execute(order_id, intent_key),
                     action="refund",
                     risk="destructive",
                     provider=provider,

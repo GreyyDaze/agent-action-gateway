@@ -178,14 +178,16 @@ Evaluation/proof runs are pinned to their configured provider/model. They must n
 The external tool boundary is the `ExternalActionProvider` interface:
 
 ```python
-refund(order_id, intent_key) -> provider_ref
-find_refund(intent_key, order_id=None) -> provider_ref | None
+execute(target, intent_key) -> provider_ref
+find(intent_key, target=None) -> provider_ref | None
 ```
 
-The method names are historical. `order_id` is the generic name for whatever an
-action targets, so the same interface guards a payment refund, a file delete,
-or a database write. Unregistered actions default to destructive regardless of
-domain.
+`target` is whatever the action acts on, so the same interface guards a
+payment refund, a file delete, or a database write. `execute` performs the
+action and returns a reference the provider knows it by. `find` answers
+whether an uncertain action already landed, and is the only part a provider
+must implement in a way specific to its own system. Unregistered actions
+default to destructive regardless of domain.
 
 | Adapter | Use |
 |---|---|

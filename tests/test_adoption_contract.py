@@ -37,11 +37,11 @@ class CountingProvider:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    def refund(self, order_id: str, intent_key: str) -> str:
-        self.calls.append((order_id, intent_key))
+    def execute(self, target: str, intent_key: str) -> str:
+        self.calls.append((target, intent_key))
         return f"ref-{len(self.calls)}"
 
-    def find_refund(self, intent_key: str, order_id: str | None = None) -> str | None:
+    def find(self, intent_key: str, target: str | None = None) -> str | None:
         for key, ref in ((k, f"ref-{i + 1}") for i, (k, _) in enumerate(self.calls)):
             if key == intent_key:
                 return ref
@@ -73,7 +73,7 @@ class AdoptionContractTest(unittest.TestCase):
         """A destructive tool with no approval must not reach the provider."""
         with session(store=self.store) as ctx:
             refund = ctx.tool(
-                lambda **kw: self.provider.refund(kw["order_id"], kw.get("intent_key", "x")),
+                lambda **kw: self.provider.execute(kw["order_id"], kw.get("intent_key", "x")),
                 action="refund",
                 risk="destructive",
                 provider=self.provider,
@@ -107,7 +107,7 @@ class AdoptionContractTest(unittest.TestCase):
             approval = ctx.request_approval("refund", {"order_id": "ORD-1", "amount": 400})
             ctx.approve(approval.approval_id, "operator")
             refund = ctx.tool(
-                lambda **kw: self.provider.refund(kw["order_id"], "k"),
+                lambda **kw: self.provider.execute(kw["order_id"], "k"),
                 action="refund",
                 risk="destructive",
                 provider=self.provider,
@@ -128,7 +128,7 @@ class AdoptionContractTest(unittest.TestCase):
             approval = ctx.request_approval("refund", {"order_id": "ORD-1", "amount": 400})
             ctx.approve(approval.approval_id, "operator")
             refund = ctx.tool(
-                lambda **kw: self.provider.refund(kw["order_id"], "k"),
+                lambda **kw: self.provider.execute(kw["order_id"], "k"),
                 action="refund",
                 risk="destructive",
                 provider=self.provider,
@@ -203,7 +203,7 @@ class AdoptionContractTest(unittest.TestCase):
 
         with session(store=self.store) as ctx:
             refund = ctx.tool(
-                lambda **kw: self.provider.refund(kw["order_id"], "k"),
+                lambda **kw: self.provider.execute(kw["order_id"], "k"),
                 action="refund",
                 risk="destructive",
                 provider=self.provider,

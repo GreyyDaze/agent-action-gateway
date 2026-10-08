@@ -21,7 +21,7 @@ def crash_worker(provider_url: str, db_path: str, intent_key: str) -> None:
     # `db_path` is accepted for signature parity with the harness callers; this
     # worker kills the process before it could use it.
     del db_path
-    provider_ref = HttpExternalActionProvider(provider_url).refund("ORD-100", intent_key)
+    provider_ref = HttpExternalActionProvider(provider_url).execute("ORD-100", intent_key)
     del provider_ref
     os.kill(os.getpid(), signal.SIGKILL)
 
