@@ -187,7 +187,8 @@ class FailureWallStore:
             )
             self._record_decision(connection, group_id, decision)
         group = self.get_group(group_id)
-        assert group is not None
+        if group is None:
+            raise RuntimeError(f"failure group missing after decision: {group_id}")
         return group
 
     def merge(self, group_ids: Iterable[str], merged: FailureGroup) -> FailureGroup:

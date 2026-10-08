@@ -203,14 +203,6 @@ def enforce_environment(
         )
 
 
-@dataclass(frozen=True)
-class StopEvent:
-    """Trace-safe record of a Phase 4 decision."""
-    decision: str
-    reason: str
-    fields: tuple[str, ...] = ()
-
-
 def validate_required_input(
     policy: StopPolicy,
     state: ClarificationState,
@@ -220,36 +212,3 @@ def validate_required_input(
 ) -> AmbiguityDecision:
     missing = [name for name, value in required_fields.items() if value is None or value == ""]
     return policy.missing_input(state, missing, batch=batch)
-
-
-def decide_tool_result(
-    policy: StopPolicy,
-    *,
-    result: Mapping[str, Any],
-    required_fields: tuple[str, ...] = (),
-    high_stakes: bool = False,
-    second_source_confirmed: bool = False,
-    batch: bool = False,
-) -> ResultDecision:
-    if not result:
-        return policy.empty_result(
-            cross_check_performed=second_source_confirmed,
-            batch=batch,
-        )
-
-    missing = [field for field in required_fields if result.get(field) in (None, "")]
-    if missing:
-        return policy.partial_result(
-            result,
-            missing,
-            missing_critical=high_stakes,
-            batch=batch,
-        )
-
-    if high_stakes:
-        return policy.high_stakes_read(
-            second_source_confirmed=second_source_confirmed,
-            batch=batch,
-        )
-
-    return ResultDecision("CONTINUE")

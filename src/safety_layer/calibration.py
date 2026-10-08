@@ -3,9 +3,8 @@ from __future__ import annotations
 import json
 from importlib.resources import as_file, files
 from pathlib import Path
-from typing import Any
 
-from .evaluation_models import CALIBRATION_MIN_AGREEMENT, CALIBRATION_SET_VERSION, CalibrationExample
+from .evaluation_models import CALIBRATION_SET_VERSION, CalibrationExample
 
 
 CALIBRATION_SET_RESOURCE = "data/calibration/calibration-v1.json"

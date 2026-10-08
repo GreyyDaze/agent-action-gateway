@@ -5,12 +5,12 @@ from uuid import uuid4
 
 from .cross_check import CrossCheckSpec, perform_cross_check
 from .fuses import FuseController, FuseTrippedError
-from .gate import evaluate
+from .gate import record_run_status
 from .locks import ApprovalStore, RiskRegistry
 from .models import TraceEvent
 from .trace import honest_status, suspicious_flags
 from .provider import RefundProvider
-from .receipts import execute_side_effect, resolve_unknown
+from .receipts import execute_side_effect
 from .safety import check_action
 from .stop_rules import (
     AmbiguityBlockedError,
@@ -125,12 +125,12 @@ def run(
     except Exception as exc:
         trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, str(exc), "failed"))
         trace_store.append_receipt(active_run_id, f"RECEIPT run={active_run_id} status=failed")
-        gate = evaluate(active_run_id, trace_store, score=0.0)
+        run_status = record_run_status(active_run_id, trace_store, failed=True)
         _persist_fuse(trace_store, active_run_id, fuse)
         return {
             "run_id": active_run_id,
             "output": None,
-            "gate": gate,
+            "run_status": run_status.verdict,
             "status": "failed",
             "attempt": clarification_state.attempts,
         }
@@ -138,12 +138,12 @@ def run(
     trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, output, "completed"))
     trace_store.append_trace(TraceEvent(active_run_id, 2, "after", output, None, "completed"))
     trace_store.append_receipt(active_run_id, f"RECEIPT run={active_run_id} status=completed")
-    gate = evaluate(active_run_id, trace_store)
+    run_status = record_run_status(active_run_id, trace_store, failed=False)
     _persist_fuse(trace_store, active_run_id, fuse)
     return {
         "run_id": active_run_id,
         "output": output,
-        "gate": gate,
+        "run_status": run_status.verdict,
         "status": "degraded" if fuse is not None and fuse.degraded else "completed",
         "attempt": clarification_state.attempts,
     }
@@ -383,7 +383,3 @@ def dispatch_external_action(
         fuse.budget.reconcile_cost(estimated_cost_usd, actual_cost_usd)
     return result
 
-
-def recover_external_actions(store: TraceStore, provider: RefundProvider) -> int:
-    """Resolve unknown side effects before any retry."""
-    return resolve_unknown(store, provider)

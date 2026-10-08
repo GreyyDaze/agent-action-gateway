@@ -9,19 +9,26 @@ from .store import TraceStore
 from .verdict import decide
 
 
-def evaluate(
-    run_id: str,
-    store: TraceStore,
-    score: float = 1.0,
-    threshold: float = 0.8,
-) -> GateVerdict:
-    """baseline gate kept for the reference safety-run path."""
-    verdict = "PASS" if score >= threshold else "FAIL"
+NOT_EVALUATED = "NOT_EVALUATED"
+
+
+def record_run_status(run_id: str, store: TraceStore, *, failed: bool) -> GateVerdict:
+    """Record the honest outcome of a single run.
+
+    A completed run has NOT been evaluated for quality. The regression gate in
+    run_gate() is what produces PASS/FAIL/UNCERTAIN, and only after comparing a
+    candidate against a recorded baseline. Persisting PASS here, as the previous
+    hardcoded score/threshold comparison did, manufactured durable evidence that
+    no evaluation ever produced.
+
+    A run that raised is recorded as FAILED because that is a directly observed
+    fact, not a judgement about quality.
+    """
     result = GateVerdict(
         run_id=run_id,
-        verdict=verdict,
-        score=score,
-        threshold=threshold,
+        verdict="FAIL" if failed else NOT_EVALUATED,
+        score=0.0 if failed else 0.0,
+        threshold=0.0,
     )
     store.append_gate(result)
     return result

@@ -8,16 +8,24 @@ from typing import Any
 from .evaluation_models import Baseline, GoldenCase
 from .evaluation_store import EvaluationStore
 from .evaluator import evaluate_cases
-from .gemini_judge import GeminiRubricJudgeProvider
+from .gemini_judge import DEFAULT_GEMINI_MODEL, GeminiRubricJudgeProvider, GeminiJudgeError
 from .golden import seed_golden_cases
 from .calibration import run_calibration
 from .gate import run_gate
-from .judge import ProductControlledJudge, UnavailableRubricJudge
+from .judge import (
+    JudgeUnavailableError,
+    ProductControlledJudge,
+    UnavailableRubricJudge,
+)
+from .verdict import LANE_RUNS
 
-# Distinct exit codes so CI can tell a regression from an untrustworthy run.
+# Distinct exit codes so CI can tell three outcomes apart. argparse exits 2 on
+# a usage error, so UNCERTAIN uses 3 to keep "the change regressed" (1),
+# "the gate could not tell" (3), and "you typed it wrong" (2) distinguishable.
 EXIT_PASS = 0
 EXIT_FAIL = 1
-EXIT_UNCERTAIN = 2
+EXIT_USAGE = 2  # argparse's own code, listed for documentation
+EXIT_UNCERTAIN = 3
 
 
 def _candidate_from_file(path: str):
@@ -44,9 +52,9 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--candidate-file", required=True)
     check.add_argument("--db", default="data/evaluations.db")
     check.add_argument("--record-baseline", action="store_true")
-    check.add_argument("--judge-model", default="gemini-3.5-flash-lite")
+    check.add_argument("--judge-model", default=DEFAULT_GEMINI_MODEL)
     calibrate = subparsers.add_parser("calibrate", help="run the human-labeled judge calibration set")
-    calibrate.add_argument("--judge-model", default="gemini-3.5-flash-lite")
+    calibrate.add_argument("--judge-model", default=DEFAULT_GEMINI_MODEL)
     check.add_argument(
         "--unchanged",
         action="store_true",
@@ -73,9 +81,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _build_judge(model: str):
+    """Return a configured judge, or an explicitly unavailable one.
+
+    Only judge-construction problems are absorbed here. A programming error such
+    as a TypeError must not be laundered into an UNCERTAIN verdict, which would
+    hide a broken deployment behind "we could not evaluate".
+    """
     try:
         return ProductControlledJudge(GeminiRubricJudgeProvider(model=model))
-    except Exception as exc:
+    except GeminiJudgeError as exc:
         return UnavailableRubricJudge(str(exc))
 
 
@@ -83,16 +97,18 @@ def run_calibrate(args: argparse.Namespace) -> int:
     judge = _build_judge(args.judge_model)
     try:
         result = run_calibration(seed_golden_cases(), judge)
-    except Exception as exc:
+    except JudgeUnavailableError as exc:
+        # Unavailability is not a calibration failure. Reporting it as exit 1
+        # would contradict the gate contract documented in docs/sdk.md.
         print("UNCERTAIN | calibration unavailable: {}".format(exc))
-        return 1
+        return EXIT_UNCERTAIN
     status = "ACCEPTED" if result.accepted else "REJECTED"
-    print("CALIBRATION | {} | agreed={}/{} | agreement={:.1%} | threshold={:.1%} | cost=$ {:.4f} | runtime={:.3f}s".format(status, result.agreed, result.total, result.agreement, 1.0, result.estimated_cost_usd, result.runtime_seconds))
-    return 0 if result.accepted else 1
+    print("CALIBRATION | {} | agreed={}/{} | agreement={:.1%} | threshold={:.1%} | cost=$ {:.4f} | runtime={:.3f}s".format(status, result.agreed, result.total, result.agreement, result.min_agreement, result.estimated_cost_usd, result.runtime_seconds))
+    return EXIT_PASS if result.accepted else EXIT_FAIL
 
 
 def _run_check_once(args: argparse.Namespace, cases: tuple[GoldenCase, ...], store: EvaluationStore):
-    runs = 3 if args.lane == "push" else 10
+    runs = LANE_RUNS[args.lane]
     semantic_cases = tuple(case for case in cases if case.check_type == "rubric")
     judge = _build_judge(args.judge_model) if semantic_cases else None
 

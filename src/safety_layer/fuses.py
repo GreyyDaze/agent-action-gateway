@@ -98,14 +98,6 @@ class FuseBudget:
             if self.limits.max_dollars is not None and self._dollars_used > self.limits.max_dollars:
                 self._trip_locked("spend budget exhausted")
 
-    def record_cost(self, dollars: float) -> None:
-        if dollars < 0:
-            raise ValueError("dollars must be >= 0")
-        with self._lock:
-            self._dollars_used += dollars
-            if self.limits.max_dollars is not None and self._dollars_used > self.limits.max_dollars:
-                self._trip_locked("spend budget exhausted")
-
     def trip(self, reason: str) -> None:
         """Trip the fuse without taking a lock.
 

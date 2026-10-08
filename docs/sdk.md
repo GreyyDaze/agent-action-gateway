@@ -66,9 +66,19 @@ Gate verdicts are:
 |---|---|---:|
 | PASS | evidence supports the candidate | 0 |
 | FAIL | a confirmed regression was detected | 1 |
-| UNCERTAIN | the gate could not establish a trustworthy verdict | 2 |
+| UNCERTAIN | the gate could not establish a trustworthy verdict | 3 |
+| usage error | the command line itself was wrong | 2 |
 
 `UNCERTAIN` is intentionally non-zero for CI. An untrustworthy evaluation must not silently pass. It is also **not** a false regression and must not be added to the false-alarm ledger as a FAIL.
+
+`UNCERTAIN` uses 3 rather than 2 because 2 is what `argparse` exits with on a
+usage error. Keeping them distinct means CI logs can tell "the change regressed"
+(1) apart from "the gate could not tell" (3) and "you typed it wrong" (2).
+
+A **single run** is not an evaluation and does not produce PASS or FAIL. `run()`
+records `NOT_EVALUATED` for a completed run and `FAIL` only when the agent
+raised. Quality verdicts come exclusively from `safety gate check`, which
+compares a candidate against a recorded baseline.
 
 ## Provider boundary
 
@@ -126,6 +136,24 @@ The SDK does not claim:
 - a universal agent framework.
 
 These are scope boundaries, not hidden implementation gaps.
+
+## Dashboard security
+
+The dashboard binds `127.0.0.1` by default and is a single-operator local tool.
+It has no user accounts and no authentication, so it must not be exposed on a
+shared network.
+
+The approval queue is the human trust boundary of the product, so approval
+writes are protected specifically:
+
+- every approval form carries a per-process CSRF token, compared with
+  `secrets.compare_digest`;
+- a POST carrying a cross-site `Origin` header is rejected with 403;
+- responses set `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`
+  and a restrictive `Content-Security-Policy`.
+
+CSRF tokens and the origin allowlist are per server process, so restarting the
+dashboard invalidates in-flight forms. That is intentional.
 
 ## Verification
 

@@ -54,7 +54,10 @@ def evaluate_cases(
             evaluator: Judge = (
                 deterministic_judge if is_deterministic(case) else judge
             )
-            assert evaluator is not None
+            if evaluator is None:
+                raise RuntimeError(
+                    "rubric cases require an explicitly configured judge"
+                )
             try:
                 if not is_deterministic(case):
                     if judge_request_count > 0 and judge_wait_seconds:

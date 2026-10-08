@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import secrets
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from .locks import ApprovalStore
+from .locks import ApprovalError, ApprovalStore
 from .store import TraceStore
 
 
@@ -19,14 +20,35 @@ def _metric(label: str, value: object) -> str:
 
 
 class Handler(BaseHTTPRequestHandler):
+    """Read-only evidence viewer with an explicit approval write boundary.
+
+    The approval queue is the human trust boundary of the whole product, so a
+    POST must not be forgeable by another web page. Every approval form carries
+    a per-process CSRF token, and POSTs are additionally required to come from a
+    local origin.
+    """
+
     store: TraceStore
     approvals: ApprovalStore
+    csrf_token: str
+    allowed_origins: frozenset[str]
+
+    def _security_headers(self) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self';"
+            " base-uri 'none'; frame-ancestors 'none'",
+        )
 
     def _send_html(self, body: str, status: int = 200) -> None:
         payload = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
+        self._security_headers()
         self.end_headers()
         self.wfile.write(payload)
 
@@ -35,8 +57,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
+        self._security_headers()
         self.end_headers()
         self.wfile.write(encoded)
+
+    def _origin_is_trusted(self) -> bool:
+        """Reject approval writes that were initiated by another site.
+
+        A cross-site form POST carries the attacker's Origin. Requests with no
+        Origin header at all are same-origin navigations from our own forms.
+        """
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return True
+        return origin in self.allowed_origins
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -75,8 +109,14 @@ class Handler(BaseHTTPRequestHandler):
             f"<article class='card'><h3>{escape(item.action)}</h3>"
             f"<p>ID: {escape(item.approval_id)} · expires {escape(item.expires_at)}</p>"
             f"<pre>{escape(json.dumps(item.arguments, indent=2, sort_keys=True, default=str))}</pre>"
-            f"<form method='post' action='/approvals/approve'><input type='hidden' name='approval_id' value='{escape(item.approval_id)}'><input name='approver' required placeholder='Approver'><button>Approve</button></form>"
-            f"<form method='post' action='/approvals/deny'><input type='hidden' name='approval_id' value='{escape(item.approval_id)}'><input name='approver' required placeholder='Approver'><button>Deny</button></form></article>"
+            f"<form method='post' action='/approvals/approve'>"
+            f"<input type='hidden' name='csrf_token' value='{escape(self.csrf_token)}'>"
+            f"<input type='hidden' name='approval_id' value='{escape(item.approval_id)}'>"
+            f"<input name='approver' required placeholder='Approver'><button>Approve</button></form>"
+            f"<form method='post' action='/approvals/deny'>"
+            f"<input type='hidden' name='csrf_token' value='{escape(self.csrf_token)}'>"
+            f"<input type='hidden' name='approval_id' value='{escape(item.approval_id)}'>"
+            f"<input name='approver' required placeholder='Approver'><button>Deny</button></form></article>"
             for item in pending
         ) or "<p>No pending approvals.</p>"
 
@@ -117,8 +157,20 @@ table{{width:100%;background:#fff;border-collapse:collapse}} td,th{{padding:.7re
         if self.path not in {"/approvals/approve", "/approvals/deny"}:
             self.send_error(404)
             return
-        length = int(self.headers.get("Content-Length", "0"))
-        form = parse_qs(self.rfile.read(length).decode("utf-8"))
+        if not self._origin_is_trusted():
+            self.send_error(403, "cross-origin approval request rejected")
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_error(400, "invalid Content-Length")
+            return
+        form = parse_qs(self.rfile.read(length).decode("utf-8", errors="replace"))
+        if not secrets.compare_digest(
+            form.get("csrf_token", [""])[0] or "", self.csrf_token
+        ):
+            self.send_error(403, "missing or invalid CSRF token")
+            return
         approval_id = form.get("approval_id", [None])[0]
         approver = form.get("approver", [None])[0]
         if not approval_id or not approver:
@@ -129,18 +181,42 @@ table{{width:100%;background:#fff;border-collapse:collapse}} td,th{{padding:.7re
                 self.approvals.approve(approval_id, approver)
             else:
                 self.approvals.deny(approval_id, approver)
-        except Exception as exc:
+        except ApprovalError as exc:
+            # Surface the approval-policy message, never an internal traceback.
             self.send_error(400, str(exc))
             return
         self.send_response(303)
         self.send_header("Location", "/")
+        self._security_headers()
         self.end_headers()
 
 
+def build_server(path: str, host: str, port: int) -> ThreadingHTTPServer:
+    """Create a dashboard server with per-instance state.
+
+    Server state is bound on a generated subclass rather than mutated onto the
+    shared Handler, so two servers can coexist in one process and tests do not
+    leak state into each other.
+
+    The trusted origins are derived from the address the OS actually bound, not
+    the requested one, so `--port 0` and host aliases resolve correctly.
+    """
+    bound = type(
+        "BoundHandler",
+        (Handler,),
+        {"store": TraceStore(path), "csrf_token": secrets.token_urlsafe(32)},
+    )
+    bound.approvals = ApprovalStore(bound.store)
+    server = ThreadingHTTPServer((host, port), bound)
+    bound_host, bound_port = server.server_address[0], server.server_address[1]
+    bound.allowed_origins = frozenset(
+        {f"http://{bound_host}:{bound_port}", f"https://{bound_host}:{bound_port}"}
+    )
+    return server
+
+
 def serve(path: str, host: str, port: int) -> None:
-    Handler.store = TraceStore(path)
-    Handler.approvals = ApprovalStore(Handler.store)
-    ThreadingHTTPServer((host, port), Handler).serve_forever()
+    build_server(path, host, port).serve_forever()
 
 
 if __name__ == "__main__":

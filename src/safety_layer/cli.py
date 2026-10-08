@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-from pathlib import Path
 
 from .gate_cli import main as gate_main
 from .mock_provider import MockProvider
@@ -42,11 +40,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run_demo(args: argparse.Namespace) -> int:
     result = run(make_refund_agent(MockProvider()), args.task, TraceStore(args.db))
-    gate = result.get("gate")
     print(f"run={result['run_id']}")
     print(f"status={result['status']}")
-    if gate is not None:
-        print(f"gate={gate.verdict} score={gate.score:.1f} threshold={gate.threshold:.1f}")
+    run_status = result.get("run_status")
+    if run_status is not None:
+        # A single run is not evaluated for quality. Quality verdicts come from
+        # `safety gate check`, which compares against a recorded baseline.
+        print(f"run_status={run_status}")
     return 0
 
 

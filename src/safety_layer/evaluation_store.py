@@ -161,7 +161,8 @@ class EvaluationStore:
             row = connection.execute(
                 "SELECT COUNT(*) AS count FROM evaluation_runs"
             ).fetchone()
-        assert row is not None
+        if row is None:
+            raise RuntimeError("evaluation_runs count query returned no row")
         return int(row["count"])
 
     def false_alarm_count(self) -> int:
@@ -169,7 +170,8 @@ class EvaluationStore:
             row = connection.execute(
                 "SELECT COUNT(*) AS count FROM false_alarm_ledger"
             ).fetchone()
-        assert row is not None
+        if row is None:
+            raise RuntimeError("false_alarm_ledger count query returned no row")
         return int(row["count"])
 
     def save_baseline(self, baseline: Baseline) -> None:

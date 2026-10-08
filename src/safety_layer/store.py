@@ -208,7 +208,10 @@ class TraceStore:
                 (run_id, step_id, intent_key, action, json.dumps(arguments, sort_keys=True)),
             )
             row = connection.execute("SELECT * FROM receipts WHERE intent_key = ?", (intent_key,)).fetchone()
-        assert row is not None
+        if row is None:
+            # Explicit rather than `assert`: this is load-bearing control flow
+            # and must survive `python -O`.
+            raise RuntimeError(f"receipt row missing after upsert: {intent_key}")
         return self._receipt(row)
 
     def mark_done(self, intent_key: str, provider_ref: str | None) -> None:

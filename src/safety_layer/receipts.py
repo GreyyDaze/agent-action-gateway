@@ -4,6 +4,18 @@ from .provider import RefundProvider
 from .store import TraceStore
 
 
+ORDER_ID_KEY = "order_id"
+
+
+class UnresolvableReceiptError(RuntimeError):
+    """A receipt cannot be resolved because it lacks a replayable target.
+
+    Rule R-11 requires an uncertain side effect to be resolved before any
+    retry. Without a durable target the retry cannot be dispatched safely, so
+    this must fail loudly rather than guess.
+    """
+
+
 def execute_side_effect(
     store: TraceStore,
     provider: RefundProvider,
@@ -12,7 +24,14 @@ def execute_side_effect(
     arguments: dict[str, Any],
     order_id: str,
 ) -> str:
-    receipt = store.create_receipt(run_id, step_id, "external_action", arguments)
+    # The replay target is persisted separately from the caller-supplied
+    # arguments. Relying on arguments["order_id"] made recovery depend on the
+    # caller's payload shape, which crashed the resolver for any other payload.
+    durable_arguments = dict(arguments)
+    durable_arguments.setdefault(ORDER_ID_KEY, order_id)
+    receipt = store.create_receipt(
+        run_id, step_id, "external_action", durable_arguments
+    )
     if receipt.state != "unknown":
         raise RuntimeError(f"unexpected receipt state: {receipt.state}")
     try:
@@ -34,7 +53,13 @@ def resolve_unknown(store: TraceStore, provider: RefundProvider) -> int:
             store.mark_resolved(receipt.intent_key, provider_ref)
             resolved += 1
             continue
-        provider_ref = provider.refund(receipt.arguments["order_id"], receipt.intent_key)
+        order_id = receipt.arguments.get(ORDER_ID_KEY)
+        if not order_id:
+            raise UnresolvableReceiptError(
+                f"receipt {receipt.intent_key} has no persisted {ORDER_ID_KEY}; "
+                "resolve it manually instead of retrying an uncertain side effect"
+            )
+        provider_ref = provider.refund(order_id, receipt.intent_key)
         store.mark_done(receipt.intent_key, provider_ref)
         resolved += 1
     return resolved

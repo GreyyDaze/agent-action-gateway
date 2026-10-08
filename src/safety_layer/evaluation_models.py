@@ -94,6 +94,10 @@ class CalibrationResult:
     runtime_seconds: float
 
     @property
+    def min_agreement(self) -> float:
+        return CALIBRATION_MIN_AGREEMENT
+
+    @property
     def accepted(self) -> bool:
         return self.agreement >= CALIBRATION_MIN_AGREEMENT
 
