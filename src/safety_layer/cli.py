@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 
+from .chaos import main as chaos_main
+from .gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_USAGE
 from .gate_cli import main as gate_main
 from .mock_provider import MockProvider
-from .chaos import main as chaos_main
 from .proof import main as proof_main
 from .refund_agent import make_refund_agent
 from .runtime import run
@@ -23,10 +24,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("task", nargs="?", default="Process the refund for Ava")
     run_parser.add_argument("--db", default="data/runtime.db")
 
-    chaos = sub.add_parser("chaos", help="run the crash recovery crash-injection proof")
+    chaos = sub.add_parser("chaos", help="run the crash-injection proof (receipt book)")
     chaos.add_argument("--jobs", type=int, default=1000)
 
-    proof = sub.add_parser("proof", help="reproduce the crash recovery-6 proof suites")
+    proof = sub.add_parser("proof", help="reproduce the Phase 1-6 verification suites")
     proof.add_argument("--jobs", type=int, default=1000)
 
     gate = sub.add_parser("gate", help="run regression-gate commands")
@@ -47,10 +48,13 @@ def run_demo(args: argparse.Namespace) -> int:
         # A single run is not evaluated for quality. Quality verdicts come from
         # `safety gate check`, which compares against a recorded baseline.
         print(f"run_status={run_status}")
-    return 0
+    # A run that failed or was blocked must not exit 0, or a script driving the
+    # CLI would treat a stopped run as a success.
+    return EXIT_FAIL if result["status"] in {"failed", "blocked"} else EXIT_PASS
 
 
 def run_wall(args: argparse.Namespace) -> int:
+    """Print deterministic failure groups. Reporting only; always succeeds."""
     traces = TraceStore(args.db).snapshot()["traces"]
     groups = build_failure_wall(traces)
     print(f"groups={len(groups)}")
@@ -60,7 +64,7 @@ def run_wall(args: argparse.Namespace) -> int:
             f"{group.signature.failing_step} | traces={len(group.records)} | "
             f"state={group.state}"
         )
-    return 0
+    return EXIT_PASS
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -78,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
             chaos_main()
         finally:
             sys.argv = old
-        return 0
+        return EXIT_PASS
     if args.command == "proof":
         import sys
         old = sys.argv
@@ -87,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
             proof_main()
         finally:
             sys.argv = old
-        return 0
+        return EXIT_PASS
     if args.command == "gate":
         import sys
         old = sys.argv
@@ -96,12 +100,12 @@ def main(argv: list[str] | None = None) -> int:
             gate_main()
         finally:
             sys.argv = old
-        return 0
+        return EXIT_PASS
     if args.command == "wall":
         return run_wall(args)
 
     parser.error("unknown command")
-    return 2
+    return EXIT_USAGE
 
 
 if __name__ == "__main__":

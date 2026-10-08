@@ -8,7 +8,6 @@ from .models import GateVerdict
 from .store import TraceStore
 from .verdict import decide
 
-
 NOT_EVALUATED = "NOT_EVALUATED"
 
 

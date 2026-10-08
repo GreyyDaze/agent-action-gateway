@@ -11,4 +11,6 @@ src/agent_safety_layer.egg-info/
 build/
 dist/
 *.egg-info/
-
+.coverage
+.coverage.*
+htmlcov/

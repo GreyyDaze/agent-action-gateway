@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from time import perf_counter, sleep
 
 from .evaluation_models import EvaluationSummary, GoldenCase, SampleResult
@@ -51,13 +51,16 @@ def evaluate_cases(
             break
         for case in cases:
             output = candidate(case)
-            evaluator: Judge = (
+            # Non-deterministic cases always arrive here with a judge: the
+            # guard above raises if any exist without one.
+            selected: Judge | None = (
                 deterministic_judge if is_deterministic(case) else judge
             )
-            if evaluator is None:
+            if selected is None:
                 raise RuntimeError(
                     "rubric cases require an explicitly configured judge"
                 )
+            evaluator: Judge = selected
             try:
                 if not is_deterministic(case):
                     if judge_request_count > 0 and judge_wait_seconds:
@@ -109,16 +112,17 @@ def evaluate_cases(
         observed = sum(per_run_scores) / len(per_run_scores)
         noise = max(per_run_scores) - min(per_run_scores) if len(per_run_scores) > 1 else 0.0
 
+    rubric_judge = judge
     judge_versions = {
         deterministic_judge.version
         if is_deterministic(case)
-        else judge.version
+        else _require_judge(rubric_judge).version
         for case in cases
     }
     prompt_versions = {
         deterministic_judge.prompt_version
         if is_deterministic(case)
-        else judge.prompt_version
+        else _require_judge(rubric_judge).prompt_version
         for case in cases
     }
     judge_version = ",".join(sorted(judge_versions))
@@ -149,7 +153,13 @@ def evaluate_cases(
         judge_provider=",".join(sorted(provider_versions)),
         judge_model=",".join(sorted(model_versions)),
         candidate_version=candidate_version,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         judge_available=judge_available,
         judge_error=judge_error,
     )
+
+
+def _require_judge(judge: Judge | None) -> Judge:
+    if judge is None:
+        raise RuntimeError("rubric cases require an explicitly configured judge")
+    return judge

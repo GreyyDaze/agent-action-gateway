@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .evaluation_models import GoldenCase
 from .failure_wall_store import FailureWallStore
+from .sqlite_base import SqliteStore
 from .trace import FailureGroup
 
 _ALLOWED_CHECK_TYPES = frozenset({"exact", "field-equality", "regex", "rubric"})
@@ -24,45 +26,35 @@ class GoldenCasePromotion:
     promoted_at: str
 
 
-class GoldenCasePromotionStore:
+class GoldenCasePromotionStore(SqliteStore):
     """Durable store for human-promoted golden cases and their provenance."""
 
+    store_name = "golden_promotions"
+
     def __init__(self, path: str | Path = "data/golden-promotions.db") -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+        super().__init__(path)
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA busy_timeout=30000")
-        return connection
-
-    def _init_db(self) -> None:
-        with self._connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS golden_case_promotions (
-                    case_id TEXT PRIMARY KEY,
-                    task_json TEXT NOT NULL,
-                    expected_json TEXT NOT NULL,
-                    check_type TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    catastrophic INTEGER NOT NULL,
-                    rubric_json TEXT NOT NULL,
-                    failure_group_id TEXT NOT NULL UNIQUE,
-                    source_trace_ids_json TEXT NOT NULL,
-                    promoted_at TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_golden_promotions_group
-                ON golden_case_promotions(failure_group_id)
-                """
-            )
+    def _migrations(self):
+        yield 1, [
+            """
+            CREATE TABLE IF NOT EXISTS golden_case_promotions (
+                case_id TEXT PRIMARY KEY,
+                task_json TEXT NOT NULL,
+                expected_json TEXT NOT NULL,
+                check_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                catastrophic INTEGER NOT NULL,
+                rubric_json TEXT NOT NULL,
+                failure_group_id TEXT NOT NULL UNIQUE,
+                source_trace_ids_json TEXT NOT NULL,
+                promoted_at TEXT NOT NULL
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_golden_promotions_group
+            ON golden_case_promotions(failure_group_id);
+            """,
+        ]
 
     def save(self, promotion: GoldenCasePromotion) -> None:
         if not promotion.case.case_id:
@@ -76,7 +68,7 @@ class GoldenCasePromotionStore:
         if not promotion.source_trace_ids:
             raise ValueError("at least one source trace is required")
 
-        with self._connect() as connection:
+        with self.connection() as connection:
             existing_case = connection.execute(
                 "SELECT 1 FROM golden_case_promotions WHERE case_id = ?",
                 (promotion.case.case_id,),
@@ -118,7 +110,7 @@ class GoldenCasePromotionStore:
             )
 
     def get(self, case_id: str) -> GoldenCasePromotion | None:
-        with self._connect() as connection:
+        with self.connection() as connection:
             row = connection.execute(
                 "SELECT * FROM golden_case_promotions WHERE case_id = ?",
                 (case_id,),
@@ -126,7 +118,7 @@ class GoldenCasePromotionStore:
         return self._to_promotion(row) if row is not None else None
 
     def list(self) -> list[GoldenCasePromotion]:
-        with self._connect() as connection:
+        with self.connection() as connection:
             rows = connection.execute(
                 "SELECT * FROM golden_case_promotions ORDER BY promoted_at, case_id"
             ).fetchall()
@@ -190,7 +182,7 @@ def promote_failure_group(
         case=case,
         failure_group_id=group.group_id,
         source_trace_ids=source_trace_ids,
-        promoted_at=datetime.now(timezone.utc).isoformat(),
+        promoted_at=datetime.now(UTC).isoformat(),
     )
     promotions.save(promotion)
     return promotion

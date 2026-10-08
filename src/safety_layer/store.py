@@ -1,3 +1,10 @@
+"""Durable trace, receipt and budget persistence.
+
+The clarification-state tables live here too: resetting them on restart would
+let a paused run buy itself a fresh safety budget, so they are stored with the
+run rather than in memory.
+"""
+
 import json
 import sqlite3
 from pathlib import Path
@@ -5,103 +12,102 @@ from typing import Any
 from uuid import uuid4
 
 from .models import GateVerdict, Receipt, TraceEvent
+from .sqlite_base import SqliteStore
 from .trace import redact
 
+_TRACE_EVENTS = """
+CREATE TABLE IF NOT EXISTS trace_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    step INTEGER NOT NULL,
+    event TEXT NOT NULL,
+    input_json TEXT NOT NULL,
+    output_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    flags_json TEXT NOT NULL DEFAULT '[]',
+    capture_class TEXT NOT NULL DEFAULT 'always',
+    provider_metadata_json TEXT NOT NULL DEFAULT '{}',
+    provider_evidence_json TEXT NOT NULL DEFAULT '{}',
+    replay_of_trace_id INTEGER
+);
+"""
 
-class TraceStore:
-    # Clarification state is persisted with the run to prevent safety-budget resets.
+_CORE_TABLES = """
+CREATE TABLE IF NOT EXISTS receipts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    step_id TEXT NOT NULL,
+    intent_key TEXT NOT NULL UNIQUE,
+    action TEXT NOT NULL,
+    arguments_json TEXT NOT NULL,
+    state TEXT NOT NULL,
+    provider_ref TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_receipts_state ON receipts(state);
+CREATE TABLE IF NOT EXISTS gate_verdicts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    verdict TEXT NOT NULL,
+    score REAL NOT NULL,
+    threshold REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS clarification_states (
+    run_id TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL,
+    max_attempts INTEGER NOT NULL,
+    asked_this_turn INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS run_budgets (
+    run_id TEXT PRIMARY KEY,
+    steps_used INTEGER NOT NULL,
+    dollars_used REAL NOT NULL,
+    elapsed_seconds REAL NOT NULL,
+    tripped INTEGER NOT NULL,
+    degraded INTEGER NOT NULL,
+    reason TEXT
+);
+"""
+
+_TRACE_COLUMNS = (
+    "flags_json",
+    "capture_class",
+    "provider_metadata_json",
+    "provider_evidence_json",
+    "replay_of_trace_id",
+)
+
+
+class TraceStore(SqliteStore):
     """Durable SQLite store for the self-hosted single-node production path."""
 
+    store_name = "traces"
+
     def __init__(self, path: str | Path = "data/runtime.db") -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+        super().__init__(path)
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA busy_timeout=30000")
-        return connection
-
-    def _init_db(self) -> None:
-        with self._connect() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS trace_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id TEXT NOT NULL,
-                    step INTEGER NOT NULL,
-                    event TEXT NOT NULL,
-                    input_json TEXT NOT NULL,
-                    output_json TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    flags_json TEXT NOT NULL DEFAULT '[]',
-                    capture_class TEXT NOT NULL DEFAULT 'always',
-                    provider_metadata_json TEXT NOT NULL DEFAULT '{}',
-                    provider_evidence_json TEXT NOT NULL DEFAULT '{}',
-                    replay_of_trace_id INTEGER
-                );
-                """
-            )
-            columns = {
-                row["name"]
-                for row in connection.execute("PRAGMA table_info(trace_events)").fetchall()
-            }
-            migrations = {
-                "flags_json": "ALTER TABLE trace_events ADD COLUMN flags_json TEXT NOT NULL DEFAULT '[]'",
-                "capture_class": "ALTER TABLE trace_events ADD COLUMN capture_class TEXT NOT NULL DEFAULT 'always'",
-                "provider_metadata_json": "ALTER TABLE trace_events ADD COLUMN provider_metadata_json TEXT NOT NULL DEFAULT '{}'",
-                "provider_evidence_json": "ALTER TABLE trace_events ADD COLUMN provider_evidence_json TEXT NOT NULL DEFAULT '{}'",
-                "replay_of_trace_id": "ALTER TABLE trace_events ADD COLUMN replay_of_trace_id INTEGER",
-            }
-            for name, statement in migrations.items():
-                if name not in columns:
-                    connection.execute(statement)
-
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS receipts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id TEXT NOT NULL,
-                    step_id TEXT NOT NULL,
-                    intent_key TEXT NOT NULL UNIQUE,
-                    action TEXT NOT NULL,
-                    arguments_json TEXT NOT NULL,
-                    state TEXT NOT NULL,
-                    provider_ref TEXT,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE INDEX IF NOT EXISTS idx_receipts_state ON receipts(state);
-                CREATE TABLE IF NOT EXISTS gate_verdicts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id TEXT NOT NULL,
-                    verdict TEXT NOT NULL,
-                    score REAL NOT NULL,
-                    threshold REAL NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS clarification_states (
-                    run_id TEXT PRIMARY KEY,
-                    attempts INTEGER NOT NULL,
-                    max_attempts INTEGER NOT NULL,
-                    asked_this_turn INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS run_budgets (
-                    run_id TEXT PRIMARY KEY,
-                    steps_used INTEGER NOT NULL,
-                    dollars_used REAL NOT NULL,
-                    elapsed_seconds REAL NOT NULL,
-                    tripped INTEGER NOT NULL,
-                    degraded INTEGER NOT NULL,
-                    reason TEXT
-                );
-                """
-            )
+    def _migrations(self):
+        # v1: original trace table plus every supporting table.
+        yield 1, [_TRACE_EVENTS, _CORE_TABLES]
+        # v2: columns added after the first release. Applied additively so an
+        # existing database keeps its rows.
+        existing = self._columns("trace_events")
+        additions = [
+            "ALTER TABLE trace_events ADD COLUMN flags_json TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE trace_events ADD COLUMN capture_class TEXT NOT NULL DEFAULT 'always'",
+            "ALTER TABLE trace_events ADD COLUMN provider_metadata_json TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE trace_events ADD COLUMN provider_evidence_json TEXT NOT NULL DEFAULT '{}'",
+            "ALTER TABLE trace_events ADD COLUMN replay_of_trace_id INTEGER",
+        ]
+        if existing:
+            yield 2, [stmt for stmt in additions if _added_column(stmt) not in existing]
+        else:
+            yield 2, []
 
     def append_trace(self, event: TraceEvent) -> int:
         """Persist a trace event after deterministic redaction."""
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO trace_events(
@@ -149,14 +155,14 @@ class TraceStore:
         )
 
     def _trace_row(self, trace_id: int) -> sqlite3.Row | None:
-        with self._connect() as connection:
+        with self.connection() as connection:
             return connection.execute(
                 "SELECT * FROM trace_events WHERE id = ?", (trace_id,)
             ).fetchone()
 
     def load_clarification_state(self, run_id: str) -> dict[str, Any] | None:
         """Load persisted Phase 4 clarification state for a run."""
-        with self._connect() as connection:
+        with self.connection() as connection:
             row = connection.execute(
                 "SELECT attempts, max_attempts, asked_this_turn "
                 "FROM clarification_states WHERE run_id = ?",
@@ -172,7 +178,7 @@ class TraceStore:
 
     def save_clarification_state(self, run_id: str, state: Any) -> None:
         """Persist Phase 4 clarification state atomically for a run."""
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO clarification_states(
@@ -194,7 +200,7 @@ class TraceStore:
     def append_receipt(self, run_id: str, line: str) -> None:
         """Append a legacy audit receipt without reusing a unique intent key."""
         intent_key = f"phase0:{run_id}:{uuid4()}"
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 "INSERT INTO receipts(run_id, step_id, intent_key, action, arguments_json, state) VALUES (?, ?, ?, ?, ?, 'done')",
                 (run_id, "phase0", intent_key, "legacy", json.dumps({"line": line})),
@@ -202,7 +208,7 @@ class TraceStore:
 
     def create_receipt(self, run_id: str, step_id: str, action: str, arguments: dict[str, Any]) -> Receipt:
         intent_key = f"{run_id}:{step_id}"
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 "INSERT INTO receipts(run_id, step_id, intent_key, action, arguments_json, state) VALUES (?, ?, ?, ?, ?, 'unknown') ON CONFLICT(intent_key) DO NOTHING",
                 (run_id, step_id, intent_key, action, json.dumps(arguments, sort_keys=True)),
@@ -215,33 +221,33 @@ class TraceStore:
         return self._receipt(row)
 
     def mark_done(self, intent_key: str, provider_ref: str | None) -> None:
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 "UPDATE receipts SET state='done', provider_ref=?, updated_at=CURRENT_TIMESTAMP WHERE intent_key=? AND state='unknown'",
                 (provider_ref, intent_key),
             )
 
     def mark_failed(self, intent_key: str) -> None:
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 "UPDATE receipts SET state='failed', updated_at=CURRENT_TIMESTAMP WHERE intent_key=? AND state='unknown'",
                 (intent_key,),
             )
 
     def mark_resolved(self, intent_key: str, provider_ref: str | None) -> None:
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 "UPDATE receipts SET state='resolved', provider_ref=?, updated_at=CURRENT_TIMESTAMP WHERE intent_key=? AND state='unknown'",
                 (provider_ref, intent_key),
             )
 
     def unknown_receipts(self) -> list[Receipt]:
-        with self._connect() as connection:
+        with self.connection() as connection:
             rows = connection.execute("SELECT * FROM receipts WHERE state='unknown' ORDER BY id").fetchall()
         return [self._receipt(row) for row in rows]
 
     def snapshot(self) -> dict[str, Any]:
-        with self._connect() as connection:
+        with self.connection() as connection:
             trace_rows = connection.execute("SELECT * FROM trace_events ORDER BY id").fetchall()
             receipts = [dict(row) for row in connection.execute("SELECT * FROM receipts ORDER BY id")]
             gates = [dict(row) for row in connection.execute("SELECT * FROM gate_verdicts ORDER BY id")]
@@ -260,7 +266,7 @@ class TraceStore:
         return {"traces": traces, "receipts": receipts, "gate_verdicts": gates}
 
     def record_fuse_snapshot(self, run_id: str, snapshot: Any) -> None:
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO run_budgets(
@@ -296,7 +302,7 @@ class TraceStore:
             )
             if trace["status"] in {"failed", "blocked"}:
                 run["status"] = trace["status"]
-        with self._connect() as connection:
+        with self.connection() as connection:
             budgets = [
                 dict(row)
                 for row in connection.execute(
@@ -314,7 +320,7 @@ class TraceStore:
         }
 
     def append_gate(self, verdict: GateVerdict) -> None:
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 "INSERT INTO gate_verdicts(run_id, verdict, score, threshold) VALUES (?, ?, ?, ?)",
                 (verdict.run_id, verdict.verdict, verdict.score, verdict.threshold),
@@ -334,3 +340,8 @@ class TraceStore:
         )
 
 
+
+
+def _added_column(statement: str) -> str:
+    """Extract the column name from an `ALTER TABLE ... ADD COLUMN x` step."""
+    return statement.split("ADD COLUMN", 1)[1].split()[0].strip()

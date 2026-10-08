@@ -145,7 +145,7 @@ table{{width:100%;background:#fff;border-collapse:collapse}} td,th{{padding:.7re
 </section>
 <div class='layout'><aside class='sidebar'><h2>Runs</h2>{run_links}</aside><main>
 <section class='grid'>
-{_metric("Steps used", budget["steps_used"])}{_metric("Spend used", f"$"+"{budget['dollars_used']:.4f}")}{_metric("Elapsed", f"{budget['elapsed_seconds']:.3f}s")}{_metric("Fuse", "TRIPPED" if budget["tripped"] else "OK")}
+{_metric("Steps used", budget["steps_used"])}{_metric("Spend used", "$"+"{budget['dollars_used']:.4f}")}{_metric("Elapsed", f"{budget['elapsed_seconds']:.3f}s")}{_metric("Fuse", "TRIPPED" if budget["tripped"] else "OK")}
 </section>
 <h2>Trace viewer</h2>{trace_html}
 <h2>Approval queue</h2>{approval_html}
@@ -194,21 +194,30 @@ table{{width:100%;background:#fff;border-collapse:collapse}} td,th{{padding:.7re
 def build_server(path: str, host: str, port: int) -> ThreadingHTTPServer:
     """Create a dashboard server with per-instance state.
 
-    Server state is bound on a generated subclass rather than mutated onto the
+    State lives on a generated subclass rather than being mutated onto the
     shared Handler, so two servers can coexist in one process and tests do not
     leak state into each other.
 
     The trusted origins are derived from the address the OS actually bound, not
     the requested one, so `--port 0` and host aliases resolve correctly.
     """
-    bound = type(
-        "BoundHandler",
-        (Handler,),
-        {"store": TraceStore(path), "csrf_token": secrets.token_urlsafe(32)},
-    )
-    bound.approvals = ApprovalStore(bound.store)
+    store = TraceStore(path)
+    csrf_token = secrets.token_urlsafe(32)
+
+    class BoundHandler(Handler):
+        pass
+
+    bound = BoundHandler
+    bound.store = store
+    bound.approvals = ApprovalStore(store)
+    bound.csrf_token = csrf_token
+
     server = ThreadingHTTPServer((host, port), bound)
-    bound_host, bound_port = server.server_address[0], server.server_address[1]
+    # server_address is (host, port); decode because the socket family may
+    # report the address as bytes.
+    raw_host, raw_port = server.server_address[0], server.server_address[1]
+    bound_host = raw_host.decode() if isinstance(raw_host, bytes) else str(raw_host)
+    bound_port = int(raw_port)
     bound.allowed_origins = frozenset(
         {f"http://{bound_host}:{bound_port}", f"https://{bound_host}:{bound_port}"}
     )

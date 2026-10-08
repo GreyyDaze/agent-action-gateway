@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from safety_layer.locks import ApprovalStore, RiskRegistry
@@ -28,7 +28,7 @@ class ApprovalLockTest(unittest.TestCase):
             "refund",
             {"order_id": "ORD-100", "amount": 400},
             "human-1",
-            datetime.now(timezone.utc) + timedelta(days=days),
+            datetime.now(UTC) + timedelta(days=days),
             state,
         )
         return record.approval_id
@@ -37,7 +37,7 @@ class ApprovalLockTest(unittest.TestCase):
         record = self.approvals.request(
             "refund",
             {"order_id": "ORD-100", "amount": 400},
-            datetime.now(timezone.utc) + timedelta(days=1),
+            datetime.now(UTC) + timedelta(days=1),
         )
         self.assertEqual(record.decision, "pending")
         self.assertEqual(record.arguments, {"order_id": "ORD-100", "amount": 400})
@@ -47,7 +47,7 @@ class ApprovalLockTest(unittest.TestCase):
         record = self.approvals.request(
             "refund",
             {"order_id": "ORD-100", "amount": 400},
-            datetime.now(timezone.utc) + timedelta(days=1),
+            datetime.now(UTC) + timedelta(days=1),
         )
         with self.assertRaises(SafetyBlockedError):
             check_action(
@@ -62,7 +62,7 @@ class ApprovalLockTest(unittest.TestCase):
         record = self.approvals.request(
             "refund",
             {"order_id": "ORD-100", "amount": 400},
-            datetime.now(timezone.utc) + timedelta(days=1),
+            datetime.now(UTC) + timedelta(days=1),
         )
         approved = self.approvals.approve(record.approval_id, "human-1")
         self.assertEqual(approved.decision, "approved")
@@ -82,7 +82,7 @@ class ApprovalLockTest(unittest.TestCase):
         record = self.approvals.request(
             "refund",
             {"order_id": "ORD-100", "amount": 400},
-            datetime.now(timezone.utc) + timedelta(days=1),
+            datetime.now(UTC) + timedelta(days=1),
         )
         self.approvals.deny(record.approval_id, "human-1")
         with self.assertRaises(SafetyBlockedError):
@@ -124,7 +124,7 @@ class ApprovalLockTest(unittest.TestCase):
                 self.approvals, self.registry, "refund",
                 {"order_id": "ORD-100", "amount": 400},
                 approval_id=approval_id,
-                now=datetime.now(timezone.utc) + timedelta(days=2),
+                now=datetime.now(UTC) + timedelta(days=2),
             )
 
     def test_state_change_invalidates_approval(self) -> None:

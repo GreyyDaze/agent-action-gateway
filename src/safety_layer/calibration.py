@@ -6,7 +6,6 @@ from pathlib import Path
 
 from .evaluation_models import CALIBRATION_SET_VERSION, CalibrationExample
 
-
 CALIBRATION_SET_RESOURCE = "data/calibration/calibration-v1.json"
 
 
@@ -111,6 +110,7 @@ def calibration_case_ids(
 def run_calibration(cases, judge):
     """Compare the configured judge with human-labeled calibration examples."""
     from time import perf_counter
+
     from .evaluation_models import CalibrationResult
     from .judge import JudgeUnavailableError
 
@@ -131,7 +131,7 @@ def run_calibration(cases, judge):
         agreed += decision.label == example.label
         cost += decision.estimated_cost_usd
 
-    result = CalibrationResult(
+    return CalibrationResult(
         total=len(examples),
         agreed=agreed,
         agreement=agreed / len(examples),
@@ -140,4 +140,3 @@ def run_calibration(cases, judge):
         estimated_cost_usd=cost,
         runtime_seconds=perf_counter() - started,
     )
-    return result

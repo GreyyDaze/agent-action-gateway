@@ -1,6 +1,5 @@
 from .evaluation_models import EvaluationSummary, GateResult
 
-
 LANE_RUNS = {"push": 3, "full": 10}
 
 

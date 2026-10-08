@@ -3,13 +3,13 @@ import unittest
 from pathlib import Path
 
 from safety_layer.models import TraceEvent
+from safety_layer.store import TraceStore
 from safety_layer.trace import (
     classify_capture,
     honest_status,
     redact,
     suspicious_flags,
 )
-from safety_layer.store import TraceStore
 
 
 class TraceEvidenceTests(unittest.TestCase):

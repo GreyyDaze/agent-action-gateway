@@ -1,7 +1,8 @@
 """Deterministic two-source verification for suspicious tool results."""
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any
 
 
 @dataclass(frozen=True)

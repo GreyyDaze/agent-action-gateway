@@ -13,9 +13,6 @@ license = { text = "MIT" }
 authors = [{ name = "Agent Safety Layer contributors" }]
 keywords = ["ai-agents", "safety", "evaluation", "guardrails", "ci"]
 
-[project.optional-dependencies]
-dev = ["pytest>=8,<9"]
-
 [project.scripts]
 safety = "safety_layer.cli:main"
 gate = "safety_layer.gate_cli:main"
@@ -32,3 +29,84 @@ safety_layer = ["data/golden/*.json", "data/calibration/*.json"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["data/*.db", "data/*.db-shm", "data/*.db-wal"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.11"]
+
+[tool.pytest.ini_options]
+# Keep the rootdir explicit so `pytest` cannot collect a stale build/ tree.
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = ["error::DeprecationWarning"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes: unused imports, undefined names
+    "W",   # warnings
+    "I",   # import sorting
+    "B",   # bugbear: mutable defaults, shadowing
+    "UP",  # pyupgrade
+    "SIM", # simplifications
+    "RET", # return consistency
+    "ARG", # unused arguments
+]
+ignore = [
+    # The CLI intentionally parses in subcommands and shadows builtin names in
+    # a few legacy spots; those are reviewed by hand.
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Stub agents and helpers take arguments they deliberately ignore, and several
+# provider/protocol methods take `order_id` they do not need in order to
+# satisfy the shared interface.
+"tests/*" = ["ARG001", "ARG002", "ARG005", "SIM117"]
+"src/safety_layer/provider.py" = ["ARG002"]
+"src/safety_layer/mock_provider.py" = ["ARG002"]
+"src/safety_layer/judge.py" = ["ARG002"]
+"src/safety_layer/stop_rules.py" = ["ARG002"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/safety_layer"]
+# The package is fully annotated but historically lenient; this turns on the
+# checks that catch real defects without demanding annotations everywhere.
+check_untyped_defs = true
+disallow_untyped_defs = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.coverage.run]
+branch = true
+source = ["safety_layer"]
+
+[tool.coverage.report]
+# Ratchet. Coverage was 68% before the interface-layer tests; the floor is set
+# at the current measured value so it can only move up, and a drop fails CI.
+fail_under = 74
+omit = [
+    # Manual human drills and proof entry points. These are executed as
+    # subprocesses by the suite, so in-process coverage cannot see them even
+    # though they are exercised end to end.
+    "*/approval_proof.py",
+    "*/chaos_manual.py",
+    "*/evaluation_proof.py",
+    "*/chaos.py",
+    "*/proof.py",
+]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

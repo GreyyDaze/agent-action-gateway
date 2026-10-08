@@ -31,9 +31,10 @@ import json
 import os
 import urllib.error
 import urllib.parse
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from http.client import RemoteDisconnected
-from typing import Any, Callable, Mapping
+from typing import Any
 from urllib.request import Request, urlopen
 
 STRIPE_API_BASE = "https://api.stripe.com/v1"

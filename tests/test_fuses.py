@@ -2,8 +2,8 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
 
 from safety_layer.fuses import FuseBudget, FuseController, FuseLimits, FuseTrippedError
 from safety_layer.locks import ApprovalStore, RiskRegistry
@@ -79,7 +79,7 @@ class FuseTest(unittest.TestCase):
                     store,
                     "loop-run",
                     "lookup customer",
-                    lambda: calls.append(index) or {"empty": True},
+                    lambda index=index: calls.append(index) or {"empty": True},
                     fuse=fuse,
                     action="lookup_customer",
                     arguments={"customer_id": "C-1"},
@@ -199,7 +199,7 @@ class FuseTest(unittest.TestCase):
             arguments = {"order_id": "ORD-100", "amount": 400}
             approval = approvals.create(
                 "refund", arguments, "human-1",
-                datetime.now(timezone.utc) + timedelta(days=1),
+                datetime.now(UTC) + timedelta(days=1),
             )
             provider = MockPaymentProvider(dedupe=True)
             fuse = FuseController(FuseBudget())
@@ -225,7 +225,7 @@ class FuseTest(unittest.TestCase):
             arguments = {"order_id": "ORD-101", "amount": 200}
             approval = approvals.create(
                 "refund", arguments, "human-1",
-                datetime.now(timezone.utc) + timedelta(days=1),
+                datetime.now(UTC) + timedelta(days=1),
             )
             provider = MockPaymentProvider(dedupe=True)
             fuse = FuseController(FuseBudget(FuseLimits(max_steps=1)))

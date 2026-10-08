@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Any
 
-
 GOLDEN_SET_VERSION = "golden-v1"
 CALIBRATION_SET_VERSION = "calibration-v1"
 CALIBRATION_MIN_AGREEMENT = 1.0

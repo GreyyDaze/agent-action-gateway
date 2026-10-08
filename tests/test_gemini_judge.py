@@ -14,7 +14,6 @@ from safety_layer.gemini_judge import (
 )
 from safety_layer.judge import ProductControlledJudge
 
-
 CASE = GoldenCase(
     case_id="semantic-001",
     task="Report the refund outcome accurately",

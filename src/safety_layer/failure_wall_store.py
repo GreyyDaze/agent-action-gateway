@@ -2,31 +2,23 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
+from .sqlite_base import SqliteStore
 from .trace import FailureGroup, FailureRecord, FailureSignature
 
 
-class FailureWallStore:
+class FailureWallStore(SqliteStore):
     """Durable SQLite repository for observability Failure Wall records and decisions."""
 
+    store_name = "failure_wall"
+
     def __init__(self, path: str | Path = "data/runtime.db") -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+        super().__init__(path)
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA busy_timeout=30000")
-        return connection
-
-    def _init_db(self) -> None:
-        with self._connect() as connection:
-            connection.executescript(
-                """
+    def _migrations(self):
+        yield 1, ["""
                 CREATE TABLE IF NOT EXISTS failure_groups (
                     group_id TEXT PRIMARY KEY,
                     error_type TEXT NOT NULL,
@@ -66,12 +58,11 @@ class FailureWallStore:
                     ON failure_records(group_id);
                 CREATE INDEX IF NOT EXISTS idx_failure_decisions_group
                     ON failure_decisions(group_id);
-                """
-            )
+                """]
 
     def save_group(self, group: FailureGroup) -> None:
         """Create or replace one complete group and its evidence records."""
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
             """
                 INSERT INTO failure_groups(
@@ -128,7 +119,7 @@ class FailureWallStore:
             self.save_group(group)
 
     def get_group(self, group_id: str) -> FailureGroup | None:
-        with self._connect() as connection:
+        with self.connection() as connection:
             group = connection.execute(
                 "SELECT * FROM failure_groups WHERE group_id = ?",
                 (group_id,),
@@ -142,11 +133,16 @@ class FailureWallStore:
         return self._to_group(group, records)
 
     def list_groups(self) -> list[FailureGroup]:
-        with self._connect() as connection:
+        with self.connection() as connection:
             groups = connection.execute(
                 "SELECT * FROM failure_groups ORDER BY group_id"
             ).fetchall()
-        return [self.get_group(row["group_id"]) for row in groups if self.get_group(row["group_id"])]
+        result: list[FailureGroup] = []
+        for row in groups:
+            group = self.get_group(row["group_id"])
+            if group is not None:
+                result.append(group)
+        return result
 
     def _record_decision(
         self,
@@ -170,7 +166,7 @@ class FailureWallStore:
         return self._set_state(group_id, "rejected", "reject")
 
     def _set_state(self, group_id: str, state: str, decision: str) -> FailureGroup:
-        with self._connect() as connection:
+        with self.connection() as connection:
             exists = connection.execute(
                 "SELECT 1 FROM failure_groups WHERE group_id = ?",
                 (group_id,),
@@ -196,10 +192,10 @@ class FailureWallStore:
         if len(selected) < 2:
             raise ValueError("merge requires at least two group ids")
 
-        with self._connect() as connection:
+        with self.connection() as connection:
+            placeholders = ",".join("?" for _ in selected)
             rows = connection.execute(
-                "SELECT group_id FROM failure_groups WHERE group_id IN (%s)"
-                % ",".join("?" for _ in selected),
+                f"SELECT group_id FROM failure_groups WHERE group_id IN ({placeholders})",
                 selected,
             ).fetchall()
             if len(rows) != len(set(selected)):
@@ -233,7 +229,7 @@ class FailureWallStore:
         if not new_groups:
             raise ValueError("split requires at least one resulting group")
 
-        with self._connect() as connection:
+        with self.connection() as connection:
             exists = connection.execute(
                 "SELECT 1 FROM failure_groups WHERE group_id = ?",
                 (group_id,),
@@ -264,7 +260,7 @@ class FailureWallStore:
         ]
 
     def decisions(self, group_id: str) -> list[dict]:
-        with self._connect() as connection:
+        with self.connection() as connection:
             rows = connection.execute(
                 """
                 SELECT id, group_id, decision, details_json, created_at

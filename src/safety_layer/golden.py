@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from importlib.resources import as_file, files
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .evaluation_models import GOLDEN_SET_VERSION, GoldenCase
 
@@ -100,7 +100,7 @@ def _parse_case(raw_case: Any, seen_ids: set[str]) -> GoldenCase:
 def load_golden_cases(
     path: str | Path | None = None,
     *,
-    promotion_store: "GoldenCasePromotionStore | None" = None,
+    promotion_store: GoldenCasePromotionStore | None = None,
 ) -> tuple[GoldenCase, ...]:
     """Load canonical golden-v1 cases plus explicitly promoted failures."""
     cases = list(load_golden_set(path))

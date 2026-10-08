@@ -5,7 +5,6 @@ from safety_layer.evaluator import evaluate_cases
 from safety_layer.golden import load_golden_set
 from safety_layer.judge import JudgeDecision
 
-
 PLANTED_FAILURE_OUTPUT = "__PLANTED_FAILURE__"
 
 

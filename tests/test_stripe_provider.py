@@ -21,17 +21,17 @@ import os
 import tempfile
 import threading
 import unittest
-from datetime import datetime, timedelta, timezone
-from unittest import mock
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 from urllib.parse import parse_qs
 
 from safety_layer.locks import ApprovalStore, RiskRegistry
+from safety_layer.provider import ExternalActionProvider as ExternalActionProviderProtocol
 from safety_layer.receipts import UnresolvableReceiptError, execute_side_effect, resolve_unknown
 from safety_layer.runtime import dispatch_external_action
 from safety_layer.store import TraceStore
-from safety_layer.provider import ExternalActionProvider as ExternalActionProviderProtocol
 from safety_layer.stripe_provider import (
     METADATA_KEY,
     StripeProviderError,
@@ -290,7 +290,7 @@ class StripeThroughSafetyLayerTest(unittest.TestCase):
         approval = approvals.request(
             "refund",
             {"payment_intent": "pi_999", "amount": 4000},
-            datetime.now(timezone.utc) + timedelta(minutes=5),
+            datetime.now(UTC) + timedelta(minutes=5),
         )
         approvals.approve(approval.approval_id, "operator")
 
@@ -319,7 +319,7 @@ class StripeThroughSafetyLayerTest(unittest.TestCase):
             "pi_777",
         )
         # Rewind the local record to the pre-dispatch state.
-        with self.store._connect() as connection:
+        with self.store.connection() as connection:
             connection.execute(
                 "UPDATE receipts SET state='unknown', provider_ref=NULL"
             )

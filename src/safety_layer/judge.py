@@ -6,7 +6,6 @@ from typing import Protocol
 
 from .evaluation_models import GoldenCase
 
-
 DETERMINISTIC_CHECK_TYPES = frozenset({"exact", "field-equality", "regex"})
 DETERMINISTIC_JUDGE_VERSION = "deterministic-judge-v2"
 
@@ -102,7 +101,7 @@ class DeterministicJudge:
 def is_deterministic(case: GoldenCase) -> bool:
     return case.check_type in DETERMINISTIC_CHECK_TYPES
 
-    
+
 class UnavailableRubricJudge:
     """Fail-closed judge used when provider configuration is unavailable."""
 

@@ -1,30 +1,21 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 from .evaluation_models import Baseline, EvaluationSummary, GateResult
+from .sqlite_base import SqliteStore
 
 
-class EvaluationStore:
+class EvaluationStore(SqliteStore):
     """Durable local history for evaluation runs and false-alarm evidence."""
 
+    store_name = "evaluations"
+
     def __init__(self, path: str | Path = "data/evaluations.db") -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+        super().__init__(path)
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA busy_timeout=30000")
-        return connection
-
-    def _init_db(self) -> None:
-        with self._connect() as connection:
-            connection.executescript(
-                """
+    def _migrations(self):
+        yield 1, ["""
                 CREATE TABLE IF NOT EXISTS evaluation_runs (
                     evaluation_id TEXT PRIMARY KEY,
                     candidate_version TEXT NOT NULL,
@@ -78,30 +69,23 @@ class EvaluationStore:
                     ON evaluation_runs(created_at);
                 CREATE INDEX IF NOT EXISTS idx_false_alarm_created
                     ON false_alarm_ledger(created_at);
-                """
-            )
-            for table, columns in {
-                "evaluation_runs": {
-                    "judge_provider": "TEXT NOT NULL DEFAULT ''",
-                    "judge_model": "TEXT NOT NULL DEFAULT ''",
-                },
-                "baselines": {
-                    "judge_provider": "TEXT NOT NULL DEFAULT ''",
-                    "judge_model": "TEXT NOT NULL DEFAULT ''",
-                },
-            }.items():
-                existing = {
-                    row["name"]
-                    for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
-                }
-                for name, definition in columns.items():
-                    if name not in existing:
-                        connection.execute(
-                            f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
-                        )
+                """]
+        # Provider/model identity columns were added after the first release so
+        # FR-14/FR-18 evidence can be recorded without recreating the table.
+        additions = []
+        for table in ("evaluation_runs", "baselines"):
+            if not self._table_exists(table):
+                continue
+            existing = self._columns(table)
+            for name in ("judge_provider", "judge_model"):
+                if name not in existing:
+                    additions.append(
+                        f"ALTER TABLE {table} ADD COLUMN {name} TEXT NOT NULL DEFAULT ''"
+                    )
+        yield 2, additions
 
     def record(self, evaluation_id: str, summary: EvaluationSummary, result: GateResult) -> None:
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO evaluation_runs (
@@ -140,7 +124,7 @@ class EvaluationStore:
     def record_false_alarm(self, evaluation_id: str, summary: EvaluationSummary, result: GateResult) -> None:
         if result.verdict != "FAIL":
             return
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO false_alarm_ledger (
@@ -157,7 +141,7 @@ class EvaluationStore:
             )
 
     def evaluation_count(self) -> int:
-        with self._connect() as connection:
+        with self.connection() as connection:
             row = connection.execute(
                 "SELECT COUNT(*) AS count FROM evaluation_runs"
             ).fetchone()
@@ -166,7 +150,7 @@ class EvaluationStore:
         return int(row["count"])
 
     def false_alarm_count(self) -> int:
-        with self._connect() as connection:
+        with self.connection() as connection:
             row = connection.execute(
                 "SELECT COUNT(*) AS count FROM false_alarm_ledger"
             ).fetchone()
@@ -175,7 +159,7 @@ class EvaluationStore:
         return int(row["count"])
 
     def save_baseline(self, baseline: Baseline) -> None:
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO baselines (
@@ -216,7 +200,7 @@ class EvaluationStore:
             )
 
     def get_baseline(self, lane: str) -> Baseline | None:
-        with self._connect() as connection:
+        with self.connection() as connection:
             row = connection.execute(
                 "SELECT * FROM baselines WHERE lane = ?", (lane,)
             ).fetchone()

@@ -1,5 +1,5 @@
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .locks import ApprovalStore, RiskRegistry
@@ -30,20 +30,15 @@ def main() -> None:
         for _, arguments, mode, current_state in attack_cases:
             attacks += 1
             approval_id = None
-            if mode == "expired":
+            if mode == "expired" or mode == "tampered":
                 approval_id = approvals.create(
                     "refund", {"order_id": "ORD-100", "amount": 400}, "human-1",
-                    datetime.now(timezone.utc) + timedelta(days=1),
-                ).approval_id
-            elif mode == "tampered":
-                approval_id = approvals.create(
-                    "refund", {"order_id": "ORD-100", "amount": 400}, "human-1",
-                    datetime.now(timezone.utc) + timedelta(days=1),
+                    datetime.now(UTC) + timedelta(days=1),
                 ).approval_id
             elif mode == "stale":
                 approval_id = approvals.create(
                     "refund", {"order_id": "ORD-100", "amount": 400}, "human-1",
-                    datetime.now(timezone.utc) + timedelta(days=1),
+                    datetime.now(UTC) + timedelta(days=1),
                     {"order_status": "open"},
                 ).approval_id
 
@@ -53,7 +48,7 @@ def main() -> None:
                     arguments, "ORD-100",
                     registry=registry, approval_store=approvals,
                     approval_id=approval_id, current_state=current_state,
-                    now=datetime.now(timezone.utc) + timedelta(days=2) if mode == "expired" else None,
+                    now=datetime.now(UTC) + timedelta(days=2) if mode == "expired" else None,
                 )
                 destructive_executions += 1
             except SafetyBlockedError:

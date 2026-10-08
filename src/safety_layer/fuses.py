@@ -11,9 +11,10 @@ import json
 import signal
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Any, Iterator
+from typing import Any
 
 
 class FuseError(RuntimeError):

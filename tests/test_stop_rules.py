@@ -3,7 +3,9 @@ import unittest
 from pathlib import Path
 
 from safety_layer.cross_check import CrossCheckSpec, perform_cross_check
-from safety_layer.runtime import evaluate_tool_result, execute_tool, run
+from safety_layer.locks import ApprovalStore, RiskRegistry
+from safety_layer.mock_provider import MockPaymentProvider
+from safety_layer.runtime import dispatch_external_action, evaluate_tool_result, execute_tool, run
 from safety_layer.stop_rules import (
     AmbiguityBlockedError,
     ClarificationState,
@@ -11,9 +13,6 @@ from safety_layer.stop_rules import (
     StopPolicy,
     enforce_environment,
 )
-from safety_layer.locks import ApprovalStore, RiskRegistry
-from safety_layer.mock_provider import MockPaymentProvider
-from safety_layer.runtime import dispatch_external_action
 from safety_layer.store import TraceStore
 
 

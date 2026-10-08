@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest import mock
 
 from safety_layer.evaluation_models import (
+    GOLDEN_SET_VERSION,
     Baseline,
     GoldenCase,
-    GOLDEN_SET_VERSION,
 )
 from safety_layer.evaluation_store import EvaluationStore
 from safety_layer.evaluator import evaluate_cases
@@ -172,7 +172,7 @@ class GateCliVerdictExitTest(unittest.TestCase):
 
     def _args(self, directory: str, *, repeat: int = 1, unchanged: bool = False):
         parser = build_parser()
-        args = parser.parse_args(
+        return parser.parse_args(
             [
                 "check",
                 "--lane", "push",
@@ -183,7 +183,6 @@ class GateCliVerdictExitTest(unittest.TestCase):
                 "--unchanged",
             ]
         )
-        return args
 
     def test_uncertain_run_returns_dedicated_exit_code(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

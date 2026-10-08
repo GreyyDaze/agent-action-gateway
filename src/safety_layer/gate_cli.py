@@ -5,13 +5,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .calibration import run_calibration
 from .evaluation_models import Baseline, GoldenCase
 from .evaluation_store import EvaluationStore
 from .evaluator import evaluate_cases
-from .gemini_judge import DEFAULT_GEMINI_MODEL, GeminiRubricJudgeProvider, GeminiJudgeError
-from .golden import seed_golden_cases
-from .calibration import run_calibration
 from .gate import run_gate
+from .gemini_judge import DEFAULT_GEMINI_MODEL, GeminiJudgeError, GeminiRubricJudgeProvider
+from .golden import seed_golden_cases
 from .judge import (
     JudgeUnavailableError,
     ProductControlledJudge,
@@ -36,7 +36,7 @@ def _candidate_from_file(path: str):
     def candidate(case: GoldenCase) -> Any:
         if case.case_id not in payload:
             raise ValueError(
-                "candidate file is missing case: {}".format(case.case_id)
+                f"candidate file is missing case: {case.case_id}"
             )
         return payload[case.case_id]
 
@@ -100,10 +100,10 @@ def run_calibrate(args: argparse.Namespace) -> int:
     except JudgeUnavailableError as exc:
         # Unavailability is not a calibration failure. Reporting it as exit 1
         # would contradict the gate contract documented in docs/sdk.md.
-        print("UNCERTAIN | calibration unavailable: {}".format(exc))
+        print(f"UNCERTAIN | calibration unavailable: {exc}")
         return EXIT_UNCERTAIN
     status = "ACCEPTED" if result.accepted else "REJECTED"
-    print("CALIBRATION | {} | agreed={}/{} | agreement={:.1%} | threshold={:.1%} | cost=$ {:.4f} | runtime={:.3f}s".format(status, result.agreed, result.total, result.agreement, result.min_agreement, result.estimated_cost_usd, result.runtime_seconds))
+    print(f"CALIBRATION | {status} | agreed={result.agreed}/{result.total} | agreement={result.agreement:.1%} | threshold={result.min_agreement:.1%} | cost=$ {result.estimated_cost_usd:.4f} | runtime={result.runtime_seconds:.3f}s")
     return EXIT_PASS if result.accepted else EXIT_FAIL
 
 
@@ -141,7 +141,7 @@ def _run_check_once(args: argparse.Namespace, cases: tuple[GoldenCase, ...], sto
                 created_at=summary.created_at,
             )
         )
-        print("baseline saved: lane={} score={:.4f}".format(args.lane, summary.observed_score))
+        print(f"baseline saved: lane={args.lane} score={summary.observed_score:.4f}")
         return None
 
     result = run_gate(
@@ -152,21 +152,10 @@ def _run_check_once(args: argparse.Namespace, cases: tuple[GoldenCase, ...], sto
         unchanged=args.unchanged,
     )
     print(
-        "{} | lane={} | score={:.4f} | baseline={:.4f} | noise={:.4f} | "
-        "judge={}/{} | cost=$ {:.4f} | runtime={:.4f} min | reason={}".format(
-            result.verdict,
-            result.lane,
-            result.observed_score,
-            result.baseline_score,
-            result.noise_estimate,
-            result.judge_provider,
-            result.judge_model,
-            result.estimated_cost_usd,
-            result.runtime_minutes,
-            result.reason,
-        )
+        f"{result.verdict} | lane={result.lane} | score={result.observed_score:.4f} | baseline={result.baseline_score:.4f} | noise={result.noise_estimate:.4f} | "
+        f"judge={result.judge_provider}/{result.judge_model} | cost=$ {result.estimated_cost_usd:.4f} | runtime={result.runtime_minutes:.4f} min | reason={result.reason}"
     )
-    print("false-alarm-ledger={}".format(store.false_alarm_count()))
+    print(f"false-alarm-ledger={store.false_alarm_count()}")
     return result
 
 

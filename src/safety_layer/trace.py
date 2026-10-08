@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 _SECRET_KEYS = re.compile(
@@ -100,8 +100,7 @@ def redact(value: Any, *, _key: str | None = None) -> Any:
         # replay links are all 32+ characters, and redacting them destroys the
         # ability to join a trace back to its own row. Value-based redaction is
         # limited to shapes that are credentials by construction.
-        text = _VENDOR_TOKEN.sub("[REDACTED_SECRET]", text)
-        return text
+        return _VENDOR_TOKEN.sub("[REDACTED_SECRET]", text)
     return value
 
 
@@ -307,7 +306,9 @@ def split_failure_group(
     if len(requested) != len(set(requested)):
         raise ValueError("split target signatures must be unique")
 
-    buckets = {signature: [] for signature in requested}
+    buckets: dict[FailureSignature, list[FailureRecord]] = {
+        signature: [] for signature in requested
+    }
     for record in group.records:
         key = FailureSignature(
             record.error_type,

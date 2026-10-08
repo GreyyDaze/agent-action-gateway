@@ -2,10 +2,12 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .sqlite_base import SqliteStore
 from .store import TraceStore
 
 
@@ -42,55 +44,63 @@ def state_hash(state: Any) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-class ApprovalStore:
-    """Durable approval records for the current single-node SQLite deployment."""
+class ApprovalStore(SqliteStore):
+    """Durable approval records for the current single-node SQLite deployment.
 
-    def __init__(self, store: TraceStore) -> None:
-        self.store = store
+    Shares the runtime database file with the trace store, since approvals and
+    the traces they authorize belong to one run's evidence. It holds its own
+    connection rather than borrowing the trace store's private one.
+    """
+
+    store_name = "approvals"
+
+    def __init__(self, store: "TraceStore | str | Path") -> None:
+        self.store = store if isinstance(store, TraceStore) else None
+        path = store.path if isinstance(store, TraceStore) else Path(store)
         self.available = True
-        self._init_db()
+        super().__init__(path)
 
-    def _connect(self) -> sqlite3.Connection:
-        return self.store._connect()
-
-    def _init_db(self) -> None:
-        with self._connect() as connection:
-            columns = {row["name"] for row in connection.execute("PRAGMA table_info(approvals)").fetchall()}
-            if not columns:
-                connection.execute(
-                    """
-                    CREATE TABLE approvals (
-                        approval_id TEXT PRIMARY KEY,
-                        action TEXT NOT NULL,
-                        arguments_json TEXT NOT NULL,
-                        payload_hash TEXT NOT NULL,
-                        approver TEXT,
-                        created_at TEXT NOT NULL,
-                        expires_at TEXT NOT NULL,
-                        state_hash TEXT,
-                        decision TEXT NOT NULL,
-                        decided_at TEXT,
-                        consumed_at TEXT
+    def _migrations(self):
+        yield 1, [
+            """
+            CREATE TABLE IF NOT EXISTS approvals (
+                approval_id TEXT PRIMARY KEY,
+                action TEXT NOT NULL,
+                arguments_json TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                approver TEXT,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                state_hash TEXT,
+                decision TEXT NOT NULL,
+                decided_at TEXT,
+                consumed_at TEXT
+            );
+            """
+        ]
+        # Columns added after the first release.
+        if self._table_exists("approvals"):
+            existing = self._columns("approvals")
+            additions = []
+            for name, definition in (
+                ("arguments_json", "TEXT"),
+                ("decision", "TEXT NOT NULL DEFAULT 'approved'"),
+                ("decided_at", "TEXT"),
+                ("approver", "TEXT"),
+            ):
+                if name not in existing:
+                    additions.append(
+                        f"ALTER TABLE approvals ADD COLUMN {name} {definition}"
                     )
-                    """
+            # A pre-existing row has no recorded payload, so it cannot be
+            # verified against the action being authorized. The sentinel below
+            # deliberately fails the payload-hash comparison in authorize(),
+            # so such an approval can never be used.
+            if "arguments_json" not in existing and additions:
+                additions.append(
+                    "UPDATE approvals SET arguments_json = json_object('_unverifiable_legacy', payload_hash)"
                 )
-            else:
-                migrations = {
-                    "arguments_json": "ALTER TABLE approvals ADD COLUMN arguments_json TEXT",
-                    "decision": "ALTER TABLE approvals ADD COLUMN decision TEXT NOT NULL DEFAULT 'approved'",
-                    "decided_at": "ALTER TABLE approvals ADD COLUMN decided_at TEXT",
-                    "approver": "ALTER TABLE approvals ADD COLUMN approver TEXT",
-                }
-                for name, statement in migrations.items():
-                    if name not in columns:
-                        connection.execute(statement)
-                if "arguments_json" not in columns:
-                    rows = connection.execute("SELECT approval_id, action, payload_hash FROM approvals").fetchall()
-                    for row in rows:
-                        connection.execute(
-                            "UPDATE approvals SET arguments_json=? WHERE approval_id=?",
-                            (json.dumps({"_legacy": row["payload_hash"]}, sort_keys=True), row["approval_id"]),
-                        )
+            yield 2, additions
 
     def request(
         self,
@@ -100,7 +110,7 @@ class ApprovalStore:
         current_state: Any | None = None,
     ) -> Approval:
         self._require_available()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if expires_at <= now:
             raise ApprovalError("approval expiry must be in the future")
         approval = Approval(
@@ -110,13 +120,13 @@ class ApprovalStore:
             payload_hash=payload_hash(action, arguments),
             approver=None,
             created_at=now.isoformat(),
-            expires_at=expires_at.astimezone(timezone.utc).isoformat(),
+            expires_at=expires_at.astimezone(UTC).isoformat(),
             state_hash=None if current_state is None else state_hash(current_state),
             decision="pending",
             decided_at=None,
             consumed_at=None,
         )
-        with self._connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO approvals(
@@ -147,16 +157,16 @@ class ApprovalStore:
         approval = self.get(approval_id)
         if approval.decision != "pending":
             raise ApprovalError(f"approval is already {approval.decision}")
-        if datetime.now(timezone.utc) >= datetime.fromisoformat(approval.expires_at):
+        if datetime.now(UTC) >= datetime.fromisoformat(approval.expires_at):
             raise ApprovalError("approval expired")
-        with self._connect() as connection:
+        with self.connection() as connection:
             cursor = connection.execute(
                 """
                 UPDATE approvals
                 SET decision='approved', approver=?, decided_at=?
                 WHERE approval_id=? AND decision='pending'
                 """,
-                (approver, datetime.now(timezone.utc).isoformat(), approval_id),
+                (approver, datetime.now(UTC).isoformat(), approval_id),
             )
             if cursor.rowcount != 1:
                 raise ApprovalError("approval is no longer pending")
@@ -169,14 +179,14 @@ class ApprovalStore:
         approval = self.get(approval_id)
         if approval.decision != "pending":
             raise ApprovalError(f"approval is already {approval.decision}")
-        with self._connect() as connection:
+        with self.connection() as connection:
             cursor = connection.execute(
                 """
                 UPDATE approvals
                 SET decision='denied', approver=?, decided_at=?
                 WHERE approval_id=? AND decision='pending'
                 """,
-                (approver, datetime.now(timezone.utc).isoformat(), approval_id),
+                (approver, datetime.now(UTC).isoformat(), approval_id),
             )
             if cursor.rowcount != 1:
                 raise ApprovalError("approval is no longer pending")
@@ -196,7 +206,7 @@ class ApprovalStore:
 
     def get(self, approval_id: str) -> Approval:
         self._require_available()
-        with self._connect() as connection:
+        with self.connection() as connection:
             row = connection.execute("SELECT * FROM approvals WHERE approval_id = ?", (approval_id,)).fetchone()
         if row is None:
             raise ApprovalError("approval not found")
@@ -204,7 +214,7 @@ class ApprovalStore:
 
     def pending(self) -> list[Approval]:
         self._require_available()
-        with self._connect() as connection:
+        with self.connection() as connection:
             rows = connection.execute(
                 "SELECT * FROM approvals WHERE decision='pending' ORDER BY created_at"
             ).fetchall()
@@ -212,8 +222,8 @@ class ApprovalStore:
 
     def consume(self, approval_id: str) -> None:
         self._require_available()
-        consumed_at = datetime.now(timezone.utc).isoformat()
-        with self._connect() as connection:
+        consumed_at = datetime.now(UTC).isoformat()
+        with self.connection() as connection:
             cursor = connection.execute(
                 "UPDATE approvals SET consumed_at=? WHERE approval_id=? AND consumed_at IS NULL AND decision='approved'",
                 (consumed_at, approval_id),
@@ -242,9 +252,18 @@ class ApprovalStore:
             consumed_at=row["consumed_at"],
         )
 
-    def _require_available(self) -> None:
+    def require_available(self) -> None:
+        """Public guard for callers outside this class.
+
+        `authorize` needs the same fail-closed check as the store methods, and
+        reaching into a private helper from another function in the module was
+        a boundary violation.
+        """
         if not self.available:
             raise ApprovalUnavailableError("approval service unavailable")
+
+    # Retained for existing callers inside this module.
+    _require_available = require_available
 
 
 class RiskRegistry:
@@ -279,7 +298,7 @@ def authorize(
     if risk == "read":
         return risk
 
-    approval_store._require_available()
+    approval_store.require_available()
     if approval_id is None:
         if risk == "destructive":
             raise ApprovalError("destructive action requires approval")
@@ -288,7 +307,7 @@ def authorize(
     approval = approval_store.get(approval_id)
     if approval.decision != "approved":
         raise ApprovalError("approval is not approved")
-    current_time = now or datetime.now(timezone.utc)
+    current_time = now or datetime.now(UTC)
     if current_time >= datetime.fromisoformat(approval.expires_at):
         raise ApprovalError("approval expired")
     if approval.consumed_at is not None:

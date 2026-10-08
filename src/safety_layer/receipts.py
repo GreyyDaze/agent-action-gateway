@@ -3,7 +3,6 @@ from typing import Any
 from .provider import ExternalActionProvider
 from .store import TraceStore
 
-
 ORDER_ID_KEY = "order_id"
 
 

@@ -4,8 +4,9 @@ LLM confidence is deliberately not used here. Decisions come from explicit
 runtime state, tool results, environment labels, and policy inputs.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from .cross_check import CrossCheckResult
 

@@ -8,7 +8,6 @@ from .fuses import FuseController, FuseTrippedError
 from .gate import record_run_status
 from .locks import ApprovalStore, RiskRegistry
 from .models import TraceEvent
-from .trace import honest_status, suspicious_flags
 from .provider import ExternalActionProvider
 from .receipts import execute_side_effect
 from .safety import check_action
@@ -21,6 +20,7 @@ from .stop_rules import (
     validate_required_input,
 )
 from .store import TraceStore
+from .trace import honest_status, suspicious_flags
 
 
 def _persist_fuse(trace_store: TraceStore, run_id: str, fuse: FuseController | None) -> None:
@@ -318,10 +318,7 @@ def execute_tool(
     )
     # Preserve the validation/5 public status contract. observability evidence is
     # exposed separately so observability does not silently change behavior.
-    if decision.decision == "CONTINUE":
-        status = "allowed"
-    else:
-        status = "stopped"
+    status = "allowed" if decision.decision == "CONTINUE" else "stopped"
     return {
         "status": status,
         "evidence_status": evidence_status,

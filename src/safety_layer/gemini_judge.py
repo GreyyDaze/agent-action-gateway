@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 import math
 import os
+from collections.abc import Callable
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .evaluation_models import GoldenCase
 from .judge import JudgeDecision, JudgeUnavailableError
-
 
 GEMINI_PROVIDER = "gemini"
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
@@ -47,9 +47,11 @@ class GeminiRubricJudgeProvider:
         output_price_usd_per_million: float = DEFAULT_OUTPUT_PRICE_USD_PER_MILLION,
         transport: Callable[[Request, float], bytes] | None = None,
     ) -> None:
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        if not self.api_key:
+        resolved_key = api_key or os.getenv("GEMINI_API_KEY")
+        if not resolved_key:
             raise GeminiJudgeError("GEMINI_API_KEY is required")
+        # Narrowed once here so the request headers need no further checks.
+        self.api_key: str = resolved_key
         if not model:
             raise ValueError("model must be non-empty")
         if timeout <= 0:
@@ -103,8 +105,7 @@ class GeminiRubricJudgeProvider:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise GeminiJudgeError("Gemini returned invalid JSON") from exc
 
-        decision = self._parse_decision(response, latency_ms)
-        return decision
+        return self._parse_decision(response, latency_ms)
 
     def _build_request(
         self,

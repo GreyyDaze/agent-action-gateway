@@ -4,19 +4,104 @@ on:
   push:
   pull_request:
 
+# Cancel superseded runs on the same ref so a push does not queue behind its
+# own earlier commits.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The package declares 3.11+, so both ends of the supported range run.
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Type check (mypy)
+        run: mypy
+
+      - name: Run full test suite with coverage floor
+        run: pytest -q --cov=safety_layer --cov-report=term-missing
+
+      - name: Execute documented SDK example
+        run: python docs/examples/quickstart.py
+
+      - name: Verify installed CLI
+        run: |
+          safety --help
+          gate --help
+          safety wall --db "$RUNNER_TEMP/probe.db"
+
+  wheel:
+    # Proves the published artifact works, not just the source checkout. This is
+    # the step that catches packaging regressions such as missing package data.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Install package and test dependencies
-        run: python -m pip install ".[dev]"
-      - name: Run full test suite
-        run: pytest -q
-      - name: Execute documented SDK example
-        run: python docs/examples/quickstart.py
-      - name: Verify installed CLI
-        run: safety --help
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Assert evaluation artifacts are inside the wheel
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          for expected in (
+              "safety_layer/data/golden/golden-v1.json",
+              "safety_layer/data/calibration/calibration-v1.json",
+          ):
+              if expected not in names:
+                  sys.exit(f"missing from wheel: {expected}")
+          print("wheel contents verified")
+          PY
+
+      - name: Install the wheel into a clean environment and use it
+        run: |
+          python -m venv "$RUNNER_TEMP/wheelenv"
+          "$RUNNER_TEMP/wheelenv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/wheelenv/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheelenv/bin/python" -c "import safety_layer, pathlib; print(pathlib.Path(safety_layer.__file__).resolve())"
+          "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer.golden import load_golden_set; print(len(load_golden_set()))"
+          "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer.calibration import load_calibration_set; print(len(load_calibration_set()))"
+          "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer import run; print('SDK import OK')"
+          "$RUNNER_TEMP/wheelenv/bin/safety" --help
+
+  proofs:
+    # The verification suites are the product's own acceptance criteria.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]"
+
+      - name: Reproduce the verification suites
+        run: python -m safety_layer proof --jobs 200

@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from safety_layer.dashboard import build_server
@@ -45,7 +45,7 @@ class ReceiptRecoveryTargetTest(unittest.TestCase):
             )
             # Simulate the crash window: the effect happened but the local
             # record never advanced past `unknown`.
-            with store._connect() as connection:
+            with store.connection() as connection:
                 connection.execute(
                     "UPDATE receipts SET state='unknown', provider_ref=NULL"
                 )
@@ -149,7 +149,7 @@ class DashboardApprovalBoundaryTest(unittest.TestCase):
         self.approval = self.approvals.request(
             "refund",
             {"order_id": "ORD-100", "amount": 400},
-            datetime.now(timezone.utc) + timedelta(hours=1),
+            datetime.now(UTC) + timedelta(hours=1),
         )
         self.server = build_server(str(self.db), "127.0.0.1", 0)
         self.port = self.server.server_address[1]
