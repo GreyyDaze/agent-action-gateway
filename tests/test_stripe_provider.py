@@ -27,16 +27,20 @@ from pathlib import Path
 from unittest import mock
 from urllib.parse import parse_qs
 
-from safety_layer.locks import ApprovalStore, RiskRegistry
-from safety_layer.provider import ExternalActionProvider as ExternalActionProviderProtocol
-from safety_layer.receipts import UnresolvableReceiptError, execute_side_effect, resolve_unknown
-from safety_layer.runtime import dispatch_external_action
-from safety_layer.store import TraceStore
-from safety_layer.stripe_provider import (
+from safety_layer.core.locks import ApprovalStore, RiskRegistry
+from safety_layer.core.receipts import (
+    UnresolvableReceiptError,
+    execute_side_effect,
+    resolve_unknown,
+)
+from safety_layer.providers.base import ExternalActionProvider as ExternalActionProviderProtocol
+from safety_layer.providers.stripe import (
     METADATA_KEY,
     StripeProviderError,
     StripeRefundProvider,
 )
+from safety_layer.runtime.orchestrator import dispatch_external_action
+from safety_layer.storage.traces import TraceStore
 
 TEST_KEY = "sk_test_fake_key_for_local_contract_tests"
 
@@ -345,7 +349,7 @@ class ProviderIsDomainNeutralTest(unittest.TestCase):
     """
 
     def test_protocol_and_http_adapter_use_generic_names(self) -> None:
-        from safety_layer.provider import (
+        from safety_layer.providers.base import (
             ExternalActionProvider,
             HttpExternalActionProvider,
         )
@@ -356,7 +360,7 @@ class ProviderIsDomainNeutralTest(unittest.TestCase):
         )
 
     def test_legacy_refund_names_remain_importable(self) -> None:
-        from safety_layer.provider import (
+        from safety_layer.providers.base import (
             ExternalActionProvider,
             HttpExternalActionProvider,
             HttpRefundProvider,
@@ -372,13 +376,13 @@ class ProviderIsDomainNeutralTest(unittest.TestCase):
         If refunds ever leak back into fuses/locks/stop-rules, the product has
         quietly become domain-locked even though the adapter layer is generic.
         """
-        import safety_layer.fuses as fuses
-        import safety_layer.locks as locks
-        import safety_layer.stop_rules as stop_rules
-        import safety_layer.store as store
-        import safety_layer.trace as trace
+        import safety_layer.core.fuses as fuses
+        import safety_layer.core.locks as locks
+        import safety_layer.core.stop_rules as stop_rules
+        import safety_layer.evidence.failure_wall as failure_wall
+        import safety_layer.storage.traces as store
 
-        for module in (fuses, locks, stop_rules, store, trace):
+        for module in (fuses, locks, stop_rules, failure_wall, store):
             source = inspect.getsource(module).lower()
             with self.subTest(module=module.__name__):
                 self.assertNotIn("refund", source)

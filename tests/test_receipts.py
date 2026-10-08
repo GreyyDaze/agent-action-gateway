@@ -2,9 +2,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.mock_provider import MockPaymentProvider
-from safety_layer.receipts import execute_side_effect, resolve_unknown
-from safety_layer.store import TraceStore
+from safety_layer.core.receipts import execute_side_effect, resolve_unknown
+from safety_layer.providers.mock import MockPaymentProvider
+from safety_layer.storage.traces import TraceStore
 
 
 class ReceiptLifecycleTest(unittest.TestCase):

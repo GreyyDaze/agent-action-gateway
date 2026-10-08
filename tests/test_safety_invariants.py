@@ -17,16 +17,16 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from safety_layer.dashboard import build_server
-from safety_layer.locks import ApprovalStore
-from safety_layer.mock_provider import MockPaymentProvider
-from safety_layer.receipts import (
+from safety_layer.core.locks import ApprovalStore
+from safety_layer.core.receipts import (
     UnresolvableReceiptError,
     execute_side_effect,
     resolve_unknown,
 )
-from safety_layer.store import TraceStore
-from safety_layer.trace import redact
+from safety_layer.evidence.redaction import redact
+from safety_layer.interface.dashboard import build_server
+from safety_layer.providers.mock import MockPaymentProvider
+from safety_layer.storage.traces import TraceStore
 
 
 class ReceiptRecoveryTargetTest(unittest.TestCase):
@@ -110,7 +110,7 @@ class NoFabricatedVerdictTest(unittest.TestCase):
     """
 
     def test_completed_run_is_not_recorded_as_pass(self) -> None:
-        from safety_layer.runtime import run
+        from safety_layer.runtime.orchestrator import run
 
         with tempfile.TemporaryDirectory() as directory:
             store = TraceStore(Path(directory) / "runtime.db")
@@ -122,7 +122,7 @@ class NoFabricatedVerdictTest(unittest.TestCase):
             self.assertIn("NOT_EVALUATED", verdicts)
 
     def test_failed_run_is_recorded_as_failed(self) -> None:
-        from safety_layer.runtime import run
+        from safety_layer.runtime.orchestrator import run
 
         def boom(task: str) -> str:
             raise RuntimeError("nope")
@@ -240,7 +240,7 @@ class GateExitContractTest(unittest.TestCase):
     """
 
     def test_exit_codes_are_distinct_and_do_not_collide_with_argparse(self) -> None:
-        from safety_layer.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_UNCERTAIN
+        from safety_layer.interface.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_UNCERTAIN
 
         self.assertEqual(EXIT_PASS, 0)
         self.assertEqual(EXIT_FAIL, 1)
@@ -273,7 +273,7 @@ class DeadCodeTest(unittest.TestCase):
     """
 
     def test_duplicated_decider_is_gone(self) -> None:
-        import safety_layer.stop_rules as stop_rules
+        import safety_layer.core.stop_rules as stop_rules
 
         self.assertFalse(hasattr(stop_rules, "decide_tool_result"))
 

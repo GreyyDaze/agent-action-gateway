@@ -69,7 +69,7 @@ P3 semantic judge calibration is provider-dependent. The deterministic gate test
 For the dashboard:
 
 ~~~bash
-python -m safety_layer.dashboard --db data/runtime.db --host 127.0.0.1 --port 8000
+python -m safety_layer.interface.dashboard --db data/runtime.db --host 127.0.0.1 --port 8000
 ~~~
 
 ## What the system enforces
@@ -138,7 +138,7 @@ Deferred work is tracked in `ROADMAP.md`. The PRD and build plan remain the sour
 Start the self-hosted dashboard against the same SQLite runtime database:
 
 ~~~bash
-python -m safety_layer.dashboard --db data/runtime.db --host 127.0.0.1 --port 8000
+python -m safety_layer.interface.dashboard --db data/runtime.db --host 127.0.0.1 --port 8000
 ~~~
 
 The dashboard currently exposes:

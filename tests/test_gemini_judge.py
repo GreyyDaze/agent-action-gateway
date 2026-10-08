@@ -4,15 +4,15 @@ from io import BytesIO
 from urllib.error import HTTPError
 from urllib.request import Request
 
-from safety_layer.evaluation_models import GoldenCase
-from safety_layer.gemini_judge import (
+from safety_layer.evaluation.judge import ProductControlledJudge
+from safety_layer.evaluation.models import GoldenCase
+from safety_layer.evaluation.providers.gemini import (
     DEFAULT_GEMINI_MODEL,
     GEMINI_JUDGE_VERSION,
     GEMINI_PROMPT_VERSION,
     GeminiJudgeError,
     GeminiRubricJudgeProvider,
 )
-from safety_layer.judge import ProductControlledJudge
 
 CASE = GoldenCase(
     case_id="semantic-001",
@@ -151,7 +151,7 @@ class GeminiJudgeAdapterTest(unittest.TestCase):
             model = "configured-model"
 
             def judge(self, *, system_prompt, case, output):
-                from safety_layer.judge import JudgeDecision
+                from safety_layer.evaluation.judge import JudgeDecision
 
                 return JudgeDecision(
                     label="pass",

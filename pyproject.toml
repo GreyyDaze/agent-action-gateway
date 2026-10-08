@@ -14,17 +14,16 @@ authors = [{ name = "Agent Safety Layer contributors" }]
 keywords = ["ai-agents", "safety", "evaluation", "guardrails", "ci"]
 
 [project.scripts]
-safety = "safety_layer.cli:main"
-gate = "safety_layer.gate_cli:main"
+safety = "safety_layer.interface.cli:main"
+gate = "safety_layer.interface.gate_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 # The golden set and calibration set are runtime artifacts owned by the
-# package, so they ship inside it and are loaded with importlib.resources.
-# data-files would install relative to sys.prefix (the venv root), which no
-# loader can locate reliably from an installed package.
+# package, so they ship inside it. data-files would install relative to
+# sys.prefix (the venv root), which no loader can locate reliably.
 safety_layer = ["data/golden/*.json", "data/calibration/*.json"]
 
 [tool.setuptools.exclude-package-data]
@@ -67,14 +66,15 @@ ignore = [
 # provider/protocol methods take `order_id` they do not need in order to
 # satisfy the shared interface.
 "tests/*" = ["ARG001", "ARG002", "ARG005", "SIM117"]
-"src/safety_layer/provider.py" = ["ARG002"]
-"src/safety_layer/mock_provider.py" = ["ARG002"]
-"src/safety_layer/judge.py" = ["ARG002"]
-"src/safety_layer/stop_rules.py" = ["ARG002"]
+"src/safety_layer/providers/base.py" = ["ARG002"]
+"src/safety_layer/providers/mock.py" = ["ARG002"]
+"src/safety_layer/evaluation/judge.py" = ["ARG002"]
+"src/safety_layer/core/stop_rules.py" = ["ARG002"]
 
 [tool.mypy]
 python_version = "3.11"
 files = ["src/safety_layer"]
+exclude = ["safety_layer/proofs"]
 # The package is fully annotated but historically lenient; this turns on the
 # checks that catch real defects without demanding annotations everywhere.
 check_untyped_defs = true

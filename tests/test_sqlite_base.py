@@ -13,9 +13,9 @@ import threading
 import unittest
 from pathlib import Path
 
-from safety_layer.locks import ApprovalStore
-from safety_layer.sqlite_base import SqliteStore
-from safety_layer.store import TraceStore
+from safety_layer.core.locks import ApprovalStore
+from safety_layer.storage.base import SqliteStore
+from safety_layer.storage.traces import TraceStore
 
 
 class CountingStore(SqliteStore):

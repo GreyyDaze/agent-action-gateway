@@ -14,8 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer import cli
-from safety_layer.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_USAGE
+from safety_layer.interface import cli
+from safety_layer.interface.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_USAGE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -95,8 +95,8 @@ class WallCommandTest(unittest.TestCase):
             self.assertEqual(buffer.getvalue().strip(), "groups=0")
 
     def test_failed_trace_is_grouped(self) -> None:
-        from safety_layer.models import TraceEvent
-        from safety_layer.store import TraceStore
+        from safety_layer.runtime.records import TraceEvent
+        from safety_layer.storage.traces import TraceStore
 
         with tempfile.TemporaryDirectory() as directory:
             db = Path(directory) / "w.db"

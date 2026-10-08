@@ -13,6 +13,24 @@ print(result["status"])
 
 The application still owns `agent`, its model, its provider, and its model loop.
 
+## Package layout
+
+```
+safety_layer/
+├── core/        deterministic enforcement: fuses, locks, stop rules, receipts
+├── evidence/    redaction, capture policy, honest status, failure grouping
+├── storage/     SQLite persistence, one connection policy and migration strategy
+├── evaluation/  golden set, judges, verdict engine, regression gate
+│   └── providers/  hosted evaluation judges (optional)
+├── providers/   external action adapters: HTTP, Stripe, test doubles
+├── runtime/     run orchestration
+├── interface/   CLI commands and the local dashboard
+└── proofs/      verification scripts and manual drills
+```
+
+The package ships all of these. Import from `safety_layer` itself; the
+submodule layout is an implementation detail and may change.
+
 ## Ownership boundary
 
 ```text

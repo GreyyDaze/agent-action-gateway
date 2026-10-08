@@ -46,8 +46,8 @@ def test_evaluation_artifacts_load_from_package_resources() -> None:
     sys.prefix (the venv root) instead of next to the package. The loaders
     resolved a guessed filesystem path and raised on a non-editable install.
     """
-    from safety_layer.calibration import load_calibration_set
-    from safety_layer.golden import load_golden_set
+    from safety_layer.evaluation.calibration import load_calibration_set
+    from safety_layer.evaluation.golden import load_golden_set
 
     assert len(load_golden_set()) == 30
     assert len(load_calibration_set()) == 6
@@ -55,8 +55,8 @@ def test_evaluation_artifacts_load_from_package_resources() -> None:
 
 def test_packaged_artifacts_are_not_loaded_from_repo_checkout() -> None:
     """Resolution must not depend on the source tree being present."""
-    from safety_layer.calibration import default_calibration_set_path
-    from safety_layer.golden import default_golden_set_path
+    from safety_layer.evaluation.calibration import default_calibration_set_path
+    from safety_layer.evaluation.golden import default_golden_set_path
 
     package_root = Path(__import__("safety_layer").__file__).resolve().parent
     for resolved in (default_golden_set_path(), default_calibration_set_path()):
@@ -90,11 +90,11 @@ def test_proof_command_runs_and_prints_phase_proofs() -> None:
 def test_dashboard_snapshot_exposes_runs_and_budget_counters(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
-    from safety_layer.store import TraceStore
+    from safety_layer.storage.traces import TraceStore
 
     store = TraceStore(tmp_path / "runtime.db")
     store.append_trace(
-        __import__("safety_layer.models", fromlist=["TraceEvent"]).TraceEvent(
+        __import__("safety_layer.runtime.records", fromlist=["TraceEvent"]).TraceEvent(
             "run-1", 1, "agent", "task", {"ok": True}, "completed"
         )
     )

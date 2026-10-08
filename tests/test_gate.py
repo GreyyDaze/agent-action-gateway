@@ -5,17 +5,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from safety_layer.evaluation_models import (
+from safety_layer.evaluation.evaluator import evaluate_cases
+from safety_layer.evaluation.gate import check_compatibility, run_gate
+from safety_layer.evaluation.golden import seed_golden_cases
+from safety_layer.evaluation.judge import JudgeDecision, UnavailableRubricJudge
+from safety_layer.evaluation.models import (
     GOLDEN_SET_VERSION,
     Baseline,
     GoldenCase,
 )
-from safety_layer.evaluation_store import EvaluationStore
-from safety_layer.evaluator import evaluate_cases
-from safety_layer.gate import check_compatibility, run_gate
-from safety_layer.gate_cli import EXIT_UNCERTAIN, build_parser, run_check
-from safety_layer.golden import seed_golden_cases
-from safety_layer.judge import JudgeDecision, UnavailableRubricJudge
+from safety_layer.interface.gate_cli import EXIT_UNCERTAIN, build_parser, run_check
+from safety_layer.storage.evaluations import EvaluationStore
 
 
 class StubRubricJudge:
@@ -189,7 +189,7 @@ class GateCliVerdictExitTest(unittest.TestCase):
             args = self._args(directory)
             args.unchanged = unchanged_flag = True
             self.assertTrue(unchanged_flag)
-            with mock.patch("safety_layer.gate_cli._build_judge", return_value=UnavailableRubricJudge("no key")):
+            with mock.patch("safety_layer.interface.gate_cli._build_judge", return_value=UnavailableRubricJudge("no key")):
                 exit_code = run_check(args)
             self.assertEqual(exit_code, EXIT_UNCERTAIN)
 
@@ -198,7 +198,7 @@ class GateCliVerdictExitTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             args = self._args(directory, repeat=3)
             buffer = io.StringIO()
-            with mock.patch("safety_layer.gate_cli._build_judge", return_value=UnavailableRubricJudge("no key")):
+            with mock.patch("safety_layer.interface.gate_cli._build_judge", return_value=UnavailableRubricJudge("no key")):
                 with contextlib.redirect_stdout(buffer):
                     exit_code = run_check(args)
             output = buffer.getvalue()

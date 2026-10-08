@@ -1,6 +1,7 @@
 import unittest
 
-from safety_layer.trace import build_failure_wall, suspicious_flags
+from safety_layer.evidence.capture import suspicious_flags
+from safety_layer.evidence.failure_wall import build_failure_wall
 
 
 class FailureWallProofTests(unittest.TestCase):

@@ -2,15 +2,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.evaluation_models import GoldenCase
-from safety_layer.evaluator import evaluate_cases
-from safety_layer.failure_wall_store import FailureWallStore
-from safety_layer.golden import load_golden_cases, load_golden_set
-from safety_layer.golden_promotion import (
+from safety_layer.evaluation.evaluator import evaluate_cases
+from safety_layer.evaluation.golden import load_golden_cases, load_golden_set
+from safety_layer.evaluation.models import GoldenCase
+from safety_layer.evidence.failure_wall import build_failure_wall
+from safety_layer.storage.promotions import (
     GoldenCasePromotionStore,
     promote_failure_group,
 )
-from safety_layer.trace import build_failure_wall
+from safety_layer.storage.wall import FailureWallStore
 
 
 class FailurePromotionDrillTests(unittest.TestCase):

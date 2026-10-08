@@ -1,9 +1,9 @@
 import unittest
 
-from safety_layer.evaluation_models import GoldenCase
-from safety_layer.evaluator import evaluate_cases
-from safety_layer.golden import load_golden_set
-from safety_layer.judge import JudgeDecision
+from safety_layer.evaluation.evaluator import evaluate_cases
+from safety_layer.evaluation.golden import load_golden_set
+from safety_layer.evaluation.judge import JudgeDecision
+from safety_layer.evaluation.models import GoldenCase
 
 PLANTED_FAILURE_OUTPUT = "__PLANTED_FAILURE__"
 
