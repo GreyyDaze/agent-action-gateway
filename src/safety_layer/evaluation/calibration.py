@@ -125,7 +125,10 @@ def run_calibration(cases, judge):
     for example in examples:
         case = by_id.get(example.case_id)
         if case is None:
-            raise ValueError(f"calibration case missing from golden set: {example.case_id}")
+            raise ValueError(
+                f'calibration example refers to case "{example.case_id}", '
+                f"which is not in the case file"
+            )
         try:
             decision = judge.evaluate(case, example.output)
         except JudgeUnavailableError:

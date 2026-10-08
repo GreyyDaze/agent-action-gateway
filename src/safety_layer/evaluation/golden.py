@@ -38,23 +38,23 @@ def load_golden_set(path: str | Path | None = None) -> tuple[GoldenCase, ...]:
     try:
         payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise ValueError(f"golden set not found: {artifact_path}") from exc
+        raise ValueError(f"no case file at {artifact_path}") from exc
     except json.JSONDecodeError as exc:
-        raise ValueError(f"golden set is not valid JSON: {artifact_path}") from exc
+        raise ValueError(f"{artifact_path} is not valid JSON: {exc}") from exc
 
     if not isinstance(payload, dict):
-        raise ValueError("golden set must be a JSON object")
+        raise ValueError(f"the top level of {artifact_path} must be a JSON object")
 
     version = payload.get("version")
     if version != GOLDEN_SET_VERSION:
         raise ValueError(
-            f"unsupported golden set version: {version!r}; "
-            f"expected {GOLDEN_SET_VERSION!r}"
+            f'unsupported "version": {version!r}; this build reads '
+            f'"{GOLDEN_SET_VERSION}" only'
         )
 
     raw_cases = payload.get("cases")
     if not isinstance(raw_cases, list) or not raw_cases:
-        raise ValueError("golden set must contain a non-empty cases array")
+        raise ValueError('the "cases" key must be a non-empty list')
 
     cases: list[GoldenCase] = []
     seen_ids: set[str] = set()
@@ -64,37 +64,40 @@ def load_golden_set(path: str | Path | None = None) -> tuple[GoldenCase, ...]:
 
     if len(cases) < MIN_GOLDEN_CASES:
         raise ValueError(
-            f"golden set must contain at least {MIN_GOLDEN_CASES} cases, "
-            f"got {len(cases)}"
+            f"only {len(cases)} cases found; at least {MIN_GOLDEN_CASES} are "
+            f"needed for the comparison against the previous run to mean anything"
         )
     if not any(case.catastrophic for case in cases):
-        raise ValueError("golden set must contain at least one catastrophic case")
+        raise ValueError('no case sets "catastrophic": true, so a serious failure would be averaged away instead of stopping the release')
 
     return tuple(cases)
 
 
 def _parse_case(raw_case: Any, seen_ids: set[str]) -> GoldenCase:
     if not isinstance(raw_case, dict):
-        raise ValueError("each golden case must be a JSON object")
+        raise ValueError("every entry in \"cases\" must be a JSON object")
 
     required = ("case_id", "task", "expected", "check_type", "source")
     missing = [field for field in required if field not in raw_case]
     if missing:
-        raise ValueError(f"golden case missing fields: {', '.join(missing)}")
+        raise ValueError(
+            "case is missing required field(s): " + ", ".join(missing)
+        )
 
     case_id = raw_case["case_id"]
     check_type = raw_case["check_type"]
     if not isinstance(case_id, str) or not case_id:
-        raise ValueError("golden case_id must be a non-empty string")
+        raise ValueError('"case_id" must be a non-empty string')
     if case_id in seen_ids:
-        raise ValueError(f"duplicate golden case_id: {case_id}")
+        raise ValueError(f'two cases share the case_id "{case_id}"; each must be unique')
     if check_type not in _ALLOWED_CHECK_TYPES:
-        raise ValueError(f"unsupported golden check type: {check_type!r}")
+        allowed = ", ".join(sorted(_ALLOWED_CHECK_TYPES))
+        raise ValueError(f'unsupported "check_type": {check_type!r}; use one of {allowed}')
 
     seen_ids.add(case_id)
     rubric = raw_case.get("rubric", [])
     if not isinstance(rubric, list) or not all(isinstance(item, str) for item in rubric):
-        raise ValueError(f"golden rubric must be a string list: {case_id}")
+        raise ValueError(f'the "rubric" for case "{case_id}" must be a list of strings')
 
     return GoldenCase(
         case_id=case_id,
@@ -121,8 +124,8 @@ def load_golden_cases(
     for promotion in promotion_store.list():
         if promotion.case.case_id in existing_ids:
             raise ValueError(
-                "duplicate golden case_id across canonical and promoted cases: "
-                f"{promotion.case.case_id}"
+                f'case_id "{promotion.case.case_id}" appears both in the case file '
+                f"and among promoted cases; each must be unique"
             )
         cases.append(promotion.case)
         existing_ids.add(promotion.case.case_id)

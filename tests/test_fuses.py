@@ -205,7 +205,7 @@ class FuseTest(unittest.TestCase):
             fuse = FuseController(FuseBudget())
             fuse.mark_unavailable()
 
-            with self.assertRaisesRegex(FuseTrippedError, "writes fail closed"):
+            with self.assertRaisesRegex(FuseTrippedError, "writes are refused"):
                 dispatch_external_action(
                     store, provider, "run-real-action", "step-1",
                     arguments, "ORD-100",

@@ -173,7 +173,7 @@ class FailureWallStore(SqliteStore):
                 (group_id,),
             ).fetchone()
             if exists is None:
-                raise KeyError(f"unknown Failure Wall group: {group_id}")
+                raise KeyError(f"unknown failure group: {group_id}")
             connection.execute(
                 """
                 UPDATE failure_groups
@@ -200,7 +200,7 @@ class FailureWallStore(SqliteStore):
                 selected,
             ).fetchall()
             if len(rows) != len(set(selected)):
-                raise KeyError("merge includes an unknown Failure Wall group")
+                raise KeyError("merge includes an unknown failure group")
 
             self.save_group(merged)
             for group_id in selected:
@@ -236,7 +236,7 @@ class FailureWallStore(SqliteStore):
                 (group_id,),
             ).fetchone()
             if exists is None:
-                raise KeyError(f"unknown Failure Wall group: {group_id}")
+                raise KeyError(f"unknown failure group: {group_id}")
 
             for group in new_groups:
                 self.save_group(group)

@@ -29,7 +29,7 @@ def evaluate_cases(
     if runs < 1:
         raise ValueError("runs must be >= 1")
     if not cases:
-        raise ValueError("at least one golden case is required")
+        raise ValueError("at least one case is required")
     if judge_wait_seconds < 0:
         raise ValueError("judge_wait_seconds must be >= 0")
     if any(not is_deterministic(case) for case in cases) and judge is None:

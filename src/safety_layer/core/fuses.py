@@ -239,10 +239,15 @@ class FuseController:
     ) -> None:
         if not self._is_available():
             if write:
-                raise FuseTrippedError("fuse unavailable: writes fail closed")
+                raise FuseTrippedError(
+                    "safety limits are unavailable, so writes are refused"
+                )
             with self._availability_lock:
                 if self._degraded_reads_used >= self.budget.limits.degraded_read_steps:
-                    raise FuseTrippedError("fuse unavailable: degraded read cap exhausted")
+                    raise FuseTrippedError(
+                        "the reduced read allowance is used up while safety "
+                        "limits are unavailable"
+                    )
                 self._degraded_reads_used += 1
             return
 

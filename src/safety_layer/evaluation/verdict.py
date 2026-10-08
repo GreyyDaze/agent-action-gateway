@@ -6,7 +6,10 @@ LANE_RUNS = {"push": 3, "full": 10}
 
 def decide(summary: EvaluationSummary, *, lane: str, baseline_score: float) -> GateResult:
     if lane not in LANE_RUNS:
-        raise ValueError(f"unknown lane: {lane}")
+        raise ValueError(
+            f'unknown --lane {lane!r}; choose one of "'
+            f"{', '.join(sorted(LANE_RUNS))}"
+        )
     if summary.runs_per_case != LANE_RUNS[lane]:
         raise ValueError(
             f"{lane} lane requires {LANE_RUNS[lane]} runs per case, got {summary.runs_per_case}"
