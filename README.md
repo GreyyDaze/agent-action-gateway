@@ -51,7 +51,7 @@ From the repository root after installation:
 safety proof --jobs 1000
 ~~~
 
-This runs the deterministic P1 crash proof and the P2-P6 proof suites. It prints one labeled proof result per phase and exits non-zero on failure.
+This runs the deterministic crash-recovery proof and the remaining verification suites. It prints one labeled result per safety guarantee and exits non-zero on failure.
 
 For individual verification suites:
 
@@ -84,9 +84,9 @@ python -m safety_layer.dashboard --db data/runtime.db --host 127.0.0.1 --port 80
 
 The external agent and its model provider are not owned by this project.
 
-## Proofs from Phases 1–6
+## Verification results
 
-| Phase | Proof |
+| Guarantee | Proof |
 |---|---|
 | P1 | `0 dupes / 1,000 crash jobs` |
 | P2 | `0 destructive executions without valid fresh approval` |
@@ -95,7 +95,7 @@ The external agent and its model provider are not owned by this project.
 | P5 | zero budget overruns in the concurrency proof; loop detection passes |
 | P6 | planted silent-wrong cases flagged; deterministic failure groups separate equivalent and distinct signatures |
 
-The exact proof output belongs to the phase test/proof commands. Do not treat a green unit test as a stronger claim than the proof it actually runs.
+The exact proof output belongs to the verification commands. Do not treat a green unit test as a stronger claim than the proof it actually runs.
 
 The complete recorded evidence is in `docs/history/release-proof.md`.
 
@@ -116,7 +116,7 @@ The current SDK is a lightweight wrapper around the existing runtime, not a univ
 
 ## Scope and honest limits
 
-The current Phase 7 scope is explicit:
+The current release scope is explicit:
 
 - the 8 deferred edge cases are recorded in `ROADMAP.md`;
 - the 8 🟢 non-goal constraints from the Part 4 triage are recorded there;
@@ -131,7 +131,7 @@ This tool does **not** claim:
 - ownership of the external agent's LLM calls;
 - a large enterprise observability platform.
 
-Deferred work is tracked in `ROADMAP.md`. The PRD and build plan remain the source of truth for requirements and phase order.
+Deferred work is tracked in `ROADMAP.md`. The PRD and build plan remain the source of truth for requirements and development history.
 
 ## Dashboard
 
@@ -145,7 +145,7 @@ The dashboard currently exposes:
 - persisted trace events and evidence per run;
 - pending approval queue with approve/deny actions;
 - gate verdict history;
-- persisted Phase 5 fuse counters when a run supplies a fuse.
+- persisted fuse counters when a run supplies a fuse.
 
 The JSON state is also available at `/api/state`.
 
@@ -162,7 +162,7 @@ pytest -q
 python -m safety_layer --help
 ~~~
 
-The Phase 7 acceptance target is:
+The release acceptance target is:
 
 ~~~text
 fresh install -> full suite green -> all proof numbers reproducible
