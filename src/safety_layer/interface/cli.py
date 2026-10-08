@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     chaos = sub.add_parser("chaos", help="run the crash-injection proof (receipt book)")
     chaos.add_argument("--jobs", type=int, default=1000)
 
-    proof = sub.add_parser("proof", help="reproduce the Phase 1-6 verification suites")
+    proof = sub.add_parser("proof", help="run every verification suite")
     proof.add_argument("--jobs", type=int, default=1000)
 
     gate = sub.add_parser("gate", help="run regression-gate commands")
