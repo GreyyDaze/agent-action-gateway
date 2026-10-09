@@ -140,7 +140,7 @@ class MigrationTest(unittest.TestCase):
             path = Path(directory) / "runtime.db"
             traces = TraceStore(path)
             approvals = ApprovalStore(traces)
-            self.assertEqual(traces.applied_migrations(), (1, 2))
+            self.assertEqual(traces.applied_migrations(), (1, 2, 3))
             self.assertEqual(approvals.applied_migrations(), (1, 2))
             with approvals.connection() as connection:
                 names = {

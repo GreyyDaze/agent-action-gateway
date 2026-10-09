@@ -1,4 +1,5 @@
 """Starts and stops the pieces that make up a run."""
+import sys
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
@@ -29,6 +30,23 @@ def _persist_fuse(trace_store: TraceStore, run_id: str, fuse: FuseController | N
         trace_store.record_fuse_snapshot(run_id, fuse.budget.snapshot())
 
 
+_OBSERVE_WARNING_SHOWN = False
+
+
+def _warn_observe_only() -> None:
+    """Warn once per process that this path enforces nothing."""
+    global _OBSERVE_WARNING_SHOWN
+    if _OBSERVE_WARNING_SHOWN:
+        return
+    _OBSERVE_WARNING_SHOWN = True
+    print(
+        "WARNING: run() records what happens but enforces nothing. Actions "
+        "taken outside a session are not checked. Use session() for "
+        "protection: from safety_layer import session",
+        file=sys.stderr,
+    )
+
+
 def run(
     agent_fn: Callable[[str], Any],
     task: str,
@@ -41,7 +59,14 @@ def run(
     new_turn: bool = False,
     fuse: FuseController | None = None,
 ) -> dict[str, Any]:
-    """Run the agent with durable validation clarification state."""
+    """Run the agent with durable validation clarification state.
+
+    This records what happened. It does not authorize, budget or receipt
+    anything: tools the agent reaches outside a session are not enforced. The
+    first call in a process says so on stderr, because "observe" in the result
+    is easy to miss and the consequence is an unprotected action.
+    """
+    _warn_observe_only()
     trace_store = store or TraceStore()
     active_run_id = run_id or str(uuid4())
     stop_policy = StopPolicy()
@@ -68,7 +93,7 @@ def run(
         except AmbiguityBlockedError as exc:
             trace_store.save_clarification_state(active_run_id, clarification_state)
             trace_store.append_trace(
-                TraceEvent(active_run_id, 0, "validation", task, str(exc), "blocked")
+                TraceEvent(active_run_id, 0, "validation", task, str(exc), "blocked"), enforcement="observe",
             )
             return {
                 "run_id": active_run_id,
@@ -82,7 +107,7 @@ def run(
 
         if proposal.decision == "ASK":
             trace_store.append_trace(
-                TraceEvent(active_run_id, 0, "validation", task, proposal.missing_fields, "ask")
+                TraceEvent(active_run_id, 0, "validation", task, proposal.missing_fields, "ask"), enforcement="observe",
             )
             return {
                 "run_id": active_run_id,
@@ -92,13 +117,13 @@ def run(
                 "attempt": clarification_state.attempts,
             }
 
-    trace_store.append_trace(TraceEvent(active_run_id, 0, "before", task, None, "started"))
+    trace_store.append_trace(TraceEvent(active_run_id, 0, "before", task, None, "started"), enforcement="observe")
     if fuse is not None:
         try:
             fuse.budget.check()
         except FuseTrippedError as exc:
             trace_store.append_trace(
-                TraceEvent(active_run_id, 0, "fuse", task, str(exc), "blocked")
+                TraceEvent(active_run_id, 0, "fuse", task, str(exc), "blocked"), enforcement="observe",
             )
             return {
                 "run_id": active_run_id,
@@ -114,7 +139,7 @@ def run(
             with fuse.deadline_guard():
                 output = agent_fn(task)
     except FuseTrippedError as exc:
-        trace_store.append_trace(TraceEvent(active_run_id, 1, "fuse", task, str(exc), "blocked"))
+        trace_store.append_trace(TraceEvent(active_run_id, 1, "fuse", task, str(exc), "blocked"), enforcement="observe")
         _persist_fuse(trace_store, active_run_id, fuse)
         return {
             "run_id": active_run_id,
@@ -124,7 +149,7 @@ def run(
             "attempt": clarification_state.attempts,
         }
     except Exception as exc:
-        trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, str(exc), "failed"))
+        trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, str(exc), "failed"), enforcement="observe")
         trace_store.append_receipt(active_run_id, f"RECEIPT run={active_run_id} status=failed")
         run_status = record_run_status(active_run_id, trace_store, failed=True)
         _persist_fuse(trace_store, active_run_id, fuse)
@@ -137,8 +162,8 @@ def run(
             "attempt": clarification_state.attempts,
         }
 
-    trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, output, "completed"))
-    trace_store.append_trace(TraceEvent(active_run_id, 2, "after", output, None, "completed"))
+    trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, output, "completed"), enforcement="observe")
+    trace_store.append_trace(TraceEvent(active_run_id, 2, "after", output, None, "completed"), enforcement="observe")
     trace_store.append_receipt(active_run_id, f"RECEIPT run={active_run_id} status=completed")
     run_status = record_run_status(active_run_id, trace_store, failed=False)
     _persist_fuse(trace_store, active_run_id, fuse)

@@ -219,6 +219,70 @@ class InputHandlingTest(unittest.TestCase):
         json.dumps(payload)
 
 
+RAW_NETWORK = """
+import requests
+from urllib.request import urlopen
+
+def pay(req):
+    requests.post("https://api.stripe.com/v1/refunds", json={"amount": 4000})
+    urlopen(req)
+"""
+
+
+class DetectionBreadthTest(unittest.TestCase):
+    """A hand-rolled HTTP call moves money just as much as a provider SDK."""
+
+    def test_raw_network_calls_are_flagged(self) -> None:
+        report = scan_code(write_app(RAW_NETWORK))
+        self.assertIs(report.status, Status.FAIL, report.render())
+        calls = next(f for f in report.findings if f.name.startswith("provider calls"))
+        self.assertEqual(calls.status, Status.FAIL)
+        joined = " ".join(calls.locations)
+        self.assertIn("requests.post", joined)
+        self.assertIn("urlopen", joined)
+
+    def test_run_path_is_reported_when_enforced(self) -> None:
+        import sqlite3
+
+        path = Path(tempfile.mkdtemp()) / "enforced.db"
+        from safety_layer.runtime.session import session
+
+        with session(store=TraceStore(path)) as ctx:
+            tool = ctx.tool(lambda **k: {"status": "ok"}, action="lookup", risk="read")
+            tool(order_id="ORD-1")
+
+        report = audit_database(path)
+        run_path = next(f for f in report.findings if f.name == "run path")
+        self.assertIs(run_path.status, Status.PASS, report.render())
+        assert sqlite3 is not None
+
+    def test_observe_only_run_is_reported_as_a_failure(self) -> None:
+        """The gap `run()` leaves is now visible after the fact."""
+        path = Path(tempfile.mkdtemp()) / "observed.db"
+        from safety_layer import run
+
+        run(lambda task: "done", "smoke", store=TraceStore(path))
+
+        report = audit_database(path)
+        run_path = next(f for f in report.findings if f.name == "run path")
+        self.assertIs(run_path.status, Status.FAIL, report.render())
+        self.assertIn("does not enforce", run_path.detail + " ".join(run_path.locations))
+
+    def test_run_warns_that_it_enforces_nothing(self) -> None:
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "from safety_layer import run\nrun(lambda t: 'done', 'smoke')\n"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("enforces nothing", result.stderr)
+        self.assertIn("session()", result.stderr)
+
+
 class CommandTest(unittest.TestCase):
     """The command's exit code is what a build reads."""
 

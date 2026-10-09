@@ -129,6 +129,21 @@ _BYPASS_MODULES = frozenset(
     }
 )
 
+# Calls that reach the network directly, bypassing the layer. These are the
+# shapes that move money or data without a receipt, whichever SDK is used.
+_NETWORK_CALLS = (
+    "requests.post(",
+    "requests.put(",
+    "requests.patch(",
+    "requests.delete(",
+    "httpx.post(",
+    "httpx.put(",
+    "httpx.patch(",
+    "httpx.delete(",
+    "urllib.request.urlopen(",
+    "urlopen(",
+)
+
 # Calls that name a provider method directly rather than going through a
 # guarded tool. The sanctioned interface methods (`execute`, `find`) are
 # deliberately absent: calling them from inside a `ctx.tool` wrapper is the
@@ -238,6 +253,13 @@ def scan_code(root: Path) -> Report:
                 for marker in _PROVIDER_CALLS:
                     if marker in rendered:
                         bare_provider_calls.append(f"{relative}:{node.lineno} {rendered}")
+                source = ast.unparse(node.func) if hasattr(ast, "unparse") else rendered
+                for marker in _NETWORK_CALLS:
+                    if marker.rstrip("(") in source and marker not in source:
+                        # e.g. requests.post(...) written as a bare name
+                        bare_provider_calls.append(
+                            f"{relative}:{node.lineno} {source}"
+                        )
 
     report.add(
         Finding(
@@ -366,6 +388,37 @@ def audit_database(path: Path) -> Report:
                 Status.PASS,
                 f"{len(rows)} action(s) recorded, {len(destructive)} of them "
                 f"looking irreversible",
+            )
+        )
+
+        # Now that the path is persisted, an audit can finally answer whether
+        # these runs were protected or merely recorded.
+        modes = [row["enforcement"] for row in rows]
+        observed = sum(1 for mode in modes if mode == "observe")
+        enforced = sum(1 for mode in modes if mode == "enforced")
+        unknown = sum(1 for mode in modes if mode is None)
+        if observed and enforced or observed:
+            run_path_status = Status.FAIL
+        elif enforced:
+            run_path_status = Status.PASS
+        else:
+            run_path_status = Status.INCONCLUSIVE
+        report.add(
+            Finding(
+                "run path",
+                run_path_status,
+                (
+                    f"{enforced} enforced, {observed} observe-only, {unknown} "
+                    f"unrecorded"
+                ),
+                (
+                    (
+                        f"{observed} action(s) were recorded by run(), which does "
+                        f"not enforce anything; use session() for protection"
+                    ),
+                )
+                if observed
+                else (),
             )
         )
 

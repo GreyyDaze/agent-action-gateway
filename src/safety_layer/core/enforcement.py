@@ -155,7 +155,8 @@ def _trace(ctx: EnforcementContext, event: str, output: Any, status: str) -> Non
             ctx.task or ctx.action,
             output,
             status,
-        )
+        ),
+            enforcement="enforced",
     )
 
 
@@ -328,7 +329,7 @@ def validate_result(
              "evidence_flags": list(flags), "missing": list(outcome.missing)},
             outcome.decision.lower(),
             flags=flags,
-        )
+        ), enforcement="enforced",
     )
     blocked = outcome.decision != "CONTINUE"
     return Decision(

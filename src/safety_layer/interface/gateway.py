@@ -188,7 +188,7 @@ class SafetyGateway:
         if decision is not None:
             output["decision"] = getattr(decision, "decision", str(decision))
         self.store.append_trace(
-            TraceEvent(self.run_id, 3, event, "gateway", redact(output), "completed")
+            TraceEvent(self.run_id, 3, event, "gateway", redact(output), "completed"), enforcement="enforced",
         )
 
 

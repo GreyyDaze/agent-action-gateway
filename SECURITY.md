@@ -47,7 +47,16 @@ one that does not exist:
   function, so there is nothing to bypass — but that only holds for tools handed
   over by the session.
 - **`run()` is observation only.** It records a trace; it does not authorize.
-  Use `session()` when you want enforcement.
+  Use `session()` when you want enforcement. `run()` now warns on stderr the
+  first time it is called in a process, and every trace it writes records
+  `enforcement="observe"`, so `safety check --db` can report an unprotected
+  run after the fact.
+- **An audit cannot see an action that never reached the layer.** If an agent
+  calls a provider directly, no trace is written and there is nothing to find.
+  `safety check --app` inspects the code for this; `safety check --db` cannot,
+  and reports `INCONCLUSIVE` rather than a pass when a database has no traces.
+  Detecting bypasses is static analysis over a fixed set of provider clients and
+  direct network calls, so an unrecognised shape may pass unnoticed.
 - **The library cannot constrain its own process.** Code running in the same
   interpreter can reach the database directly. Use the gateway when the caller
   must not hold the upstream credential.
@@ -66,4 +75,8 @@ one that does not exist:
 - **A tool that raises propagates its own exception.** The guard does not mask
   it, so a crash inside an adopter's function surfaces as a failed run rather
   than a silent block.
-- **Beta.** The version has not been independently audited.
+- **Beta.** The version has not been independently audited. What stands in its
+  place is automated: seven labelled guarantee suites (`make proof`), a static
+  check of the adopter's own wiring (`safety check`), and CI across Python
+  3.11–3.13. None of that is an independent review of the design, and it should
+  not be read as one.

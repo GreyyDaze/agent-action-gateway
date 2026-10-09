@@ -105,16 +105,32 @@ class TraceStore(SqliteStore):
         else:
             yield 2, []
 
-    def append_trace(self, event: TraceEvent) -> int:
-        """Persist a trace event after deterministic redaction."""
+        # v3: record which path a run took. Without this persisted, an audit
+        # cannot answer after the fact whether a run was enforced or merely
+        # observed, which is the difference between "recorded" and "protected".
+        after_v2 = existing | {
+            _added_column(stmt) for stmt in additions
+        }
+        enforcement = "ALTER TABLE trace_events ADD COLUMN enforcement TEXT"
+        if not after_v2 or "enforcement" not in after_v2:
+            yield 3, [enforcement]
+        else:
+            yield 3, []
+
+    def append_trace(self, event: TraceEvent, *, enforcement: str | None = None) -> int:
+        """Persist a trace event after deterministic redaction.
+
+        `enforcement` records which path produced this event: "enforced" when a
+        session checked it, "observe" when the run only recorded it.
+        """
         with self.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO trace_events(
                     run_id, step, event, input_json, output_json, status,
                     flags_json, capture_class, provider_metadata_json,
-                    provider_evidence_json, replay_of_trace_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    provider_evidence_json, replay_of_trace_id, enforcement
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.run_id,
@@ -128,6 +144,7 @@ class TraceStore(SqliteStore):
                     json.dumps(redact(event.provider_metadata or {}), sort_keys=True),
                     json.dumps(redact(event.provider_evidence or {}), sort_keys=True),
                     event.replay_of_trace_id,
+                    enforcement,
                 ),
             )
             return int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
