@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from .gateway import GatewayPolicy
 
 import argparse
+import json
 from pathlib import Path
 
 from ..evidence.failure_wall import build_failure_wall
@@ -15,6 +16,16 @@ from ..providers.refund_demo_agent import make_refund_agent
 from ..runtime.orchestrator import run
 from ..storage.traces import TraceStore
 from .gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_USAGE
+from .wiring import Status, run_check
+
+
+def announce(scope: str) -> None:
+    """State what a command is about, before its output.
+
+    Without this, a green result reads as a verdict on the reader's agent when
+    it is only ever a statement about a database, a config or a demo.
+    """
+    print(f"SCOPE: {scope}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,25 +35,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = sub.add_parser("run", help="run the bundled refund agent through the safety layer")
+    check = sub.add_parser(
+        "check",
+        help="verify that your agent's tools are actually wrapped (about your code)",
+    )
+    check.add_argument(
+        "--app",
+        help="your agent entry point as module:callable, or a path to scan",
+    )
+    check.add_argument(
+        "--db",
+        help="a trace database to audit for actions that bypassed the layer",
+    )
+    check.add_argument("--format", choices=("text", "json"), default="text")
+
+    run_parser = sub.add_parser("run", help="run the bundled demo agent through the safety layer")
     run_parser.add_argument("task", nargs="?", default="Process the refund for Ava")
     run_parser.add_argument("--db", default="data/runtime.db")
 
-    chaos = sub.add_parser("chaos", help="run the crash-injection proof (receipt book)")
-    chaos.add_argument("--jobs", type=int, default=1000)
-
-    proof = sub.add_parser("proof", help="run every verification suite")
-    proof.add_argument("--jobs", type=int, default=1000)
-
-    gate = sub.add_parser("gate", help="run regression-gate commands")
+    gate = sub.add_parser(
+        "gate",
+        help="run regression-gate commands; see `gate --help` for its own scope",
+    )
     gate.add_argument("args", nargs=argparse.REMAINDER)
 
-    wall = sub.add_parser("wall", help="group persisted failures from a trace database")
+    wall = sub.add_parser(
+        "wall",
+        help="group the failures recorded in your run database",
+    )
     wall.add_argument("--db", default="data/runtime.db")
 
     gateway = sub.add_parser(
         "gateway",
-        help="serve the HTTP gateway: deny-by-default routes holding upstream keys",
+        help="serve the HTTP gateway for your routes (it holds the upstream keys)",
     )
     gateway.add_argument("--config", required=True, help="YAML or JSON route table")
     gateway.add_argument("--db", default="data/runtime.db")
@@ -92,10 +117,10 @@ def load_route_policy(path: str) -> GatewayPolicy:
 def run_gateway(args: argparse.Namespace) -> int:
 
     from ..interface.gateway import build_gateway_server
-    from ..storage.traces import TraceStore as Store
+    from ..storage.traces import TraceStore
 
     policy = load_route_policy(args.config)
-    server, handler = build_gateway_server(Store(args.db), policy, args.host, args.port)
+    server, handler = build_gateway_server(TraceStore(args.db), policy, args.host, args.port)
     print(f"Safety gateway on http://{args.host}:{server.server_address[1]}/")
     print(f"access token: {getattr(handler, 'access_token', '')}")
     print(f"registered routes: {len(policy.routes)} (anything else is refused)")
@@ -159,21 +184,34 @@ def _delegate(prog: str, args: list[str], module: str, attr: str = "main") -> in
     return EXIT_PASS
 
 
+def _run_check(args: argparse.Namespace) -> int:
+    """Report on the caller's own integration, never on the library."""
+    report = run_check(app=args.app, db=args.db)
+    if args.format == "json":
+        print(json.dumps(report.as_dict(), indent=2))
+    else:
+        print(report.render())
+    if report.status is Status.PASS:
+        return EXIT_PASS
+    return EXIT_FAIL
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.command == "check":
+        return _run_check(args)
     if args.command == "run":
+        announce("bundled demo — no agent or data of yours is tested here.")
         return run_demo(args)
-    if args.command == "chaos":
-        return _delegate("safety chaos", ["--jobs", str(args.jobs)], "chaos")
-    if args.command == "proof":
-        return _delegate("safety proof", ["--jobs", str(args.jobs)], "proof")
     if args.command == "gate":
         return _delegate("safety gate", list(args.args), "gate_cli", "gate")
     if args.command == "wall":
+        announce("your run history — the failures recorded in your database.")
         return run_wall(args)
     if args.command == "gateway":
+        announce("your route config — the gateway holds the upstream credentials.")
         return run_gateway(args)
 
     parser.error("unknown command")

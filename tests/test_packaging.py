@@ -15,10 +15,13 @@ def test_module_cli_exposes_packaging_commands() -> None:
         text=True,
         check=True,
     )
+    assert "check" in result.stdout
     assert "run" in result.stdout
-    assert "chaos" in result.stdout
     assert "gate" in result.stdout
     assert "wall" in result.stdout
+    # Framework self-verification is not part of the user CLI.
+    assert "chaos" not in result.stdout
+    assert "proof" not in result.stdout
 
 
 def test_module_cli_wall_is_safe_on_empty_database(tmp_path: Path) -> None:
@@ -36,7 +39,8 @@ def test_module_cli_wall_is_safe_on_empty_database(tmp_path: Path) -> None:
         text=True,
         check=True,
     )
-    assert result.stdout.strip() == "groups=0"
+    assert "SCOPE: your run history" in result.stdout
+    assert result.stdout.strip().endswith("groups=0")
 
 
 def test_evaluation_artifacts_load_from_package_resources() -> None:
@@ -63,18 +67,19 @@ def test_packaged_artifacts_are_not_loaded_from_repo_checkout() -> None:
         assert package_root in resolved.parents
 
 
-def test_proof_command_runs_and_prints_phase_proofs() -> None:
-    """The proof command must execute, not just appear in --help.
+def test_proof_suite_runs_and_prints_every_guarantee() -> None:
+    """The proof suite must execute, not just appear in --help.
 
-    The command previously crashed with UnboundLocalError because the branch
-    used `sys` without importing it, while --help tests still passed.
+    It moved out of the installed CLI to `make proof` because it reports on
+    this library rather than on an adopter, but it still has to run. It
+    previously crashed with UnboundLocalError because the branch used `sys`
+    without importing it, while --help tests still passed.
     """
     result = subprocess.run(
         [
             sys.executable,
             "-m",
-            "safety_layer",
-            "proof",
+            "safety_layer.proofs.proof",
             "--jobs",
             "1",
         ],
@@ -83,10 +88,12 @@ def test_proof_command_runs_and_prints_phase_proofs() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stderr
+    assert "SCOPE: this library itself" in result.stdout
     assert "CRASH SAFETY" in result.stdout
     assert "ALL GUARANTEES HOLD" in result.stdout
     # Labelled by guarantee, so the output is meaningful without the build plan.
     for guarantee in (
+        "ADOPTION CONTRACT",
         "APPROVAL SAFETY",
         "REGRESSION GATE",
         "STOP RULES",

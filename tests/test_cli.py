@@ -23,19 +23,34 @@ ROOT = Path(__file__).resolve().parents[1]
 class ParserTest(unittest.TestCase):
     def test_every_documented_command_is_registered(self) -> None:
         parser = cli.build_parser()
-        for command in ("run", "chaos", "proof", "gate", "wall"):
+        for command in ("check", "run", "gate", "wall", "gateway"):
             with self.subTest(command=command):
                 self.assertIn(command, parser.format_help())
+
+    def test_framework_verification_is_not_a_user_command(self) -> None:
+        """Self-verification belongs to `make`, not to an installed CLI.
+
+        A command with no adopter input cannot report on the adopter, so
+        shipping it invites a green result to be read as a verdict on their
+        integration.
+        """
+        help_text = cli.build_parser().format_help()
+        for command in ("proof", "chaos"):
+            with self.subTest(command=command):
+                self.assertNotIn(command, help_text)
+                with self.assertRaises(SystemExit):
+                    cli.build_parser().parse_args([command])
 
     def test_run_defaults_to_the_demo_task(self) -> None:
         args = cli.build_parser().parse_args(["run"])
         self.assertEqual(args.task, "Process the refund for Ava")
         self.assertEqual(args.db, "data/runtime.db")
 
-    def test_chaos_and_proof_default_to_1000_jobs(self) -> None:
-        parser = cli.build_parser()
-        self.assertEqual(parser.parse_args(["chaos"]).jobs, 1000)
-        self.assertEqual(parser.parse_args(["proof"]).jobs, 1000)
+    def test_check_defaults_to_text_output(self) -> None:
+        args = cli.build_parser().parse_args(["check"])
+        self.assertEqual(args.format, "text")
+        self.assertIsNone(args.app)
+        self.assertIsNone(args.db)
 
     def test_gate_forwards_remaining_arguments(self) -> None:
         args = cli.build_parser().parse_args(["gate", "check", "--lane", "full"])
@@ -92,7 +107,9 @@ class WallCommandTest(unittest.TestCase):
             with contextlib.redirect_stdout(buffer):
                 code = cli.main(["wall", "--db", str(Path(directory) / "empty.db")])
             self.assertEqual(code, EXIT_PASS)
-            self.assertEqual(buffer.getvalue().strip(), "groups=0")
+            output = buffer.getvalue()
+            self.assertIn("SCOPE: your run history", output)
+            self.assertIn("groups=0", output)
 
     def test_failed_trace_is_grouped(self) -> None:
         from safety_layer.runtime.records import TraceEvent
@@ -133,7 +150,8 @@ class SubprocessTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = self._run("wall", "--db", str(Path(directory) / "e.db"))
             self.assertEqual(result.returncode, 0)
-            self.assertEqual(result.stdout.strip(), "groups=0")
+            self.assertIn("SCOPE: your run history", result.stdout)
+            self.assertIn("groups=0", result.stdout)
 
 
 if __name__ == "__main__":

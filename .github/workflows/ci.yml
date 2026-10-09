@@ -104,4 +104,4 @@ jobs:
           python -m pip install ".[dev]"
 
       - name: Reproduce the verification suites
-        run: python -m safety_layer proof --jobs 200
+        run: python -m safety_layer.proofs.proof --jobs 200

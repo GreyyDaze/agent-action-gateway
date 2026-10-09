@@ -51,14 +51,20 @@ def _candidate_from_file(path: str):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gate", description="Regression gate")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    check = subparsers.add_parser("check", help="run the regression gate")
+    check = subparsers.add_parser(
+        "check",
+        help="score your agent against your saved baseline (about your cases)",
+    )
     check.add_argument("--lane", choices=("push", "full"), default="push")
     check.add_argument("--candidate-version", required=True)
     check.add_argument("--candidate-file", required=True)
     check.add_argument("--db", default="data/evaluations.db")
     check.add_argument("--record-baseline", action="store_true")
     check.add_argument("--judge-model", default=DEFAULT_GEMINI_MODEL)
-    calibrate = subparsers.add_parser("calibrate", help="run the human-labeled judge calibration set")
+    calibrate = subparsers.add_parser(
+        "calibrate",
+        help="measure your judge model against hand-labelled examples",
+    )
     calibrate.add_argument("--judge-model", default=DEFAULT_GEMINI_MODEL)
     check.add_argument(
         "--unchanged",
@@ -218,6 +224,12 @@ def _print_unchanged_proof(results, repeat: int, *, status: str) -> None:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    scope = (
+        "your evaluation cases"
+        if args.command == "check"
+        else "your judge model's agreement with hand-labelled examples"
+    )
+    print(f"SCOPE: {scope}.")
     if args.command == "calibrate":
         raise SystemExit(run_calibrate(args))
     raise SystemExit(run_check(args))

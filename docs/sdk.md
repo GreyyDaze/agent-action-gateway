@@ -279,7 +279,9 @@ From outside the repository, after installing the package:
 ```bash
 python -c 'from safety_layer import run; print(run(lambda task: f"handled: {task}", "smoke"))'
 safety --help
-safety proof --jobs 1000
+safety check --db data/runtime.db
 ```
 
-For the full acceptance workflow, use the recorded proof in `docs/history/release-proof.md`.
+`safety check` reports on your own integration. Evidence about this library is
+published in the CI badge and in `docs/history/release-proof.md`; regenerate it
+from a source checkout with `make proof`.

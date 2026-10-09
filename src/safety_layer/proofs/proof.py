@@ -37,6 +37,11 @@ def find_repo_root(start: Path | None = None) -> Path:
 # number, so the output is meaningful to someone who has never seen the plan.
 PROOFS = (
     (
+        "ADOPTION CONTRACT",
+        ["tests/test_adoption_contract.py"],
+        "guarded tools are the only path; unapproved actions never execute",
+    ),
+    (
         "APPROVAL SAFETY",
         ["tests/test_approvals.py"],
         "0 destructive executions without valid fresh approval",
@@ -82,6 +87,7 @@ def run_proofs(jobs: int, *, root: Path | None = None) -> None:
         [sys.executable, "-m", "safety_layer.proofs.chaos", "--jobs", str(jobs)],
         repo_root,
     )
+    print("SCOPE: this library itself — no adopter's agent or data is tested.\n")
     print(f"CRASH SAFETY: PASS | 0 dupes / {jobs} crash jobs")
     for guarantee, paths, statement in PROOFS:
         _run([sys.executable, "-m", "pytest", "-q", *paths], repo_root)
@@ -90,7 +96,10 @@ def run_proofs(jobs: int, *, root: Path | None = None) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="safety proof", description="Reproduce the deterministic verification suites.")
+    parser = argparse.ArgumentParser(
+        prog="make proof",
+        description="Run this library's own verification suites (repo tests, not an adopter's integration).",
+    )
     parser.add_argument("--jobs", type=int, default=1000)
     args = parser.parse_args(argv)
     if args.jobs < 1:

@@ -285,3 +285,62 @@ class PublicSurfaceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CommandScopeClarityTest(unittest.TestCase):
+    """A command must say what it reports on, before it reports a result.
+
+    A green result reads as a verdict on the reader's agent unless the command
+    states its subject first. These guard the `SCOPE:` convention and the rule
+    that framework self-verification is not shipped as a user command.
+    """
+
+    def _run_cli(self, *args: str) -> str:
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-m", "safety_layer", *args],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout
+
+    def test_check_states_its_scope(self) -> None:
+        out = self._run_cli("check")
+        self.assertIn("SCOPE:", out)
+        self.assertIn("does not re-verify the library itself", out)
+
+    def test_run_says_it_tests_nothing_of_the_readers(self) -> None:
+        out = self._run_cli("run")
+        self.assertIn("SCOPE:", out)
+        self.assertIn("no agent or data of yours is tested", out)
+
+    def test_wall_states_its_scope(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = self._run_cli("wall", "--db", f"{tmp}/runtime.db")
+        self.assertIn("SCOPE:", out)
+        self.assertIn("your run history", out)
+
+    def test_framework_verification_is_absent_from_the_cli(self) -> None:
+        import subprocess
+        import sys
+
+        help_text = subprocess.run(
+            [sys.executable, "-m", "safety_layer", "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        ).stdout
+        for command in ("proof", "chaos"):
+            with self.subTest(command=command):
+                self.assertNotIn(command, help_text)
+
+    def test_makefile_provides_framework_verification(self) -> None:
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        for target in ("proof:", "chaos:"):
+            with self.subTest(target=target):
+                self.assertIn(target, makefile)

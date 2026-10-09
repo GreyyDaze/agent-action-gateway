@@ -1,5 +1,7 @@
 # Agent Safety Layer
 
+[![CI](https://github.com/GreyyDaze/agent-safety-eval-layer/actions/workflows/ci.yml/badge.svg)](https://github.com/GreyyDaze/agent-safety-eval-layer/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/agent-safety-eval-layer.svg)](https://pypi.org/project/agent-safety-eval-layer/) [![Python](https://img.shields.io/pypi/pyversions/agent-safety-eval-layer.svg)](https://pypi.org/project/agent-safety-eval-layer/)
+
 Prevention-first safety and evaluation layer for AI agents.
 
 **Core rule:** AI proposes. Deterministic code verifies and enforces. Humans approve high-impact actions.
@@ -66,20 +68,44 @@ know about are not enforced. Use `session()` when you want protection.
 ## CLI
 
 ~~~bash
-safety run "Process the refund for Ava"
-safety chaos --jobs 1000
-safety gate check --lane push --candidate-version v1 --candidate-file tests/fixtures/evaluation-good-candidate.json
-safety wall --db data/runtime.db
+safety check --app myproject.agent:build     # is your agent actually wrapped?
+safety run "Process the refund for Ava"       # run the bundled demo
+safety gate check --lane push --candidate-version v1 --candidate-file answers.json
+safety wall --db data/runtime.db             # group the failures you recorded
 ~~~
 
-The commands are thin interfaces over the existing implementation. Safety policy is not duplicated in the CLI.
+Every command prints a `SCOPE:` line first, saying what it is reporting on.
+Each one takes your code, your cases, your database or your config as input.
 
-### Reproduce the verification proofs
+### `safety check` — is your agent actually wrapped?
 
-From the repository root after installation:
+The library's own suites prove the enforcement path works. They cannot show
+whether *your* application routes actions through it, so this command inspects
+yours:
 
 ~~~bash
-safety proof --jobs 1000
+safety check --app myproject/agent.py     # static scan of your code
+safety check --db data/runtime.db        # audit of actions you recorded
+~~~
+
+It reports tools wrapped with `ctx.tool`, direct provider imports, and provider
+calls made outside a wrapper, each with a file and line. Exit code `0` when
+everything passes, `1` otherwise, `--format json` for CI.
+
+A database with nothing in it reports `INCONCLUSIVE`, not `PASS`: an action
+that bypassed the layer leaves no trace, so an empty database cannot show that
+nothing is unguarded.
+
+### Reproducing this library's own verification
+
+Framework self-verification is **not** a command in the installed CLI, because
+it reports on this library rather than on you. Evidence about the library lives
+in the CI badge above and in `docs/history/release-proof.md`. To regenerate it
+from a source checkout:
+
+~~~bash
+make proof        # or: python -m safety_layer.proofs.proof --jobs 1000
+make chaos        # or: python -m safety_layer.proofs.chaos --jobs 1000
 ~~~
 
 This runs the deterministic crash-recovery proof and the remaining verification suites. It prints one labeled result per safety guarantee and exits non-zero on failure.
@@ -132,21 +158,6 @@ a task, the expected answer, and how to compare them.
 A golden set needs at least 10 cases and at least one catastrophic case; there
 is no upper limit. The bundled `golden-v1.json` is a worked example using
 refunds, not a template you are expected to keep.
-
-## Verification results
-
-| Guarantee | Proof |
-|---|---|
-| **Crash safety** | `0 dupes / 1,000 crash jobs` |
-| **Approval safety** | `0 destructive executions without valid fresh approval` |
-| **Regression gate** | calibration `6/6 = 100%`; good candidate `PASS, score=1.0000`; catastrophic candidate `FAIL, score=0.9667`; unchanged proof `10/10, false-fails=0`; cost `$0.0004` / `0.8840 min` |
-| **Stop rules** | defined ambiguity traps caught, zero false stops on the legitimate suite |
-| **Budgets and loops** | zero budget overruns in the concurrency proof; loop detection passes |
-| **Failure wall** | planted silent-wrong cases flagged; deterministic groups separate equivalent and distinct signatures |
-
-The exact proof output belongs to the verification commands. Do not treat a green unit test as a stronger claim than the proof it actually runs.
-
-The complete recorded evidence is in `docs/history/release-proof.md`.
 
 ## SDK integration boundary
 
@@ -218,6 +229,24 @@ fresh install -> full suite green -> all proof numbers reproducible
 ~~~
 
 The final human acceptance step is a cold README walkthrough in a clean machine or sandbox. See `docs/history/release-proof.md`.
+
+## Framework evidence
+
+*The table below is evidence about **this library**, not about your integration.*
+
+| Guarantee | Proof |
+|---|---|
+| **Adoption contract** | guarded tools are the only path; unapproved actions never execute |
+| **Crash safety** | `0 dupes / 1,000 crash jobs` |
+| **Approval safety** | `0 destructive executions without valid fresh approval` |
+| **Regression gate** | calibration `6/6 = 100%`; good candidate `PASS, score=1.0000`; catastrophic candidate `FAIL, score=0.9667`; unchanged proof `10/10, false-fails=0`; cost `$0.0004` / `0.8840 min` |
+| **Stop rules** | defined ambiguity traps caught, zero false stops on the legitimate suite |
+| **Budgets and loops** | zero budget overruns in the concurrency proof; loop detection passes |
+| **Failure wall** | planted silent-wrong cases flagged; deterministic groups separate equivalent and distinct signatures |
+
+The exact proof output belongs to the verification commands. Do not treat a green unit test as a stronger claim than the proof it actually runs.
+
+The complete recorded evidence is in `docs/history/release-proof.md`.
 
 ## Architecture
 
