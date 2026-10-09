@@ -370,20 +370,28 @@ def audit_database(path: Path) -> Report:
         )
 
         if "receipts" in tables:
-            receipts = connection.execute("SELECT * FROM receipts").fetchall()
-            unresolved = [
-                r for r in receipts if str(dict(r)).find("unknown") >= 0
-            ]
+            total = connection.execute("SELECT COUNT(*) FROM receipts").fetchone()[0]
+            # A receipt left in a non-terminal state means an action was
+            # interrupted after it may already have taken effect.
+            terminal = ("done", "failed", "resolved")
+            placeholders = ",".join("?" for _ in terminal)
+            unresolved = connection.execute(
+                f"SELECT intent_key, state FROM receipts "  # noqa: S608 - fixed shape
+                f"WHERE state NOT IN ({placeholders})",
+                terminal,
+            ).fetchall()
             report.add(
                 Finding(
                     "receipts",
                     Status.PASS if not unresolved else Status.FAIL,
                     (
-                        f"{len(receipts)} receipt(s), all resolved"
+                        f"{total} receipt(s), all in a terminal state"
                         if not unresolved
-                        else f"{len(unresolved)} receipt(s) left unresolved; an "
-                        f"interrupted action may have taken effect"
+                        else f"{len(unresolved)} of {total} receipt(s) left "
+                        f"unresolved ({', '.join(sorted({str(r['state']) for r in unresolved}))}); "
+                        f"an interrupted action may have taken effect"
                     ),
+                    tuple(f"{r['intent_key']} is {r['state']}" for r in unresolved[:5]),
                 )
             )
         else:

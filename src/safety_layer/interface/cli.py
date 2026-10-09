@@ -8,6 +8,7 @@ if TYPE_CHECKING:
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from ..evidence.failure_wall import build_failure_wall
@@ -53,9 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("task", nargs="?", default="Process the refund for Ava")
     run_parser.add_argument("--db", default="data/runtime.db")
 
+    # add_help=False so `--help` and every other flag reach the gate parser
+    # untouched; argparse would otherwise intercept them here. `main` also
+    # dispatches this branch before parsing, so nothing is validated twice.
     gate = sub.add_parser(
         "gate",
-        help="run regression-gate commands; see `gate --help` for its own scope",
+        help="run regression-gate commands; try `safety gate --help`",
+        add_help=False,
     )
     gate.add_argument("args", nargs=argparse.REMAINDER)
 
@@ -159,19 +164,19 @@ def run_wall(args: argparse.Namespace) -> int:
 def _delegate(prog: str, args: list[str], module: str, attr: str = "main") -> int:
     """Run a subcommand's implementation with `sys.argv` set for its parser.
 
-    The proof scripts are excluded from the published wheel, so they are
-    imported here rather than at module scope: an installed package still gets
-    a working CLI, and only these developer commands report the absence.
+    `module` is a full dotted path. Importing here rather than at module scope
+    keeps the parser importable even where the implementation is absent, so
+    `--help` still works in a stripped environment.
     """
     import importlib
     import sys
 
     try:
-        entry = getattr(importlib.import_module(f"safety_layer.proofs.{module}"), attr)
+        entry = getattr(importlib.import_module(module), attr)
     except ImportError:
         print(
-            f"{prog} is a developer verification command and is not part of the "
-            "installed package; run it from a source checkout.",
+            f"{prog} could not load {module}; the installed package appears "
+            "incomplete.",
             file=sys.stderr,
         )
         return EXIT_FAIL
@@ -197,16 +202,22 @@ def _run_check(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    # The gate branch is a pass-through, so it must skip this parser entirely:
+    # anything after `gate` belongs to the gate parser, not to this one.
+    if raw and raw[0] == "gate":
+        return _delegate(
+            "safety gate", raw[1:], "safety_layer.interface.gate_cli", "main"
+        )
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw)
 
     if args.command == "check":
         return _run_check(args)
     if args.command == "run":
         announce("bundled demo — no agent or data of yours is tested here.")
         return run_demo(args)
-    if args.command == "gate":
-        return _delegate("safety gate", list(args.args), "gate_cli", "gate")
     if args.command == "wall":
         announce("your run history — the failures recorded in your database.")
         return run_wall(args)

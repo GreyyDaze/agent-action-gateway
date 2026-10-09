@@ -100,6 +100,47 @@ class RunCommandTest(unittest.TestCase):
                 self.assertEqual(code, EXIT_FAIL)
 
 
+class DelegationTest(unittest.TestCase):
+    """`safety gate` must actually reach its implementation.
+
+    It once imported from `safety_layer.proofs.gate_cli`, which does not exist,
+    so every invocation printed an "is a developer verification command" notice
+    and exited 1. The parser tests and `--help` tests passed throughout.
+    """
+
+    def test_delegate_resolves_a_full_module_path(self) -> None:
+        import importlib
+
+        for module in ("safety_layer.interface.gate_cli",):
+            with self.subTest(module=module):
+                self.assertTrue(hasattr(importlib.import_module(module), "main"))
+
+    def test_gate_subcommand_is_not_a_dead_end(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "safety_layer", "gate", "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("developer verification command", result.stderr)
+        self.assertIn("check", result.stdout)
+
+    def test_no_subcommand_reports_itself_unavailable(self) -> None:
+        """The unavailability notice is reserved for genuinely missing code."""
+        for args in (["gate", "--help"], ["check"], ["wall", "--db", "/nonexistent.db"]):
+            with self.subTest(args=args):
+                result = subprocess.run(
+                    [sys.executable, "-m", "safety_layer", *args],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotIn(
+                    "developer verification command", result.stderr + result.stdout
+                )
+
+
 class WallCommandTest(unittest.TestCase):
     def test_empty_database_reports_zero_groups(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

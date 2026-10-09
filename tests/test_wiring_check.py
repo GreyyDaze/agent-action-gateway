@@ -146,6 +146,49 @@ class DatabaseAuditTest(unittest.TestCase):
         self.assertIs(report.status, Status.INCONCLUSIVE, report.render())
         self.assertIn("not evidence", report.render())
 
+    def test_unresolved_receipt_is_reported_as_a_failure(self) -> None:
+        """An interrupted action may already have taken effect."""
+        import sqlite3
+
+        path = Path(tempfile.mkdtemp()) / "interrupted.db"
+        store = TraceStore(path)
+        receipt = store.create_receipt("run-x", "step-1", "external_action", {"target": "ORD-1"})
+        connection = sqlite3.connect(path)
+        connection.execute(
+            "INSERT INTO trace_events "
+            "(run_id, step, event, input_json, output_json, status) "
+            "VALUES (?,?,?,?,?,?)",
+            ("run-x", 1, "refund", "{}", '{"order_id": "ORD-1"}', "allowed"),
+        )
+        connection.commit()
+        connection.close()
+
+        report = audit_database(path)
+        receipts = next(f for f in report.findings if f.name == "receipts")
+        self.assertIs(receipts.status, Status.FAIL, report.render())
+        self.assertIn(receipt.intent_key, receipts.locations[0])
+
+    def test_resolved_receipt_passes(self) -> None:
+        path = Path(tempfile.mkdtemp()) / "resolved.db"
+        store = TraceStore(path)
+        receipt = store.create_receipt("run-y", "step-1", "external_action", {"target": "ORD-2"})
+        store.mark_done(receipt.intent_key, "ref-1")
+        import sqlite3
+
+        connection = sqlite3.connect(path)
+        connection.execute(
+            "INSERT INTO trace_events "
+            "(run_id, step, event, input_json, output_json, status) "
+            "VALUES (?,?,?,?,?,?)",
+            ("run-y", 1, "refund", "{}", '{"order_id": "ORD-2"}', "allowed"),
+        )
+        connection.commit()
+        connection.close()
+
+        report = audit_database(path)
+        receipts = next(f for f in report.findings if f.name == "receipts")
+        self.assertIs(receipts.status, Status.PASS, report.render())
+
     def test_populated_database_reports_actions(self) -> None:
         path = Path(tempfile.mkdtemp()) / "real.db"
         from safety_layer.runtime.session import session
