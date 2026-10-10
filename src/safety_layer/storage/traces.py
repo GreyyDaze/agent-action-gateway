@@ -70,6 +70,17 @@ CREATE TABLE IF NOT EXISTS run_budgets (
 );
 """
 
+_VIRTUAL_KEYS_TABLE = """
+CREATE TABLE IF NOT EXISTS virtual_keys (
+    key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    routes_json TEXT NOT NULL,
+    expires_at REAL,
+    revoked INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 _TRACE_COLUMNS = (
     "flags_json",
     "capture_class",
@@ -116,6 +127,9 @@ class TraceStore(SqliteStore):
             yield 3, [enforcement]
         else:
             yield 3, []
+
+        # v4: virtual keys table for gateway caller authentication
+        yield 4, [_VIRTUAL_KEYS_TABLE]
 
     def append_trace(self, event: TraceEvent, *, enforcement: str | None = None) -> int:
         """Persist a trace event after deterministic redaction.
@@ -356,7 +370,49 @@ class TraceStore(SqliteStore):
             provider_ref=row["provider_ref"],
         )
 
+    # Virtual key management methods
+    def save_virtual_key(self, key: str, name: str, routes: list[str], expires_at: float | None, revoked: bool = False) -> None:
+        """Save or update a virtual key."""
+        import json
+        with self.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO virtual_keys(key, name, routes_json, expires_at, revoked)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    name=excluded.name,
+                    routes_json=excluded.routes_json,
+                    expires_at=excluded.expires_at,
+                    revoked=excluded.revoked
+                """,
+                (key, name, json.dumps(routes), expires_at, int(revoked)),
+            )
 
+    def load_virtual_keys(self) -> list[dict]:
+        """Load all virtual keys from the database."""
+        import json
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT key, name, routes_json, expires_at, revoked FROM virtual_keys"
+            ).fetchall()
+            return [
+                {
+                    "key": row["key"],
+                    "name": row["name"],
+                    "routes": json.loads(row["routes_json"]),
+                    "expires_at": row["expires_at"],
+                    "revoked": bool(row["revoked"]),
+                }
+                for row in rows
+            ]
+
+    def revoke_virtual_key(self, key: str) -> bool:
+        """Revoke a virtual key. Returns True if key was found."""
+        with self.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE virtual_keys SET revoked=1 WHERE key=?", (key,)
+            )
+            return cursor.rowcount > 0
 
 
 def _added_column(statement: str) -> str:

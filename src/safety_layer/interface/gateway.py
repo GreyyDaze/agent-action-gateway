@@ -5,7 +5,7 @@ agent talks HTTP to us and we talk HTTP to the real service holding the key.
 
 That ordering is the whole security property. The agent never receives an
 upstream credential, so bypassing the gateway does not merely violate policy,
-it has nothing to bypass with.
+it has nothing to bypass with — when the gateway runs as its own service/container.
 
 Deny-by-default matches how action risk is handled: a route nobody
 registered is refused, never forwarded.
@@ -14,7 +14,10 @@ registered is refused, never forwarded.
 from __future__ import annotations
 
 import json
+import os
 import secrets
+import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -57,10 +60,36 @@ class Route:
 
         if not self.secret_env:
             return None
+        if self.secret_env.startswith("file:"):
+            path = self.secret_env[5:]
+            try:
+                st = os.stat(path)
+            except FileNotFoundError:
+                raise GatewayError(f"secret file not found: {path}") from None
+            if st.st_mode & 0o077:
+                raise GatewayError(
+                    f"secret file {path} must be 0600 (mode {oct(st.st_mode & 0o777)})"
+                ) from None
+            if st.st_uid != os.geteuid():
+                raise GatewayError(
+                    f"secret file {path} must be owned by gateway user (uid {os.geteuid()})"
+                ) from None
+            with open(path) as f:
+                return f.read().strip()
         value = os.environ.get(self.secret_env)
         if not value:
-            raise GatewayError(f"upstream credential missing: {self.secret_env}")
+            raise GatewayError(f"upstream credential missing: {self.secret_env}") from None
         return value
+
+
+@dataclass(frozen=True)
+class VirtualKey:
+    """A virtual key issued to an agent, mapped to allowed routes."""
+    key: str
+    name: str
+    routes: frozenset[str]
+    expires_at: float | None = None
+    revoked: bool = False
 
 
 @dataclass
@@ -69,12 +98,25 @@ class GatewayPolicy:
 
     routes: dict[str, Route] = field(default_factory=dict)
     session_environment: str = "dev"
+    master_key_env: str = ""
+    virtual_keys: dict[str, VirtualKey] = field(default_factory=dict)
 
     def register(self, route: Route) -> None:
         self.routes[route.path] = route
 
     def resolve(self, path: str) -> Route | None:
         return self.routes.get(path)
+
+    def validate_virtual_key(self, key: str) -> VirtualKey | None:
+        """Validate a virtual key, return it if valid."""
+        vk = self.virtual_keys.get(key)
+        if vk is None:
+            return None
+        if vk.revoked:
+            return None
+        if vk.expires_at is not None and time.time() > vk.expires_at:
+            return None
+        return vk
 
 
 @dataclass
@@ -104,8 +146,22 @@ class SafetyGateway:
         self.fuse = FuseController(FuseBudget(limits or FuseLimits(max_steps=500)))
         for route in policy.routes.values():
             self.registry.register(route.action, route.risk)
+        # Load virtual keys from persistent store
+        self._load_virtual_keys()
         self._transport = transport or _forward
         self._step = 0
+
+    def _load_virtual_keys(self) -> None:
+        """Load virtual keys from the trace store into the policy."""
+        for vk_data in self.store.load_virtual_keys():
+            vk = VirtualKey(
+                key=vk_data["key"],
+                name=vk_data["name"],
+                routes=frozenset(vk_data["routes"]),
+                expires_at=vk_data["expires_at"],
+                revoked=vk_data["revoked"],
+            )
+            self.policy.virtual_keys[vk.key] = vk
 
     def handle(
         self,
@@ -208,6 +264,11 @@ def _forward(
     except urllib.error.HTTPError as exc:
         raw = exc.read()
         status = int(exc.code)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        # The upstream could not be reached at all. This is not an approval or
+        # policy failure, so it must not be reported as one, and the caller
+        # still needs a reply: an unreadable action is not a completed one.
+        return 502, {"error": "upstream unreachable", "detail": str(exc)[:200]}
     try:
         body = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -220,6 +281,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
     gateway: SafetyGateway
     access_token: str = ""
+    #: Route registry plus caller auth. Injected by `build_gateway_server`;
+    #: declared here so the handler is usable and checkable on its own.
+    policy: GatewayPolicy
 
     def log_message(self, *args: object) -> None:
         return
@@ -240,9 +304,28 @@ class GatewayHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         header = self.headers.get("Authorization", "")
         presented = header[7:] if header.startswith("Bearer ") else None
-        if not presented or not secrets.compare_digest(presented, self.access_token):
+
+        # A virtual key is scoped to a route set; the master key and the
+        # per-process bootstrap token are not. Resolve which one this is before
+        # anything else, because the answer decides what is permitted.
+        virtual_key = self.policy.validate_virtual_key(presented) if presented else None
+        is_master = self._is_master(presented) if (presented and not virtual_key) else False
+        if virtual_key is None and not is_master and (
+            not presented or not secrets.compare_digest(presented, self.access_token)
+        ):
             self._denied(401, "gateway token required")
             return
+
+        # An unregistered path is refused outright. A scoped key that is valid
+        # for other routes must not be told whether this one exists.
+        route = self.policy.resolve(parsed.path)
+        if route is None:
+            self._denied(403, "route not registered")
+            return
+        if virtual_key is not None and route.path not in virtual_key.routes:
+            self._denied(403, f"virtual key not authorized for route: {parsed.path}")
+            return
+
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
@@ -261,6 +344,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
         )
         self._respond(result.status, result.body)
 
+    def _is_master(self, presented: str | None) -> bool:
+        """Whether the caller presented the master key from the environment."""
+        env_name = self.policy.master_key_env
+        if not presented or not env_name:
+            return False
+        master_key = os.environ.get(env_name)
+        if master_key is None:
+            return False
+        return secrets.compare_digest(presented, master_key)
+
 
 def build_gateway_server(
     store: TraceStore,
@@ -268,14 +361,61 @@ def build_gateway_server(
     host: str = "127.0.0.1",
     port: int = 0,
     token: str | None = None,
+    unix_socket: str | None = None,
 ) -> tuple[ThreadingHTTPServer, type[GatewayHandler]]:
+    main_module = sys.modules.get("__main__")
+    main_file = getattr(main_module, "__file__", None) if main_module else None
+    if not os.environ.get("SAFETY_GATEWAY") and main_file:
+        raise RuntimeError(
+            "Gateway cannot run embedded in application code. Launch via `safety gateway`."
+        )
     gateway = SafetyGateway(store, policy)
     handler = type(
         "BoundGatewayHandler",
         (GatewayHandler,),
-        {"gateway": gateway, "access_token": token or secrets.token_urlsafe(24)},
+        {"gateway": gateway, "access_token": token or secrets.token_urlsafe(24), "policy": policy},
     )
+    if unix_socket:
+        if os.path.exists(unix_socket):
+            os.unlink(unix_socket)
+        server = _UnixSocketServer(unix_socket, handler)
+        return server, handler
     return ThreadingHTTPServer((host, port), handler), handler
+
+
+class _UnixSocketServer(ThreadingHTTPServer):
+    def __init__(self, path: str, handler_class):
+        import socket
+        self.unix_socket_path = path
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(path)
+        sock.listen(128)
+        os.chmod(path, 0o660)
+        super().__init__(("127.0.0.1", 0), handler_class)
+        self.socket.close()
+        self.socket = sock
+
+    def get_request(self):
+        import socket
+        import struct
+        conn, _ = self.socket.accept()
+        # SO_PEERCRED check (Linux only)
+        try:
+            creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))  # type: ignore[attr-defined]
+            pid, uid, gid = struct.unpack("3i", creds)
+            if uid == os.geteuid():
+                conn.close()
+                raise GatewayError("no custody boundary: caller UID equals gateway UID")
+        except (AttributeError, OSError, struct.error):
+            # SO_PEERCRED not available on this platform
+            pass
+        return conn, ("local", 0)
+
+    def server_close(self):
+        import contextlib
+        super().server_close()
+        with contextlib.suppress(OSError):
+            os.unlink(self.unix_socket_path)
 
 
 __all__ = [
@@ -286,5 +426,6 @@ __all__ = [
     "SafetyGateway",
     "GatewayHandler",
     "build_gateway_server",
+    "VirtualKey",
     "EnforcementContext",
 ]

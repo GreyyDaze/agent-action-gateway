@@ -11,7 +11,10 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
+import urllib.error
+import urllib.request
 from datetime import UTC
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,6 +24,7 @@ from safety_layer.interface.gateway import (
     GatewayPolicy,
     Route,
     SafetyGateway,
+    VirtualKey,
     build_gateway_server,
 )
 from safety_layer.storage.traces import TraceStore
@@ -222,20 +226,125 @@ class GatewayTest(unittest.TestCase):
         import urllib.error
         import urllib.request
 
-        server, handler = build_gateway_server(self.store, GatewayPolicy())
-        handler.gateway = self._gateway()
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        base = f"http://127.0.0.1:{server.server_address[1]}"
+        os.environ["SAFETY_GATEWAY"] = "1"
         try:
-            request = urllib.request.Request(
-                base + "/charge", data=b"{}", method="POST"
+            server, handler = build_gateway_server(self.store, GatewayPolicy())
+            handler.gateway = self._gateway()
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            try:
+                request = urllib.request.Request(
+                    base + "/charge", data=b"{}", method="POST"
+                )
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    urllib.request.urlopen(request, timeout=5)
+                self.assertEqual(raised.exception.code, 401)
+            finally:
+                server.shutdown()
+                server.server_close()
+        finally:
+            del os.environ["SAFETY_GATEWAY"]
+
+
+class CallerAuthTest(unittest.TestCase):
+    """Who may call the gateway, and on which routes.
+
+    The gateway holds the upstream key, so the caller is the untrusted side.
+    A valid key for one route must not become a key for another, and an
+    unregistered path must not be distinguishable from one the key cannot use.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.store = TraceStore(Path(self._tmp.name) / "runtime.db")
+        os.environ["SAFETY_GATEWAY"] = "1"
+        os.environ["TEST_MASTER_KEY"] = "master-value"
+        self.addCleanup(self._cleanup)
+
+    def _cleanup(self) -> None:
+        os.environ.pop("SAFETY_GATEWAY", None)
+        os.environ.pop("TEST_MASTER_KEY", None)
+        self._tmp.cleanup()
+
+    def _policy(self) -> GatewayPolicy:
+        policy = GatewayPolicy(session_environment="prod", master_key_env="TEST_MASTER_KEY")
+        for path, action in (("/charge", "charge"), ("/refund", "refund")):
+            policy.register(
+                Route(path=path, upstream="http://127.0.0.1:1" + path, action=action, risk="read")
             )
+        return policy
+
+    def _call(self, policy, path, token):
+        server, handler = build_gateway_server(self.store, policy, port=0)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_address[1]}{path}", data=b"{}", method="POST"
+        )
+        if token is not None:
+            request.add_header("Authorization", f"Bearer {token}")
+        try:
             with self.assertRaises(urllib.error.HTTPError) as raised:
                 urllib.request.urlopen(request, timeout=5)
-            self.assertEqual(raised.exception.code, 401)
+            return raised.exception.code, raised.exception.read().decode()
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_missing_token_is_refused(self) -> None:
+        self.assertEqual(self._call(self._policy(), "/charge", None)[0], 401)
+
+    def test_unknown_token_is_refused(self) -> None:
+        self.assertEqual(self._call(self._policy(), "/charge", "not-a-key")[0], 401)
+
+    def test_virtual_key_may_not_use_a_route_it_was_not_issued_for(self) -> None:
+        policy = self._policy()
+        policy.virtual_keys["k"] = VirtualKey(
+            key="k", name="limited", routes=frozenset({"/charge"})
+        )
+        code, body = self._call(policy, "/refund", "k")
+        self.assertEqual(code, 403)
+        self.assertIn("not authorized for route", body)
+
+    def test_unregistered_path_is_refused_before_route_scoping(self) -> None:
+        """A path that does not exist must not be distinguishable from one the
+        key cannot use, or the gateway becomes a route-existence oracle."""
+        policy = self._policy()
+        policy.virtual_keys["k"] = VirtualKey(
+            key="k", name="limited", routes=frozenset({"/charge"})
+        )
+        code, body = self._call(policy, "/admin", "k")
+        self.assertEqual(code, 403)
+        self.assertIn("route not registered", body)
+
+    def test_revoked_key_is_refused(self) -> None:
+        policy = self._policy()
+        policy.virtual_keys["k"] = VirtualKey(
+            key="k", name="gone", routes=frozenset({"/charge"}), revoked=True
+        )
+        self.assertEqual(self._call(policy, "/charge", "k")[0], 401)
+
+    def test_expired_key_is_refused(self) -> None:
+        policy = self._policy()
+        policy.virtual_keys["k"] = VirtualKey(
+            key="k", name="stale", routes=frozenset({"/charge"}), expires_at=time.time() - 1
+        )
+        self.assertEqual(self._call(policy, "/charge", "k")[0], 401)
+
+    def test_master_key_reaches_a_route_a_limited_key_cannot(self) -> None:
+        policy = self._policy()
+        policy.virtual_keys["k"] = VirtualKey(
+            key="k", name="limited", routes=frozenset({"/charge"})
+        )
+        # The upstream is closed, so a 502 proves the request was authorized and
+        # forwarded rather than refused at the gateway.
+        self.assertEqual(self._call(policy, "/refund", "master-value")[0], 502)
+
+    def test_unreachable_upstream_answers_instead_of_dropping(self) -> None:
+        """A dead upstream must not read as a dropped connection: the caller
+        cannot tell an unread action from a completed one."""
+        code, body = self._call(self._policy(), "/charge", "master-value")
+        self.assertEqual(code, 502)
+        self.assertIn("upstream unreachable", body)
 
 
 if __name__ == "__main__":

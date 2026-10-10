@@ -8,6 +8,7 @@ if TYPE_CHECKING:
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -78,6 +79,22 @@ def build_parser() -> argparse.ArgumentParser:
     gateway.add_argument("--db", default="data/runtime.db")
     gateway.add_argument("--host", default="127.0.0.1")
     gateway.add_argument("--port", type=int, default=8080)
+    gateway.add_argument("--unix-socket", help="Unix socket path (Linux only) for local agent calls with UID verification")
+
+    # Gateway key management subcommands
+    gateway_sub = gateway.add_subparsers(dest="gateway_cmd", help="gateway key management")
+
+    issue_key = gateway_sub.add_parser("issue-key", help="issue a virtual key for an agent")
+    issue_key.add_argument("--name", required=True, help="agent name/identifier")
+    issue_key.add_argument("--ttl", type=int, default=3600, help="time to live in seconds")
+    issue_key.add_argument("--routes", required=True, help="comma-separated list of allowed routes (e.g., /charge,/refund)")
+
+    _ = gateway_sub.add_parser("list-keys", help="list all virtual keys")
+
+    revoke_key = gateway_sub.add_parser("revoke-key", help="revoke a virtual key")
+    revoke_key.add_argument("key", help="virtual key to revoke")
+
+    _ = gateway_sub.add_parser("rotate-master", help="rotate the master key")
 
     return parser
 
@@ -102,7 +119,8 @@ def load_route_policy(path: str) -> GatewayPolicy:
     if not isinstance(document, dict):
         raise ValueError("gateway config must be a mapping with a 'routes' list")
     policy = GatewayPolicy(
-        session_environment=str(document.get("session_environment", "dev"))
+        session_environment=str(document.get("session_environment", "dev")),
+        master_key_env=str(document.get("master_key_env", "")),
     )
     for entry in document.get("routes", []):
         policy.register(
@@ -124,12 +142,137 @@ def run_gateway(args: argparse.Namespace) -> int:
     from ..interface.gateway import build_gateway_server
     from ..storage.traces import TraceStore
 
+    # Mark this process as a legitimate gateway launch (for embedded-launch check)
+    os.environ["SAFETY_GATEWAY"] = "1"
+
+    # Drop privileges if running as root
+    if os.geteuid() == 0:
+        try:
+            import pwd
+            pw = pwd.getpwnam("safety-gateway")
+            os.setgroups([])
+            os.setgid(pw.pw_gid)
+            os.setuid(pw.pw_uid)
+            os.environ["HOME"] = pw.pw_dir
+        except KeyError:
+            print(
+                "Gateway cannot run as root: user 'safety-gateway' does not exist. "
+                "Create the user or run without sudo.",
+                file=sys.stderr,
+            )
+            return EXIT_FAIL
+
     policy = load_route_policy(args.config)
-    server, handler = build_gateway_server(TraceStore(args.db), policy, args.host, args.port)
-    print(f"Safety gateway on http://{args.host}:{server.server_address[1]}/")
+    server, handler = build_gateway_server(
+        TraceStore(args.db), policy, args.host, args.port, unix_socket=args.unix_socket
+    )
+    if args.unix_socket:
+        print(f"Safety gateway on unix://{args.unix_socket}")
+    else:
+        print(f"Safety gateway on http://{args.host}:{server.server_address[1]}/")
     print(f"access token: {getattr(handler, 'access_token', '')}")
     print(f"registered routes: {len(policy.routes)} (anything else is refused)")
     server.serve_forever()
+    return EXIT_PASS
+
+
+def gateway_issue_key(args: argparse.Namespace) -> int:
+    """Issue a virtual key for an agent."""
+    import secrets
+    import time
+
+    policy = load_route_policy(args.config)
+    master_key = os.environ.get(policy.master_key_env) if policy.master_key_env else None
+    if not master_key:
+        print("Error: master_key_env not configured or not set in environment", file=sys.stderr)
+        return EXIT_FAIL
+
+    # Verify the request is authenticated with master key
+    provided = os.environ.get("SAFETY_GATEWAY_TOKEN")
+    if not provided or not secrets.compare_digest(provided, master_key):
+        print("Error: master key required (set SAFETY_GATEWAY_TOKEN)", file=sys.stderr)
+        return EXIT_FAIL
+
+    routes = [r.strip() for r in args.routes.split(",") if r.strip()]
+    for route in routes:
+        if route not in policy.routes:
+            print(f"Error: route '{route}' not registered in gateway config", file=sys.stderr)
+            return EXIT_FAIL
+
+    key = secrets.token_urlsafe(32)
+    expires_at = time.time() + args.ttl if args.ttl > 0 else None
+
+    # Persist to trace store
+    store = TraceStore(args.db)
+    store.save_virtual_key(key, args.name, routes, expires_at)
+
+    print(f"Virtual key issued: {key}")
+    print(f"  name: {args.name}")
+    print(f"  routes: {', '.join(routes)}")
+    print(f"  expires: {time.ctime(expires_at) if expires_at else 'never'}")
+    return EXIT_PASS
+
+
+def gateway_list_keys(args: argparse.Namespace) -> int:
+    """List all virtual keys."""
+    import time
+
+    store = TraceStore(args.db)
+    keys = store.load_virtual_keys()
+    if not keys:
+        print("No virtual keys issued.")
+        return EXIT_PASS
+
+    for vk in keys:
+        status = "REVOKED" if vk["revoked"] else "active"
+        expires = time.ctime(vk["expires_at"]) if vk["expires_at"] else "never"
+        print(f"{vk['key']} | {vk['name']} | {status} | expires: {expires} | routes: {', '.join(vk['routes'])}")
+    return EXIT_PASS
+
+
+def gateway_revoke_key(args: argparse.Namespace) -> int:
+    """Revoke a virtual key."""
+    import secrets
+
+    policy = load_route_policy(args.config)
+    master_key = os.environ.get(policy.master_key_env) if policy.master_key_env else None
+    if not master_key:
+        print("Error: master_key_env not configured or not set in environment", file=sys.stderr)
+        return EXIT_FAIL
+
+    provided = os.environ.get("SAFETY_GATEWAY_TOKEN")
+    if not provided or not secrets.compare_digest(provided, master_key):
+        print("Error: master key required (set SAFETY_GATEWAY_TOKEN)", file=sys.stderr)
+        return EXIT_FAIL
+
+    store = TraceStore(args.db)
+    if not store.revoke_virtual_key(args.key):
+        print(f"Error: key not found: {args.key}", file=sys.stderr)
+        return EXIT_FAIL
+
+    print(f"Revoked virtual key: {args.key}")
+    return EXIT_PASS
+
+
+def gateway_rotate_master(args: argparse.Namespace) -> int:
+    """Rotate the master key."""
+    import secrets
+
+    policy = load_route_policy(args.config)
+    master_key = os.environ.get(policy.master_key_env) if policy.master_key_env else None
+    if not master_key:
+        print("Error: master_key_env not configured or not set in environment", file=sys.stderr)
+        return EXIT_FAIL
+
+    provided = os.environ.get("SAFETY_GATEWAY_TOKEN")
+    if not provided or not secrets.compare_digest(provided, master_key):
+        print("Error: master key required (set SAFETY_GATEWAY_TOKEN)", file=sys.stderr)
+        return EXIT_FAIL
+
+    new_key = secrets.token_urlsafe(32)
+    print(f"New master key: {new_key}")
+    print(f"Set {policy.master_key_env}={new_key} in your environment and restart the gateway.")
+    print("Existing virtual keys remain valid until they expire or are revoked.")
     return EXIT_PASS
 
 
@@ -223,6 +366,14 @@ def main(argv: list[str] | None = None) -> int:
         return run_wall(args)
     if args.command == "gateway":
         announce("your route config — the gateway holds the upstream credentials.")
+        if args.gateway_cmd == "issue-key":
+            return gateway_issue_key(args)
+        if args.gateway_cmd == "list-keys":
+            return gateway_list_keys(args)
+        if args.gateway_cmd == "revoke-key":
+            return gateway_revoke_key(args)
+        if args.gateway_cmd == "rotate-master":
+            return gateway_rotate_master(args)
         return run_gateway(args)
 
     parser.error("unknown command")
