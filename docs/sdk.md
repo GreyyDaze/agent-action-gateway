@@ -282,6 +282,32 @@ before it reaches disk. You do not need to sanitise before handing them over.
 run that records exchanges makes `trace_events` grow much faster. There is no
 automatic pruning yet; plan a retention window before storing at volume.
 
+## Sampling your recorded runs
+
+The offline gate compares your evaluation cases against a baseline. It cannot
+tell you whether the runs arriving from production have degraded, because those
+runs were never evaluated.
+
+~~~bash
+safety gate online --db data/runtime.db --sample 0.2
+~~~
+
+**It reports; it does not block.** Promotion to a failing exit code requires
+`--promote`, so turning it on is a visible decision rather than a default nobody
+chose. The reasoning is specific: an online judge is stochastic and unproven
+against a human, and a gate that fires on noise gets switched off within a week
+-- which loses the signal entirely.
+
+Pass `--seed` and the same runs are selected every time, so a report can be
+reproduced instead of argued about. A sample too small to support a conclusion
+says so and returns success, because too little data is not a pass and not a
+failure.
+
+Runs a human already held are reported as held rather than degraded, and any
+case where a human mark and the scorer disagree is listed. A judge that quietly
+disagrees with a person is a broken judge, and hiding that is how it stays
+broken.
+
 ## MCP
 
 Production agents reach tools through the Model Context Protocol rather than by

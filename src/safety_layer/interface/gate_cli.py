@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,29 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--db", default="data/evaluations.db")
     check.add_argument("--record-baseline", action="store_true")
     check.add_argument("--judge-model", default=DEFAULT_GEMINI_MODEL)
+    online = subparsers.add_parser(
+        "online",
+        help="sample your recorded runs and report on how they got there",
+    )
+    online.add_argument("--db", default="data/runtime.db")
+    online.add_argument(
+        "--sample",
+        type=float,
+        default=0.1,
+        help="fraction of runs to assess (0-1)",
+    )
+    online.add_argument("--seed", type=int, default=0, help="so a report can be reproduced")
+    online.add_argument(
+        "--held",
+        help="comma-separated run ids a human already held, for comparison",
+    )
+    online.add_argument(
+        "--promote",
+        action="store_true",
+        help="allow a failing exit code (off by default: report only)",
+    )
+    online.add_argument("--format", choices=("text", "json"), default="text")
+
     calibrate = subparsers.add_parser(
         "calibrate",
         help="measure your judge model against hand-labelled examples",
@@ -221,17 +245,42 @@ def _print_unchanged_proof(results, repeat: int, *, status: str) -> None:
     )
 
 
+def run_online(args) -> int:
+    """Sample recorded runs and report. Blocking requires --promote."""
+    import json as _json
+
+    from ..evaluation.online import assess, gate_status, group_runs, render
+    from ..storage.traces import TraceStore
+
+    if not 0.0 <= args.sample <= 1.0:
+        print("--sample must be between 0 and 1", file=sys.stderr)
+        return EXIT_USAGE
+
+    traces = TraceStore(args.db).snapshot()["traces"]
+    runs = group_runs(traces)
+    held = [r.strip() for r in (args.held or "").split(",") if r.strip()]
+    report = assess(runs, sample=args.sample, seed=args.seed, blocked_run_ids=held)
+
+    if args.format == "json":
+        print(_json.dumps(report.as_dict(), indent=2))
+    else:
+        print(render(report, promote=args.promote))
+    return EXIT_FAIL if gate_status(report, promote=args.promote) else EXIT_PASS
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    scope = (
-        "your evaluation cases"
-        if args.command == "check"
-        else "your judge model's agreement with hand-labelled examples"
-    )
-    print(f"SCOPE: {scope}.")
+    scopes = {
+        "check": "your evaluation cases",
+        "calibrate": "your judge model's agreement with hand-labelled examples",
+        "online": "your recorded production runs — sampled, reported, never silently gating",
+    }
+    print(f"SCOPE: {scopes.get(args.command, 'your configuration')}.")
     if args.command == "calibrate":
         raise SystemExit(run_calibrate(args))
+    if args.command == "online":
+        raise SystemExit(run_online(args))
     raise SystemExit(run_check(args))
 
 
