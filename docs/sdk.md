@@ -282,6 +282,35 @@ before it reaches disk. You do not need to sanitise before handing them over.
 run that records exchanges makes `trace_events` grow much faster. There is no
 automatic pruning yet; plan a retention window before storing at volume.
 
+## MCP
+
+Production agents reach tools through the Model Context Protocol rather than by
+importing a library. A LangGraph or OpenAI Agents SDK agent has no Python
+function here to wrap, so without an MCP surface this library is simply not in
+the path.
+
+`interface/mcp.py` is that surface. It is a **policy layer, not a transport**:
+it converts a `GatewayPolicy` into MCP-shaped tool definitions and routes every
+`call_tool` through the same `SafetyGateway.handle` the HTTP gateway uses.
+
+~~~python
+from safety_layer.interface.mcp import MCPToolBridge, tool_definitions
+
+bridge = MCPToolBridge.from_policy(store, policy)
+tools = tool_definitions(policy)      # register these with your MCP library
+result = bridge.call_tool("charge", {"amount": 100}, approval_id=approval_id)
+~~~
+
+There is no second policy path, so arriving over MCP instead of HTTP buys the
+caller nothing: identical trace rows, identical receipts, identical refusals.
+`tests/test_mcp.py` asserts that by performing the same action through both
+doors and comparing what was written.
+
+No MCP SDK is imported. A dependency on someone else's release schedule would
+make the enforcement path non-stdlib for every adopter, and a protocol
+implementation here would be untested against the real specification. Pair this
+with whichever MCP library you already use.
+
 ## Dashboard security
 
 The dashboard binds `127.0.0.1` by default and is a single-operator local tool.

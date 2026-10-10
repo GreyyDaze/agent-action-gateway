@@ -236,6 +236,20 @@ class SafetyGateway:
             # lacks is authorisation. Reusing 401 made "you need approval"
             # indistinguishable from "your key is invalid", and a real client
             # cannot tell whether to request an approval or re-authenticate.
+            #
+            # Traced before returning. This branch used to return silently, so
+            # an action held here left no evidence at all -- an operator asking
+            # "did anything try to charge?" got an empty answer, which is the
+            # exact failure this project exists to prevent.
+            self._trace(
+                "gateway.held",
+                {
+                    "path": route.path,
+                    "action": route.action,
+                    "reason": str(exc),
+                    "args": redact(arguments),
+                },
+            )
             return GatewayResult(403, {"error": str(exc), "needs_approval": True})
 
         credential = route.credential()
