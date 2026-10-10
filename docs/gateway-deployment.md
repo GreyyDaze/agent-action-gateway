@@ -68,11 +68,38 @@ deploy/docker-compose.yml
 ```
 
 Two networks, and the gateway is the only service on both. Your agent joins
-`agent_net` only, so it has no route to a provider.
+`agent_net` only.
 
 **This file deliberately contains no `agent:` service.** You already have an
 agent; shipping a fake one would prove only that our compose file is written
 correctly, not that your agent is protected.
+
+#### Does your agent need internet?
+
+Almost always yes — a payment agent also calls a model API, and that is on the
+internet. Plain Compose cannot allow one host and block the rest; it is all or
+nothing. So there are two files and neither hides the trade:
+
+| | `docker-compose.yml` (default) | `+ docker-compose.egress.yml` |
+|---|---|---|
+| Agent reaches a model API | ❌ | ✅ |
+| Leaked upstream key usable from the agent | ❌ | ⚠️ yes |
+| `make verify-boundary` | `BOUNDARY HELD` | fails check A, correctly |
+
+The default fails closed on purpose. A wrong default here does not announce
+itself — it leaves an adopter believing in a barrier that is not there, which is
+the one outcome this project exists to prevent. Turning egress on is a
+legitimate choice, but the guarantee then rests on your credentials and your
+provider's configuration rather than on the network:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.egress.yml up -d
+COMPOSE_FILES="-f docker-compose.yml -f docker-compose.egress.yml" make verify-boundary
+```
+
+Carry it with scoped short-lived credentials, an egress policy that allows the
+model API and denies the payment API (Cilium or your cloud's DNS-based
+control), or provider-side key restrictions.
 
 ### Tier 3 — separate host, egress control, workload identity (production)
 

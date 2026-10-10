@@ -58,6 +58,23 @@ SAFETY_PROBE_KEY=$KEY make verify-boundary
 `docker compose exec` needs the key against the gateway's database, not a local
 one, or the running gateway will never see it.
 
+## Does your agent need internet?
+
+Usually yes. Plain Compose cannot allow one host and block the rest, so there
+are two topologies:
+
+```bash
+# Default: agent has no egress at all. Fails closed.
+docker compose up -d gateway
+
+# Override: agent can reach the internet, and therefore a provider too.
+docker compose -f docker-compose.yml -f docker-compose.egress.yml up -d
+```
+
+The override exists because the common case needs it. It says plainly what it
+gives up, and `make verify-boundary` will fail its egress check when it is in
+use — which is correct, and is the point.
+
 ## Secrets
 
 `routes.example.json` uses `secret_env: "file:/run/secrets/stripe_key"` rather

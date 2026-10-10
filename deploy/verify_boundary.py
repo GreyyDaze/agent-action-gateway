@@ -66,13 +66,26 @@ def _tcp_reachable(host: str, port: int = 443, timeout: float = 5.0) -> bool:
 
 
 def check_egress_blocked() -> tuple[bool, str]:
-    """A: the agent's position must not have a route to a provider."""
+    """A: the agent's position must not have a route to a provider.
+
+    Precisely what this proves: a leaked upstream credential would be *usable*
+    from here. It does not claim a bypass is otherwise possible -- the agent
+    holds no credential in the first place, which is the primary defence. The
+    network check is the second barrier: it is what stops a key that leaked by
+    some other route from being usable here.
+    """
     if _tcp_reachable(PROVIDER_HOST):
         return False, (
-            f"REACHABLE {PROVIDER_HOST}:443 from the agent's network. A bypass "
-            "would succeed here, so no credential boundary exists."
+            f"REACHABLE {PROVIDER_HOST}:443 from the agent's network. An "
+            "upstream key that leaked for any reason would be usable from here, "
+            "so this barrier is absent. If you turned egress on deliberately, "
+            "carry the guarantee on scoped short-lived credentials or provider-"
+            "side key restrictions instead -- see docker-compose.egress.yml."
         )
-    return True, f"no route to {PROVIDER_HOST}:443 from the agent's network"
+    return True, (
+        f"no route to {PROVIDER_HOST}:443 from the agent's network, so a leaked "
+        "upstream key would not be usable here"
+    )
 
 
 def check_gateway_requires_a_key(gateway: str) -> tuple[bool, str]:

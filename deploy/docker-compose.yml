@@ -104,10 +104,22 @@ volumes:
   gateway-state:
 
 networks:
-  # internal: true is the whole of Boundary B for this file.
+  # There are two reasonable answers here and this file does not hide that.
   #
-  # Compose cannot narrow this further to one allowed FQDN. That needs Cilium or
-  # a cloud egress policy; see docs/gateway-deployment.md.
+  # internal: true is the default because it fails closed. An agent on an
+  # internal network has no route to a provider, so even a leaked upstream key
+  # is useless from that position. If the setting is wrong for you, you find out
+  # immediately as an unreachable host -- not silently, months later.
+  #
+  # It is also too strict for the most common agent, which needs to reach a
+  # model API as well as the gateway. Compose cannot allow one FQDN and block
+  # the rest; it is all or nothing. If you need egress, use the override and
+  # read what it gives up:
+  #
+  #     docker compose -f docker-compose.yml \
+  #                    -f docker-compose.egress.yml up -d
+  #
+  # internal: false
   agent_net:
     internal: true
 

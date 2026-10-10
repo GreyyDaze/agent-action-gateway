@@ -37,13 +37,20 @@ verify: lint typecheck test
 # to the same network your agent occupies and tries to reach a provider, read
 # the secret, and call the gateway without a key. Exits 2 when it cannot run at
 # all -- never 0, because "could not check" is not "passed".
+#
+# Set COMPOSE_FILES to probe a different topology, e.g. the egress override:
+#     COMPOSE_FILES="-f docker-compose.yml -f docker-compose.egress.yml" \
+#       make verify-boundary
+COMPOSE_FILES ?= -f docker-compose.yml
+COMPOSE        ?= docker compose $(COMPOSE_FILES)
+
 verify-boundary:
 	@command -v docker >/dev/null 2>&1 || { \
 	  echo "INCONCLUSIVE: docker is not available, so the deployment boundary was not tested."; \
 	  echo "  This says nothing about whether your setup is safe."; \
 	  exit 2; }
-	@cd deploy && docker compose up -d gateway
-	@cd deploy && docker compose run --rm probe; status=$$?; \
+	@cd deploy && $(COMPOSE) up -d gateway
+	@cd deploy && $(COMPOSE) run --rm probe; status=$$?; \
 	  if [ $$status -eq 2 ]; then echo "INCONCLUSIVE: the probe could not determine the boundary."; fi; \
 	  exit $$status
 

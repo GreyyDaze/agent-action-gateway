@@ -1,0 +1,42 @@
+# Override: let the agent reach the internet.
+#
+#     docker compose -f docker-compose.yml -f docker-compose.egress.yml up -d
+#
+# Use this when your agent legitimately needs egress -- almost always, because an
+# agent that calls a payment API also calls a model API, and a model API is on
+# the internet.
+#
+# WHAT THIS GIVES UP
+#
+# With the default (internal: true) the agent has no route to a provider, so a
+# leaked upstream credential is useless from its position. Turning egress on
+# removes that. If the key leaks -- via a prompt injection, a log line, a
+# compromised dependency -- the agent can now use it directly and no gateway
+# policy stands in the way.
+#
+# That is not a small loss, so do not treat this file as a convenience. Pick it
+# only when you have replaced Boundary B with something real:
+#
+#   * an egress policy that allows the model API and denies the payment API
+#     (Cilium, or your cloud's DNS-based egress control), or
+#   * a gateway that holds a *scoped, short-lived* credential, so a leaked one
+#     expires in minutes and is limited to one route, or
+#   * provider-side controls that do not depend on your network at all --
+#     restricted keys, allowlists, per-key rate limits.
+#
+# VERIFY, DO NOT ASSUME
+#
+# `make verify-boundary` runs its egress check from inside agent_net. With this
+# override it will FAIL check A, and that failure is correct: it is reporting
+# that a leaked key would work from where your agent sits. A green run means the
+# default is in place.
+#
+# The honest summary: this file moves the burden from the network to your
+# credentials and your provider configuration. That is a legitimate design. It is
+# not the same guarantee, and it should not be described as one.
+
+services: {}
+
+networks:
+  agent_net:
+    internal: false

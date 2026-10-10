@@ -78,6 +78,27 @@ class ShippedExamplesTest(unittest.TestCase):
         self.assertIn("verify-boundary", makefile)
         self.assertNotIn("verify-agent", makefile)
 
+    def test_default_network_fails_closed(self) -> None:
+        """The default must be the safe one.
+
+        An adopter who follows the reference file with no changes should get the
+        barrier, not a silently weaker setup.
+        """
+        compose = (DEPLOY / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("internal: true", compose)
+
+    def test_the_egress_override_states_what_it_gives_up(self) -> None:
+        """An override that only relaxes a control is a trap if it is quiet.
+
+        Most real agents do need egress -- a payment agent also calls a model
+        API. So the override has to exist, and it has to say plainly that
+        turning egress on means a leaked key becomes usable.
+        """
+        override = (DEPLOY / "docker-compose.egress.yml").read_text(encoding="utf-8")
+        self.assertIn("internal: false", override)
+        self.assertIn("WHAT THIS GIVES UP", override)
+        self.assertIn("leaked", override.lower())
+
 
 class SecretFileRefusalTest(unittest.TestCase):
     """A credential the agent can read is not a credential the gateway holds."""
