@@ -444,16 +444,25 @@ class _UnixSocketServer(ThreadingHTTPServer):
         import socket
         import struct
         conn, _ = self.socket.accept()
-        # SO_PEERCRED check (Linux only)
-        try:
-            creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))  # type: ignore[attr-defined]
-            pid, uid, gid = struct.unpack("3i", creds)
-            if uid == os.geteuid():
-                conn.close()
-                raise GatewayError("no custody boundary: caller UID equals gateway UID")
-        except (AttributeError, OSError, struct.error):
-            # SO_PEERCRED not available on this platform
-            pass
+        # SO_PEERCRED is Linux-only. Looked up rather than referenced directly:
+        # a direct reference is an attribute error on macOS and an *unused*
+        # type-ignore on Linux, so one of the two platforms always fails a
+        # check. Absent here means the check cannot run, which is recorded
+        # rather than silently treated as a pass.
+        peercred = getattr(socket, "SO_PEERCRED", None)
+        if peercred is not None:
+            try:
+                creds = conn.getsockopt(
+                    socket.SOL_SOCKET, peercred, struct.calcsize("3i")
+                )
+                _pid, uid, _gid = struct.unpack("3i", creds)
+                if uid == os.geteuid():
+                    conn.close()
+                    raise GatewayError(
+                        "no custody boundary: caller UID equals gateway UID"
+                    )
+            except (OSError, struct.error):
+                pass
         return conn, ("local", 0)
 
     def server_close(self):
