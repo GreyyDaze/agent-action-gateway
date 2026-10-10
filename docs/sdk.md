@@ -282,6 +282,37 @@ before it reaches disk. You do not need to sanitise before handing them over.
 run that records exchanges makes `trace_events` grow much faster. There is no
 automatic pruning yet; plan a retention window before storing at volume.
 
+## Self-correction
+
+Retrying is the highest-leverage thing an agent can do, and the easiest way to
+turn a safety limit into a suggestion. A loop that retries will eventually get
+past a cap by asking often enough. So `retrying()` is asymmetric on purpose:
+
+~~~python
+refund = ctx.retrying(ctx.tool(refund_fn, action="refund", risk="destructive"), attempts=2)
+~~~
+
+| Outcome | Behaviour |
+|---|---|
+| Allowed | Retried up to `attempts` times |
+| **Blocked** | **Never retried** |
+
+A refusal means policy said no, not that the call was unlucky. Retrying it burns
+budget, and on a destructive route it is the guard being probed rather than
+obeyed. The refusal check runs *before* the transient check, so a refusal that
+claims to be transient is still not retried.
+
+What counts as transient is deliberately narrow: an explicit `transient: true`,
+or a 5xx in the tool's own return. Anything unrecognised goes straight back to
+you, because retrying an unknown failure is how a budget disappears.
+
+A held action never reaches the tool at all, so there is usually nothing to
+retry. The retry guard matters for the case where a tool reports a refusal from
+its own provider *after* being called — the refusal is still honoured.
+
+Repeated identical calls to one guarded action are stopped by the existing
+no-progress guard regardless of retry settings. Two independent bounds.
+
 ## Sampling your recorded runs
 
 The offline gate compares your evaluation cases against a baseline. It cannot

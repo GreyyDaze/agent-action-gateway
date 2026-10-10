@@ -19,6 +19,7 @@ exists to prevent.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC
@@ -44,6 +45,67 @@ DEFAULT_FUSE_LIMITS = FuseLimits(
 DEFAULT_ENVIRONMENT = "dev"
 VALID_ENVIRONMENTS = ("dev", "staging", "prod")
 
+
+def _payload(result: dict) -> dict:
+    """The tool's own return value, unwrapped from the guard's envelope.
+
+    A guarded call comes back as {status, decision, result, ...} where `result`
+    is whatever the tool returned. Retry logic has to look at the payload, not
+    the envelope -- the envelope's `status` is about the *policy decision*, so
+    reading it as the tool's status would treat every allowed call as a failure.
+    """
+    # Only unwrap when the dict actually looks like the guard's envelope. A
+    # plain tool returning its own {"result": ...} must not be mistaken for one.
+    if "decision" not in result:
+        return result
+    nested = result.get("result")
+    return nested if isinstance(nested, dict) else {}
+
+
+def _was_blocked(result: dict) -> bool:
+    """Whether policy refused this call.
+
+    Read from the decision the pipeline recorded, not from an exception type or
+    a message. Anything that guesses is guessing about the most important branch
+    in the library. A fuse trip counts: the run was stopped, and retrying it
+    would spend budget to be stopped again.
+    """
+    if str(result.get("status", "")).lower() == "blocked":
+        return True
+    if str(result.get("decision", "")).upper() in {"BLOCK", "BLOCKED", "DENY", "DENIED",
+                                                   "REFUSE", "FUSE"}:
+        return True
+    payload = _payload(result)
+    if payload.get("blocked") or payload.get("needs_approval"):
+        return True
+    if str(payload.get("decision", "")).lower() in {"blocked", "denied", "refused"}:
+        return True
+    # A tool reporting its own outcome as blocked counts too. Only the literal
+    # "blocked" is treated as a refusal: a tool returning status "ok" must not
+    # be mistaken for one.
+    return str(payload.get("status", "")).lower() == "blocked"
+
+
+def _is_retryable(result: dict) -> bool:
+    """Whether the *payload* looks like a transient failure rather than a decision.
+
+    Deliberately conservative: only an explicit transient marker or an upstream
+    status in the 5xx range. Anything unrecognised goes back to the caller
+    rather than being retried, because retrying an unknown failure is how a
+    budget disappears.
+    """
+    payload = _payload(result)
+    if payload.get("transient") is True:
+        return True
+    status = payload.get("status_code") or payload.get("status")
+    return isinstance(status, int) and 500 <= status < 600
+
+
+def _returns_ok(result: dict) -> bool:
+    """Whether a retry produced a usable result."""
+    payload = _payload(result)
+    status = payload.get("status_code") or payload.get("status")
+    return not (isinstance(status, int) and status >= 400)
 
 class SafetySession:
     """Holds policy state for one run and mints guarded tools from it."""
@@ -150,6 +212,68 @@ class SafetySession:
                 latency_ms=latency_ms,
             )
         )
+
+    # -- self-correction ----------------------------------------------------
+
+    def retrying(
+        self,
+        fn: Callable[..., dict[str, Any]],
+        *,
+        attempts: int = 2,
+        on_retry: Callable[[int, dict[str, Any]], None] | None = None,
+    ) -> Callable[..., dict[str, Any]]:
+        """Retry a guarded tool when it fails for a transient reason.
+
+        Self-correction is the highest-leverage change available to an agent,
+        and it is also the easiest way to turn a safety guard into a suggestion:
+        a loop that retries will eventually get past a limit by trying often
+        enough. So the retry rule is asymmetric on purpose.
+
+            allowed  -> retried up to `attempts` times
+            blocked  -> never retried
+
+        A refusal here means policy said no, not that the call was unlucky.
+        Retrying it would burn budget, and on a destructive route it would be
+        the guard being probed rather than obeyed. So a blocked result is
+        returned immediately and counted, however many attempts remain.
+
+        Transient-looking errors -- a timeout, a 5xx upstream -- do get retried,
+        because those are the case where retrying is correct. The test is the
+        decision recorded on the result, not the shape of the error.
+        """
+        if attempts < 1:
+            raise ValueError("attempts must be at least 1")
+
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            last: dict[str, Any] = {}
+            for attempt in range(1, attempts + 1):
+                result = fn(*args, **kwargs)
+                if not isinstance(result, dict):
+                    return result
+                last = result
+                payload = _payload(result)
+                if _was_blocked(result):
+                    # Recorded rather than silently swallowed: an operator must
+                    # be able to see that an agent tried again after a refusal.
+                    self.store.append_trace(
+                        TraceEvent(
+                            self.run_id,
+                            0,
+                            "self_correction.refused",
+                            {"attempt": attempt, "result": result},
+                            "retry refused",
+                            "blocked",
+                        )
+                    )
+                    return result
+                if not _is_retryable(result) or attempt == attempts:
+                    return payload if payload else result
+                if on_retry is not None:
+                    on_retry(attempt, result)
+            return last
+
+        return wrapper
 
     # -- tools ------------------------------------------------------------
 
