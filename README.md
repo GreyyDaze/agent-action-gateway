@@ -22,7 +22,9 @@ The package exposes the `safety` CLI.
 ## Adoption
 
 Your agent obtains its tools from a session. It never receives the raw
-functions, so there is nothing to bypass.
+functions, so there is nothing to bypass — for tools it obtained that way. Code
+your own agent reaches directly is outside this guarantee, and
+`safety check --app` is how you find it.
 
 ~~~python
 from safety_layer import session
@@ -173,6 +175,35 @@ print(result["status"])
 The `agent` callable is owned by your application. The safety layer receives the task, applies its deterministic runtime controls, records evidence, and evaluates the run. It does not own the agent's LLM provider or model loop.
 
 The current SDK is a lightweight wrapper around the existing runtime, not a universal agent framework. See `docs/sdk.md` for the supported boundary and current limitations.
+
+## Gateway: holding a credential your agent must not have
+
+For upstreams you cannot wrap in-process — payments, internal services — the
+gateway is a separate service that holds the upstream key and forwards the call.
+
+~~~bash
+safety gateway --config routes.json --db gateway.db
+~~~
+
+The property this buys is conditional, and the condition is the whole point:
+**it holds only when the gateway runs as its own service, across a boundary your
+agent cannot cross.** In your agent's own process, your agent reads the same
+environment the key came from.
+
+Two boundaries are required — your agent must not be able to *read* the key, and
+must not be able to *reach* the provider. A vault is not one of them; it is
+rotation and audit. `deploy/` ships a compose file, a systemd unit and
+Kubernetes manifests for each tier, none of which contain an `agent` service,
+because your agent is your code.
+
+~~~bash
+safety gateway doctor --config routes.json   # this host
+make verify-boundary                        # from the agent's position
+~~~
+
+`make verify-boundary` exits non-zero when it cannot run. A check that did not
+happen is not a pass. See `docs/gateway-deployment.md` for what each tier
+guarantees and, just as importantly, what it does not.
 
 ## Scope and honest limits
 

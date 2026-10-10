@@ -75,7 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
         "gateway",
         help="serve the HTTP gateway for your routes (it holds the upstream keys)",
     )
-    gateway.add_argument("--config", required=True, help="YAML or JSON route table")
+    # Not required at this level: `gateway doctor` and `gateway issue-key`
+    # each take their own --config after the subcommand. run_gateway and the
+    # key commands check for it themselves.
+    gateway.add_argument("--config", help="YAML or JSON route table")
     gateway.add_argument("--db", default="data/runtime.db")
     gateway.add_argument("--host", default="127.0.0.1")
     gateway.add_argument("--port", type=int, default=8080)
@@ -95,6 +98,13 @@ def build_parser() -> argparse.ArgumentParser:
     revoke_key.add_argument("key", help="virtual key to revoke")
 
     _ = gateway_sub.add_parser("rotate-master", help="rotate the master key")
+
+    doctor = gateway_sub.add_parser(
+        "doctor",
+        help="check this host's gateway configuration",
+    )
+    doctor.add_argument("--config", required=True, help="YAML or JSON route table")
+    doctor.add_argument("--db", default="data/runtime.db")
 
     return parser
 
@@ -123,13 +133,23 @@ def load_route_policy(path: str) -> GatewayPolicy:
         master_key_env=str(document.get("master_key_env", "")),
     )
     for entry in document.get("routes", []):
+        method = str(entry.get("method", "POST")).upper()
+        # The HTTP shell exposes POST only. A route declaring another method
+        # would never be matched, and the gateway would refuse it forever as
+        # "not registered" -- a dead route that looks configured.
+        if method != "POST":
+            raise ValueError(
+                f"route {entry.get('path')!r} declares method {method}, but the "
+                "gateway serves POST only. Use a provider endpoint that accepts "
+                "a POST body."
+            )
         policy.register(
             Route(
                 path=str(entry["path"]),
                 upstream=str(entry["upstream"]),
                 action=str(entry["action"]),
                 risk=str(entry.get("risk", "destructive")),
-                method=str(entry.get("method", "POST")).upper(),
+                method=method,
                 secret_env=str(entry.get("secret_env", "")),
                 environment=str(entry.get("environment", "prod")),
             )
@@ -141,6 +161,10 @@ def run_gateway(args: argparse.Namespace) -> int:
 
     from ..interface.gateway import build_gateway_server
     from ..storage.traces import TraceStore
+
+    if not args.config:
+        print("gateway requires --config pointing at your route table", file=sys.stderr)
+        return EXIT_USAGE
 
     # Mark this process as a legitimate gateway launch (for embedded-launch check)
     os.environ["SAFETY_GATEWAY"] = "1"
@@ -176,23 +200,60 @@ def run_gateway(args: argparse.Namespace) -> int:
     return EXIT_PASS
 
 
+def _policy_or_fail(args: argparse.Namespace) -> GatewayPolicy | None:
+    """Load the route policy, or explain what is missing.
+
+    The gateway parser no longer requires --config itself, because each
+    subcommand takes its own after the subcommand name. Every command that
+    genuinely needs a route table goes through here so the failure message is
+    the same everywhere.
+    """
+    if not args.config:
+        print("this command requires --config pointing at your route table", file=sys.stderr)
+        return None
+    try:
+        return load_route_policy(args.config)
+    except (OSError, ValueError) as exc:
+        print(f"could not read {args.config}: {exc}", file=sys.stderr)
+        return None
+
+
+def _master_key_or_fail(policy: GatewayPolicy) -> str | None:
+    """The master key from the environment, or an explanation.
+
+    Key management is gated by OS access, not by a token. Anyone who can run
+    this command as this user can already read the same environment variable
+    the gateway reads, so asking them to prove possession of it would be theatre.
+    The real control is who may run the command at all -- which is exactly the
+    boundary the deployment is responsible for.
+    """
+    name = policy.master_key_env
+    if not name:
+        print(
+            "This route table declares no master_key_env, so there is nothing to "
+            "authenticate against. Add one, or use the startup token instead.",
+            file=sys.stderr,
+        )
+        return None
+    value = os.environ.get(name)
+    if not value:
+        print(f"Error: {name} is set in the config but not in the environment", file=sys.stderr)
+        return None
+    return value
+
+
 def gateway_issue_key(args: argparse.Namespace) -> int:
     """Issue a virtual key for an agent."""
     import secrets
     import time
 
-    policy = load_route_policy(args.config)
-    master_key = os.environ.get(policy.master_key_env) if policy.master_key_env else None
-    if not master_key:
-        print("Error: master_key_env not configured or not set in environment", file=sys.stderr)
-        return EXIT_FAIL
+    policy = _policy_or_fail(args)
+    if policy is None:
+        return EXIT_USAGE
+    if _master_key_or_fail(policy) is None:
+        return EXIT_USAGE
 
     # Verify the request is authenticated with master key
-    provided = os.environ.get("SAFETY_GATEWAY_TOKEN")
-    if not provided or not secrets.compare_digest(provided, master_key):
-        print("Error: master key required (set SAFETY_GATEWAY_TOKEN)", file=sys.stderr)
-        return EXIT_FAIL
-
     routes = [r.strip() for r in args.routes.split(",") if r.strip()]
     for route in routes:
         if route not in policy.routes:
@@ -232,18 +293,12 @@ def gateway_list_keys(args: argparse.Namespace) -> int:
 
 def gateway_revoke_key(args: argparse.Namespace) -> int:
     """Revoke a virtual key."""
-    import secrets
 
-    policy = load_route_policy(args.config)
-    master_key = os.environ.get(policy.master_key_env) if policy.master_key_env else None
-    if not master_key:
-        print("Error: master_key_env not configured or not set in environment", file=sys.stderr)
-        return EXIT_FAIL
-
-    provided = os.environ.get("SAFETY_GATEWAY_TOKEN")
-    if not provided or not secrets.compare_digest(provided, master_key):
-        print("Error: master key required (set SAFETY_GATEWAY_TOKEN)", file=sys.stderr)
-        return EXIT_FAIL
+    policy = _policy_or_fail(args)
+    if policy is None:
+        return EXIT_USAGE
+    if _master_key_or_fail(policy) is None:
+        return EXIT_USAGE
 
     store = TraceStore(args.db)
     if not store.revoke_virtual_key(args.key):
@@ -258,16 +313,11 @@ def gateway_rotate_master(args: argparse.Namespace) -> int:
     """Rotate the master key."""
     import secrets
 
-    policy = load_route_policy(args.config)
-    master_key = os.environ.get(policy.master_key_env) if policy.master_key_env else None
-    if not master_key:
-        print("Error: master_key_env not configured or not set in environment", file=sys.stderr)
-        return EXIT_FAIL
-
-    provided = os.environ.get("SAFETY_GATEWAY_TOKEN")
-    if not provided or not secrets.compare_digest(provided, master_key):
-        print("Error: master key required (set SAFETY_GATEWAY_TOKEN)", file=sys.stderr)
-        return EXIT_FAIL
+    policy = _policy_or_fail(args)
+    if policy is None:
+        return EXIT_USAGE
+    if _master_key_or_fail(policy) is None:
+        return EXIT_USAGE
 
     new_key = secrets.token_urlsafe(32)
     print(f"New master key: {new_key}")
@@ -301,6 +351,119 @@ def run_wall(args: argparse.Namespace) -> int:
             f"{group.signature.failing_step} | traces={len(group.records)} | "
             f"state={group.state}"
         )
+    return EXIT_PASS
+
+
+def gateway_doctor(args: argparse.Namespace) -> int:
+    """Report on this host's gateway configuration.
+
+    Every check here runs on the gateway side, so every check is something the
+    gateway can genuinely observe: the uid it is running as, the owner and mode
+    of each secret file, whether a master key is configured, what it binds to.
+
+    What it deliberately does NOT check is whether the agent can reach a
+    provider. That is a different machine, namespace or container, and reporting
+    on it from here would be inventing evidence. Run `make verify-boundary` for
+    that half -- it attaches to the agent's network and tries to escape.
+    """
+    import grp
+    import stat
+
+    print("SCOPE: this host's gateway configuration only.")
+    print("Does NOT report whether your agent can reach a provider -- that needs")
+    print("`make verify-boundary`, which runs from the agent's position.\n")
+
+    findings: list[tuple[str, str, str]] = []  # (status, label, detail)
+
+    def check(status: str, label: str, detail: str) -> None:
+        findings.append((status, label, detail))
+
+    try:
+        policy = load_route_policy(args.config)
+    except (OSError, ValueError) as exc:
+        print(f"could not read {args.config}: {exc}", file=sys.stderr)
+        return EXIT_FAIL
+
+    # 1. Privilege. A root gateway puts its secret in reach of every user.
+    euid = os.geteuid()
+    if euid == 0:
+        check("WARN", "running as root", "every local user can reach this process's secret")
+    else:
+        try:
+            name = grp.getgrgid(euid).gr_name
+        except KeyError:
+            name = f"uid {euid}"
+        check("OK", f"running as {name}", "not root")
+
+    # 2. Secret files. Mode and owner are the whole boundary for a file secret.
+    for route in policy.routes.values():
+        reference = route.secret_env
+        if not reference:
+            continue
+        if reference.startswith("file:"):
+            path = reference[5:]
+            try:
+                info = os.stat(path)
+            except OSError as exc:
+                check("FAIL", f"{route.path} secret", f"cannot read {path}: {exc.strerror}")
+                continue
+            mode = stat.S_IMODE(info.st_mode)
+            if mode & 0o077:
+                check(
+                    "FAIL",
+                    f"{route.path} secret",
+                    f"{path} is mode {mode:04o}; the gateway will refuse to read it "
+                    "until it is 0600",
+                )
+            elif info.st_uid != euid:
+                check(
+                    "FAIL",
+                    f"{route.path} secret",
+                    f"{path} is owned by uid {info.st_uid}, not the gateway's {euid}",
+                )
+            else:
+                check("OK", f"{route.path} secret", f"{path} mode {mode:04o}, owned by this user")
+        else:
+            check(
+                "WARN",
+                f"{route.path} secret",
+                f"{reference} is an environment variable, so any process sharing this "
+                "user can read it; prefer secret_env: \"file:/path\"",
+            )
+
+    # 3. Master key. Virtual keys are meaningless without one.
+    if not policy.master_key_env:
+        check("WARN", "no master key configured", "callers can only use the startup token")
+    elif not os.environ.get(policy.master_key_env):
+        check("FAIL", "master key", f"{policy.master_key_env} is set in the config but not in the environment")
+    else:
+        check("OK", "master key", f"{policy.master_key_env} is set")
+
+    # 4. Bind address. Loopback is the only safe default for a local gateway.
+    check(
+        "OK",
+        "bind address",
+        f"{args.host}:{args.port}"
+        + (
+            ""
+            if args.host in {"127.0.0.1", "localhost", "::1"}
+            else "  <- off-host: reachable beyond this machine"
+        ),
+    )
+
+    for status, label, detail in findings:
+        print(f"[{status}] {label}: {detail}")
+
+    failed = [f for f in findings if f[0] == "FAIL"]
+    warned = [f for f in findings if f[0] == "WARN"]
+    print()
+    if failed:
+        print(f"{len(failed)} problem(s) would stop the gateway from starting correctly.")
+        return EXIT_FAIL
+    if warned:
+        print(f"{len(warned)} warning(s). The gateway will run, but see docs/gateway-deployment.md.")
+    else:
+        print("This host's configuration is consistent. This does not verify the topology.")
     return EXIT_PASS
 
 
@@ -374,6 +537,8 @@ def main(argv: list[str] | None = None) -> int:
             return gateway_revoke_key(args)
         if args.gateway_cmd == "rotate-master":
             return gateway_rotate_master(args)
+        if args.gateway_cmd == "doctor":
+            return gateway_doctor(args)
         return run_gateway(args)
 
     parser.error("unknown command")

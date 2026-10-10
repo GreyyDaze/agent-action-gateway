@@ -1,0 +1,71 @@
+# Tier 1 deployment: the gateway as its own OS user on one host.
+#
+# This is the minimum that makes the custody claim true. The boundary is the
+# kernel's, not ours:
+#
+#   * User=safety-gateway  -> the agent's own user cannot read the gateway's
+#     environment through /proc/<pid>/environ, and cannot ptrace it.
+#   * LoadCredential=       -> the secret arrives as a read-only file descriptor
+#     in /run/credentials, mode 0400, owned by the gateway user. It is never in
+#     the environment, so it cannot appear in `ps`, a crash dump or a log line.
+#
+# Install:
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin safety-gateway
+#   sudo install -m 0755 <(curl -fsSL $BASE/deploy/routes.example.yaml) /etc/safety/routes.yaml
+#   sudo systemctl edit safety-gateway     # set Environment=SAFETY_MASTER_KEY=...
+#   sudo systemctl enable --now safety-gateway
+#
+# Verify it, do not assume it:
+#   make verify-boundary
+
+[Unit]
+Description=Agent Safety Layer gateway (holds upstream credentials)
+Documentation=file:///etc/safety/routes.yaml
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=safety-gateway
+Group=safety-gateway
+ExecStart=/usr/local/bin/safety gateway \
+    --config /etc/safety/routes.yaml \
+    --db /var/lib/safety/gateway.db
+
+# The master key issues and revokes virtual keys. It is the one secret that
+# belongs in the environment; every upstream credential arrives via
+# LoadCredential instead.
+EnvironmentFile=-/etc/safety/gateway.env
+
+# Upstream API credentials, one per route that needs one. Each is mounted
+# read-only at /run/credentials/<name>, mode 0400, owned by safety-gateway.
+# A route reads one with  secret_env: "file:/run/credentials/stripe_key"
+LoadCredential=stripe_key:/etc/safety/credentials/stripe_key
+
+StateDirectory=safety
+WorkingDirectory=/var/lib/safety
+
+# The gateway needs a network to reach providers and a filesystem for its
+# database. It does not need to read the route config as anything other than
+# the administrator wrote it, nor to write anywhere except its own state.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Do not let the credential reach a log line.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

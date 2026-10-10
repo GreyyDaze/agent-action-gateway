@@ -42,7 +42,11 @@ safety_layer = ["data/golden/*.json", "data/calibration/*.json"]
 "*" = ["data/*.db", "data/*.db-shm", "data/*.db-wal"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<9", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.11"]
+# The library is stdlib-only on purpose. YAML route tables are the one place
+# that needs a parser, so it is opt-in rather than a dependency every adopter
+# inherits. JSON route tables need nothing.
+yaml = ["PyYAML>=6"]
+dev = ["pytest>=8,<9", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.11", "PyYAML>=6"]
 
 [tool.pytest.ini_options]
 # Keep the rootdir explicit so `pytest` cannot collect a stale build/ tree.

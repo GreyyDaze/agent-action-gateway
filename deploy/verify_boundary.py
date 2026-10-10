@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Adversarial probe: run from the agent's position and try to escape.
+
+This tests the DEPLOYMENT, not the library. It is written against the Python
+standard library on purpose: if it imported safety_layer, a bug in our own code
+could satisfy it, and a check that cannot distinguish our code from the
+adversary's is not a check.
+
+Run it inside a container attached to `agent_net` — the network an agent
+occupies, and the only one it is meant to reach:
+
+    docker compose run --rm --no-deps \
+        --network agent_net -v "$PWD/verify_boundary.py:/probe.py:ro" \
+        python:3.12-slim python /probe.py --gateway http://gateway:8080
+
+Each check states what it proves and what it does not, because a probe that
+overstates itself is the failure mode this project exists to prevent.
+
+Exit codes: 0 all checks passed, 1 a boundary failed, 2 could not determine.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import socket
+import sys
+import urllib.error
+import urllib.request
+
+PROVIDER_HOST = "api.stripe.com"
+
+
+class Undetermined(Exception):
+    """A check could not run here. Never reported as a pass."""
+
+
+def _post(url: str, token: str | None, payload: dict | None = None) -> tuple[int, str]:
+    body = json.dumps(payload or {}).encode()
+    request = urllib.request.Request(url, data=body, method="POST")
+    request.add_header("Content-Type", "application/json")
+    if token is not None:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return int(response.status), response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), exc.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise Undetermined(f"could not reach {url}: {exc}") from exc
+
+
+def _tcp_reachable(host: str, port: int = 443, timeout: float = 5.0) -> bool:
+    """Whether a TCP connection to host:port completes.
+
+    Used for the egress check. DNS failure and connection refusal both count as
+    blocked, which is the outcome we want -- the exact mechanism does not
+    matter, reachability does.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except (TimeoutError, socket.gaierror, OSError):
+        return False
+
+
+def check_egress_blocked() -> tuple[bool, str]:
+    """A: the agent's position must not have a route to a provider."""
+    if _tcp_reachable(PROVIDER_HOST):
+        return False, (
+            f"REACHABLE {PROVIDER_HOST}:443 from the agent's network. A bypass "
+            "would succeed here, so no credential boundary exists."
+        )
+    return True, f"no route to {PROVIDER_HOST}:443 from the agent's network"
+
+
+def check_gateway_requires_a_key(gateway: str) -> tuple[bool, str]:
+    """The gateway must refuse an unauthenticated caller."""
+    try:
+        status, _ = _post(f"{gateway}/charge", None)
+    except Undetermined as exc:
+        raise Undetermined(f"cannot reach the gateway to test it: {exc}") from exc
+    if status == 401:
+        return True, "gateway refuses a caller with no key (401)"
+    return False, f"gateway answered {status} to an unauthenticated caller; expected 401"
+
+
+def check_gateway_accepts_a_key(gateway: str, key: str) -> tuple[bool, str]:
+    """A correctly scoped key must get past authentication.
+
+    Reaches the policy layer, so a held-until-approval or environment refusal is
+    the expected answer and still proves the key was accepted. Only 401 means
+    the key was rejected.
+    """
+    try:
+        status, body = _post(f"{gateway}/charge", key, {"amount": 100})
+    except Undetermined as exc:
+        raise Undetermined(f"cannot reach the gateway to test it: {exc}") from exc
+    if status == 401:
+        return False, f"gateway rejected the virtual key (401): {body[:120]}"
+    if status in (403, 401, 502):
+        return True, f"key accepted, request held at the policy layer ({status})"
+    return True, f"key accepted, gateway answered {status}"
+
+
+def check_secret_unreadable(path: str) -> tuple[bool, str]:
+    """The upstream credential must not be readable from here."""
+    if not os.path.exists(path):
+        # Absent is the strongest outcome: there is nothing here at all.
+        return True, f"{path} is not present in the agent's filesystem"
+    if not os.access(path, os.R_OK):
+        return True, f"{path} exists but is not readable by this process"
+    try:
+        with open(path) as handle:
+            handle.read(1)
+    except OSError as exc:
+        return True, f"{path} exists but could not be read ({exc.strerror})"
+    return False, f"READ {path} from the agent's position. The credential is exposed."
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--gateway", default="http://gateway:8080")
+    parser.add_argument(
+        "--key",
+        default=os.environ.get("SAFETY_PROBE_KEY", ""),
+        help="a virtual key scoped to the gateway's routes",
+    )
+    parser.add_argument(
+        "--secret-path",
+        default="/run/secrets/stripe_key",
+        help="where the upstream credential would be if it were wrongly mounted",
+    )
+    args = parser.parse_args()
+
+    print("PROBE: running from the agent's position, trying to escape the boundary.\n")
+    print("  Proves: the deployment blocks direct provider access, and the gateway")
+    print("          authenticates and scopes its callers.")
+    print("  Does NOT prove: that any particular agent is wired to the gateway.\n")
+
+    checks: list[tuple[str, bool | None, str]] = [
+        ("A  no route to a provider", None, ""),
+        ("B  gateway refuses a caller with no key", None, ""),
+        ("C  gateway accepts a scoped key", None, ""),
+        ("D  upstream secret unreadable here", None, ""),
+    ]
+
+    def record(index: int, ok: bool, detail: str) -> None:
+        checks[index] = (checks[index][0], ok, detail)
+
+    for index, run in (
+        (0, lambda: check_egress_blocked()),
+        (1, lambda: check_gateway_requires_a_key(args.gateway)),
+        (3, lambda: check_secret_unreadable(args.secret_path)),
+    ):
+        try:
+            record(index, *run())
+        except Undetermined as exc:
+            record(index, None, str(exc))
+
+    if not args.key:
+        record(2, None, "no virtual key supplied; set SAFETY_PROBE_KEY or pass --key")
+    else:
+        try:
+            record(2, *check_gateway_accepts_a_key(args.gateway, args.key))
+        except Undetermined as exc:
+            record(2, None, str(exc))
+
+    undetermined = 0
+    for name, ok, detail in checks:
+        if ok is None:
+            label = "UNKNOWN"
+            undetermined += 1
+        elif ok:
+            label = "PASS"
+        else:
+            label = "FAIL"
+        print(f"{label:>7}  {name}\n         {detail}\n")
+
+    if undetermined:
+        print(
+            f"INCONCLUSIVE: {undetermined} of {len(checks)} checks could not run "
+            "here. That is not a pass."
+        )
+        return 2
+    failed = [name for name, ok, _ in checks if ok is False]
+    if failed:
+        print(f"BOUNDARY NOT HELD: {len(failed)} check(s) failed: {', '.join(failed)}")
+        return 1
+    print("BOUNDARY HELD from the agent's position.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

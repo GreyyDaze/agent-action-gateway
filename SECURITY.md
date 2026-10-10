@@ -60,6 +60,21 @@ one that does not exist:
 - **The library cannot constrain its own process.** Code running in the same
   interpreter can reach the database directly. Use the gateway when the caller
   must not hold the upstream credential.
+- **Credential custody depends on the deployment, not on the code.** The
+  gateway holds the upstream key so the agent never receives it, but that only
+  holds while the gateway runs as its own service across a boundary the agent
+  cannot cross. In the agent's own process the agent can read the same
+  environment the key came from, so there is no custody. Two boundaries are
+  needed: the agent must not be able to *read* the key, and must not be able to
+  *reach* the provider. A vault supplies neither by itself — it is lifecycle
+  and rotation, not a boundary. `docs/gateway-deployment.md` gives the tiers,
+  `safety gateway doctor` checks this host, and `make verify-boundary` probes
+  the topology from the agent's own position.
+- **Two deployment failures cannot be detected from here.** If an action never
+  reached the layer, it wrote no trace, so no audit can find it — only
+  `safety check --app` can, statically. And whether the agent's network can
+  reach a provider is a fact about the adopter's network, which the gateway
+  process cannot observe without inventing evidence.
 - **No transport encryption is enforced.** The gateway forwards over whatever
   scheme its route declares; use `https` upstreams in production.
 - **Approvals are not bound to a session.** An approval is bound to its

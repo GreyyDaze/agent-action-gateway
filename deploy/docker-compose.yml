@@ -1,0 +1,67 @@
+# Reference deployment: the gateway, and nothing else.
+#
+# This file ships the one service this project actually operates — the gateway,
+# which holds upstream credentials. It deliberately does NOT contain an `agent`
+# service. Your agent is code you already have; faking one here would prove
+# only that this file is well written, not that your agent is protected.
+#
+# Two networks, and the gateway is the only thing on both:
+#
+#   agent_net     your agent joins this. It can reach the gateway, nothing else.
+#   upstream_net  the gateway joins this. Only the gateway can reach providers.
+#
+# The agent container therefore has no route to api.stripe.com at all, so a
+# bypass is not merely discouraged, it is unreachable. That boundary is created
+# by this file, not by any code inside the gateway.
+#
+# Bring it up:
+#     printf 'sk_live_replace_me' > secrets/stripe_key && chmod 600 secrets/stripe_key
+#     export SAFETY_MASTER_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
+#     docker compose up -d
+#
+# Then verify the boundary actually holds (this is the test that matters):
+#     make verify-boundary
+#
+# The result is INCONCLUSIVE unless Docker is available: run it, do not assume it.
+
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gateway
+    image: agent-safety-eval-layer-gateway:local
+    restart: unless-stopped
+    # Non-root, so the process the attacker would have to compromise is not
+    # root. The gateway refuses to hold a world-readable secret.
+    user: "1001:1001"
+    environment:
+      SAFETY_MASTER_KEY: ${SAFETY_MASTER_KEY:?set SAFETY_MASTER_KEY before starting}
+      SAFETY_GATEWAY: "1"
+    volumes:
+      # Read-only. The secret is owned by the gateway user, mode 0600.
+      - ./routes.example.json:/etc/safety/routes.yaml:ro
+      - ./secrets:/run/secrets:ro
+    command:
+      - gateway
+      - --config
+      - /etc/safety/routes.yaml
+      - --db
+      - /var/lib/safety/gateway.db
+    networks:
+      # Both, and that is the entire point: the gateway is the only service that
+      # can reach an upstream, and the only one your agent needs to reach.
+      - agent_net
+      - upstream_net
+
+    # your agent joins agent_net and gets a virtual key:
+    #     client = SafetyClient(base_url="http://gateway:8080", key=VIRTUAL_KEY)
+    #
+    # It receives no upstream credential, and it has no route to a provider.
+    # agent:
+    #   networks: [agent_net]     # <- note: agent_net only
+
+networks:
+  agent_net:
+    internal: false     # your agent may still reach the internet; the gateway is the only way to a provider
+  upstream_net:
+    internal: false     # the gateway's egress. Compose cannot restrict it to one FQDN — see docs/gateway-deployment.md

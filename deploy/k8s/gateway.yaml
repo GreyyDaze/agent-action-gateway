@@ -1,0 +1,222 @@
+# Tier 3 deployment: the gateway on Kubernetes, holding its own identity.
+#
+# Two NetworkPolicies do the work here. Together they are the second boundary,
+# the one that survives a leaked credential:
+#
+#   1. default-deny ingress   -> only pods labelled role: agent may reach the gateway
+#   2. agent egress allowlist -> an agent pod may reach the gateway and DNS, and
+#                                nothing else. It cannot reach api.stripe.com,
+#                                so a stolen upstream key is still useless from
+#                                that position.
+#
+# The gateway is the only workload bound to a ServiceAccount, and the only one
+# with any egress at all. Replace the placeholder secret with your own identity
+# integration before production; a static API key in a Secret is Tier 1 hygiene
+# wearing a Tier 3 hat.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: safety
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: safety-gateway
+  namespace: safety
+  annotations:
+    # Replace with your own workload identity (IRSA, GKE Workload Identity, or a
+    # Vault AppRole) so the gateway authenticates to the provider and no static
+    # key is stored anywhere.
+    safety.example.com/identity: "TODO: bind this to your provider's workload identity"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: safety-gateway-secrets
+  namespace: safety
+type: Opaque
+stringData:
+  # PLACEHOLDER. In production, do not store provider keys here — have the
+  # gateway's ServiceAccount exchange its identity for a short-lived credential
+  # at request time.
+  SAFETY_MASTER_KEY: "replace-me-with-a-32-byte-random-value"
+  stripe_key: "sk_live_replace_me"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: safety-gateway
+  namespace: safety
+  labels:
+    app: safety-gateway
+    role: gateway
+spec:
+  replicas: 1                      # single-writer: the trace database is SQLite
+  selector:
+    matchLabels:
+      app: safety-gateway
+  template:
+    metadata:
+      labels:
+        app: safety-gateway
+        role: gateway
+    spec:
+      serviceAccountName: safety-gateway
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway
+          image: agent-safety-eval-layer-gateway:local
+          args:
+            - gateway
+            - --config=/etc/safety/routes.yaml
+            - --db=/var/lib/safety/gateway.db
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SAFETY_MASTER_KEY
+              valueFrom:
+                secretKeyRef: {name: safety-gateway-secrets, key: SAFETY_MASTER_KEY}
+          volumeMounts:
+            - name: routes
+              mountPath: /etc/safety/routes.yaml
+              subPath: routes.yaml
+              readOnly: true
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/safety
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            # The gateway answers 401 to an unauthenticated GET, which is a
+            # correct "I am up and I require a token".
+            httpHeaders:
+              - {name: Authorization, value: "Bearer probe"}
+            initialDelaySeconds: 2
+          livenessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 10
+      volumes:
+        - name: routes
+          configMap:
+            name: safety-gateway-routes
+        - name: secrets
+          secret:
+            secretName: safety-gateway-secrets
+        - name: state
+          emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: safety-gateway-routes
+  namespace: safety
+data:
+  routes.yaml: |
+    master_key_env: SAFETY_MASTER_KEY
+    session_environment: prod
+    routes:
+      - path: /charge
+        upstream: https://api.stripe.com/v1/payment_intents
+        action: charge
+        risk: destructive
+        method: POST
+        secret_env: "file:/run/secrets/stripe_key"
+        environment: prod
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: safety-gateway
+  namespace: safety
+spec:
+  selector: {app: safety-gateway}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# Boundary A: the gateway secret is unreadable from anywhere but the gateway pod.
+# The agent pod has no Secret mounted at all, and no ServiceAccount token that
+# the gateway's identity is reachable through.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: safety
+spec:
+  podSelector: {app: safety-gateway}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {role: agent}}
+      ports:
+        - {protocol: TCP, port: 8080}
+---
+# Boundary B: an agent can reach the gateway and DNS. It cannot reach a
+# provider, so a leaked upstream credential is useless from that position.
+# This is the half a vault alone does not give you.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-egress-allowlist
+  namespace: safety
+spec:
+  podSelector: {matchLabels: {role: agent}}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: {matchLabels: {role: gateway}}
+      ports:
+        - {protocol: TCP, port: 8080}
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    # Deliberately absent: any rule permitting api.stripe.com. Adding one
+    # removes Boundary B, which is what makes a leaked key harmless.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-egress-to-providers
+  namespace: safety
+spec:
+  podSelector: {app: safety-gateway}
+  policyTypes: [Egress]
+  egress:
+    # Replace the CIDR with an FQDN rule (Cilium, or your cloud's DNS-based
+    # egress policy). A CIDR permits every host in it.
+    - to:
+        - ipBlock: {cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]}
+      ports:
+        - {protocol: TCP, port: 443}
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
