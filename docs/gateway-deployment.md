@@ -106,6 +106,28 @@ An agent with a key for `/charge` receives `403` on `/refund`. An unregistered
 path is refused identically, so the gateway does not become a route-existence
 oracle.
 
+### Status codes
+
+A client has to be able to tell these apart, so they are not overloaded:
+
+| Status | Meaning | Client should |
+|---|---|---|
+| `401` | No key, unknown key, expired or revoked | Re-authenticate. Do not retry blindly. |
+| `403` | Authenticated, not permitted — route not in the key's scope | Request a key with that route. |
+| `403` + `needs_approval: true` | Authenticated, action held pending approval | Obtain an approval, then retry. |
+| `502` | The upstream could not be reached | Retry later. The action did not happen. |
+
+`401` previously also meant "awaiting approval", which left a client unable to
+tell whether to request an approval or to re-authenticate. It meant the
+`make verify-boundary` probe reported a working key as rejected.
+
+### Key lifecycle
+
+Issuing and revoking take effect on the running gateway — no restart. The store
+is re-read per request, so a revoked key stops working immediately. An earlier
+version cached the key set at startup, which meant a compromised key stayed
+valid until someone restarted the service.
+
 ## Checking your deployment
 
 Two commands, and they answer different questions.

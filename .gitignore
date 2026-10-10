@@ -38,3 +38,4 @@ htmlcov/
 
 # Manual verification output
 data/phase1-manual/
+deploy/secrets/

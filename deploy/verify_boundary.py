@@ -89,18 +89,26 @@ def check_gateway_requires_a_key(gateway: str) -> tuple[bool, str]:
 def check_gateway_accepts_a_key(gateway: str, key: str) -> tuple[bool, str]:
     """A correctly scoped key must get past authentication.
 
-    Reaches the policy layer, so a held-until-approval or environment refusal is
-    the expected answer and still proves the key was accepted. Only 401 means
-    the key was rejected.
+    What happens next depends on policy, not on authentication: a held-until-
+    approval or environment refusal is the expected answer and still proves the
+    key was accepted. So the body is inspected rather than the status alone --
+    a status code that means both "not authenticated" and "awaiting approval"
+    is exactly the ambiguity this check must not depend on.
     """
     try:
         status, body = _post(f"{gateway}/charge", key, {"amount": 100})
     except Undetermined as exc:
         raise Undetermined(f"cannot reach the gateway to test it: {exc}") from exc
-    if status == 401:
-        return False, f"gateway rejected the virtual key (401): {body[:120]}"
-    if status in (403, 401, 502):
-        return True, f"key accepted, request held at the policy layer ({status})"
+
+    try:
+        parsed = json.loads(body)
+    except (ValueError, TypeError):
+        parsed = {}
+    accepted = bool(parsed.get("needs_approval")) or status not in (401, 403)
+    if not accepted:
+        return False, f"gateway rejected the virtual key ({status}): {body[:120]}"
+    if parsed.get("needs_approval"):
+        return True, "key accepted, request held pending approval"
     return True, f"key accepted, gateway answered {status}"
 
 

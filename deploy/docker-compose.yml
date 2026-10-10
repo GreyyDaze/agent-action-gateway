@@ -1,25 +1,26 @@
 # Reference deployment: the gateway, and nothing else.
 #
-# This file ships the one service this project actually operates — the gateway,
+# This file ships the one service this project actually operates -- the gateway,
 # which holds upstream credentials. It deliberately does NOT contain an `agent`
 # service. Your agent is code you already have; faking one here would prove
 # only that this file is well written, not that your agent is protected.
 #
 # Two networks, and the gateway is the only thing on both:
 #
-#   agent_net     your agent joins this. It can reach the gateway, nothing else.
-#   upstream_net  the gateway joins this. Only the gateway can reach providers.
+#   agent_net     internal. Your agent joins this. It can reach the gateway and
+#                 nothing else -- no route to a provider exists at all.
+#   upstream_net  the gateway's only way out to a provider.
 #
-# The agent container therefore has no route to api.stripe.com at all, so a
-# bypass is not merely discouraged, it is unreachable. That boundary is created
-# by this file, not by any code inside the gateway.
+# That is Boundary B, and it is created here rather than in code: a container on
+# an internal network cannot reach a provider not because something refuses it,
+# but because there is nowhere to go.
 #
 # Bring it up:
 #     printf 'sk_live_replace_me' > secrets/stripe_key && chmod 600 secrets/stripe_key
 #     export SAFETY_MASTER_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
-#     docker compose up -d
+#     docker compose up -d gateway
 #
-# Then verify the boundary actually holds (this is the test that matters):
+# Then verify the boundary actually holds, rather than assuming it:
 #     make verify-boundary
 #
 # The result is INCONCLUSIVE unless Docker is available: run it, do not assume it.
@@ -31,22 +32,36 @@ services:
       dockerfile: deploy/Dockerfile.gateway
     image: agent-safety-eval-layer-gateway:local
     restart: unless-stopped
-    # Non-root, so the process the attacker would have to compromise is not
-    # root. The gateway refuses to hold a world-readable secret.
+    # Non-root, so the process that would have to be compromised is not root.
+    # The gateway also refuses to read a world-readable secret.
     user: "1001:1001"
     environment:
       SAFETY_MASTER_KEY: ${SAFETY_MASTER_KEY:?set SAFETY_MASTER_KEY before starting}
       SAFETY_GATEWAY: "1"
     volumes:
-      # Read-only. The secret is owned by the gateway user, mode 0600.
-      - ./routes.example.json:/etc/safety/routes.yaml:ro
+      - ./routes.example.json:/etc/safety/routes.json:ro
       - ./secrets:/run/secrets:ro
+      # A named volume, not an anonymous one. The trace database and every
+      # issued virtual key live here, so losing it on restart would silently
+      # revoke every key your agents already hold -- they would start receiving
+      # 401s with nothing in the logs to explain it.
+      - gateway-state:/var/lib/safety
     command:
       - gateway
       - --config
-      - /etc/safety/routes.yaml
+      - /etc/safety/routes.json
       - --db
       - /var/lib/safety/gateway.db
+      # 0.0.0.0 so other containers on agent_net can reach it. A container bound
+      # to 127.0.0.1 is reachable only by itself, which makes the gateway
+      # useless as a sidecar. This is safe because the port is NOT published to
+      # the host: the isolation comes from which networks this container joins,
+      # not from the bind address.
+      - --host
+      - "0.0.0.0"
+    # Deliberately no `ports:`. Publishing to the host would put the gateway on
+    # your laptop's network, where the network boundary does not apply. Your
+    # agent reaches it over agent_net as `gateway:8080`.
     networks:
       # Both, and that is the entire point: the gateway is the only service that
       # can reach an upstream, and the only one your agent needs to reach.
@@ -58,10 +73,44 @@ services:
     #
     # It receives no upstream credential, and it has no route to a provider.
     # agent:
-    #   networks: [agent_net]     # <- note: agent_net only
+    #   networks: [agent_net]     # <- agent_net only, never upstream_net
+
+  # Not a service you run. It exists so `make verify-boundary` can attach an
+  # ephemeral container to agent_net, try to escape the boundary, and delete
+  # itself. Behind a compose profile, so `docker compose up` never starts it.
+  #
+  # Note what it is NOT: it is not an agent. It does no work on your behalf and
+  # proves nothing about how your agent behaves -- only that the network your
+  # agent occupies cannot reach a provider.
+  probe:
+    profiles: ["probe"]
+    image: python:3.12-slim
+    working_dir: /probe
+    volumes:
+      - ./verify_boundary.py:/probe/verify_boundary.py:ro
+    environment:
+      SAFETY_PROBE_KEY: ${SAFETY_PROBE_KEY:-}
+    command:
+      - python
+      - /probe/verify_boundary.py
+      - --gateway
+      - http://gateway:8080
+      - --secret-path
+      - /run/secrets/stripe_key
+    networks:
+      - agent_net
+
+volumes:
+  gateway-state:
 
 networks:
+  # internal: true is the whole of Boundary B for this file.
+  #
+  # Compose cannot narrow this further to one allowed FQDN. That needs Cilium or
+  # a cloud egress policy; see docs/gateway-deployment.md.
   agent_net:
-    internal: false     # your agent may still reach the internet; the gateway is the only way to a provider
+    internal: true
+
+  # The gateway's only way out to a provider.
   upstream_net:
-    internal: false     # the gateway's egress. Compose cannot restrict it to one FQDN — see docs/gateway-deployment.md
+    internal: false

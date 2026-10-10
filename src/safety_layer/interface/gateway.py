@@ -152,7 +152,14 @@ class SafetyGateway:
         self._step = 0
 
     def _load_virtual_keys(self) -> None:
-        """Load virtual keys from the trace store into the policy."""
+        """Refresh the in-memory key set from the store.
+
+        Called at startup and again whenever a presented key is not recognised,
+        so issuing a key takes effect without restarting the gateway. An agent
+        that received a key and was then refused would have no way to tell that
+        from a misconfiguration -- it would just retry a key that can never
+        work until someone restarts the service.
+        """
         for vk_data in self.store.load_virtual_keys():
             vk = VirtualKey(
                 key=vk_data["key"],
@@ -162,6 +169,37 @@ class SafetyGateway:
                 revoked=vk_data["revoked"],
             )
             self.policy.virtual_keys[vk.key] = vk
+
+    def resolve_caller(self, presented: str | None) -> tuple[VirtualKey | None, bool]:
+        """Classify a caller as (virtual key, is_master).
+
+        Returns (None, False) when nothing authenticates.
+
+        The store is re-read on every request rather than trusting the copy
+        loaded at startup. That matters in both directions: a key issued after
+        the process started has to work, and a key revoked after the process
+        started has to stop working. Caching either would mean an operator who
+        revokes a compromised key sees it keep working until someone restarts
+        the service. The in-memory map is kept as the lookup structure, but it
+        is refreshed from the store before it is trusted.
+        """
+        if presented is None:
+            return None, False
+        self._load_virtual_keys()
+        existing = self.policy.validate_virtual_key(presented)
+        if existing is not None:
+            return existing, False
+        return None, self._is_master_presented(presented)
+
+    def _is_master_presented(self, presented: str) -> bool:
+        """Whether the caller presented the master key from the environment."""
+        env_name = self.policy.master_key_env
+        if not env_name:
+            return False
+        master_key = os.environ.get(env_name)
+        if master_key is None:
+            return False
+        return secrets.compare_digest(presented, master_key)
 
     def handle(
         self,
@@ -194,7 +232,11 @@ class SafetyGateway:
         try:
             decision = self._authorize(route, arguments, key, approval_id)
         except ApprovalError as exc:
-            return GatewayResult(401, {"error": str(exc), "needs_approval": True})
+            # 403, not 401. The caller has already proved who it is; what it
+            # lacks is authorisation. Reusing 401 made "you need approval"
+            # indistinguishable from "your key is invalid", and a real client
+            # cannot tell whether to request an approval or re-authenticate.
+            return GatewayResult(403, {"error": str(exc), "needs_approval": True})
 
         credential = route.credential()
         headers = {"Content-Type": "application/json"}
@@ -308,8 +350,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         # A virtual key is scoped to a route set; the master key and the
         # per-process bootstrap token are not. Resolve which one this is before
         # anything else, because the answer decides what is permitted.
-        virtual_key = self.policy.validate_virtual_key(presented) if presented else None
-        is_master = self._is_master(presented) if (presented and not virtual_key) else False
+        virtual_key, is_master = self.gateway.resolve_caller(presented)
         if virtual_key is None and not is_master and (
             not presented or not secrets.compare_digest(presented, self.access_token)
         ):
@@ -343,16 +384,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
             idempotency_key=self.headers.get("Idempotency-Key"),
         )
         self._respond(result.status, result.body)
-
-    def _is_master(self, presented: str | None) -> bool:
-        """Whether the caller presented the master key from the environment."""
-        env_name = self.policy.master_key_env
-        if not presented or not env_name:
-            return False
-        master_key = os.environ.get(env_name)
-        if master_key is None:
-            return False
-        return secrets.compare_digest(presented, master_key)
 
 
 def build_gateway_server(

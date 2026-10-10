@@ -42,14 +42,21 @@ code cannot satisfy it.
 Expected on a laptop: **check A fails.** Your machine has unrestricted egress,
 so a bypass would succeed there. That failure is correct and is the finding.
 
+Issue the key against the gateway's own database — the same one the gateway
+reads — and hand it to the probe:
+
 ```bash
-safety gateway --config routes.example.json --db /tmp/g.db \
-    issue-key --name billing-agent --ttl 1h --routes /charge
-SAFETY_MASTER_KEY=... docker compose run --rm --no-deps \
-    --network agent_net -v "$PWD/verify_boundary.py:/probe.py:ro" \
-    -e SAFETY_PROBE_KEY=sk-virtual-... \
-    python:3.12-slim python /probe.py --gateway http://gateway:8080
+export SAFETY_MASTER_KEY=...            # must match the running gateway's
+KEY=$(docker compose exec -T -e SAFETY_MASTER_KEY gateway \
+        safety gateway --config /etc/safety/routes.json \
+        --db /var/lib/safety/gateway.db \
+        issue-key --name billing-agent --ttl 1h --routes /charge)
+
+SAFETY_PROBE_KEY=$KEY make verify-boundary
 ```
+
+`docker compose exec` needs the key against the gateway's database, not a local
+one, or the running gateway will never see it.
 
 ## Secrets
 

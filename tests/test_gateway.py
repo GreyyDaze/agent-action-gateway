@@ -170,7 +170,9 @@ class GatewayTest(unittest.TestCase):
     def test_destructive_route_without_approval_is_held(self) -> None:
         gateway = self._gateway()
         result = gateway.handle("POST", "/charge", {"amount": 100})
-        self.assertEqual(result.status, 401)
+        # 403, not 401: the caller proved who it is and lacks authorisation.
+        # Reusing 401 made "awaiting approval" look like "invalid key".
+        self.assertEqual(result.status, 403)
         self.assertTrue(result.body.get("needs_approval"))
         self.assertEqual(RecordingUpstream.received, [], "held call must not forward")
 
@@ -195,7 +197,7 @@ class GatewayTest(unittest.TestCase):
             "POST", "/charge", payload,
             approval_id=approval.approval_id, idempotency_key="key-1",
         )
-        self.assertEqual(second.status, 401)
+        self.assertEqual(second.status, 403)  # awaiting approval, not a bad token
         self.assertEqual(len(RecordingUpstream.received), 1, "replayed approval caused a second charge")
 
     def test_idempotency_key_is_forwarded(self) -> None:
@@ -345,6 +347,64 @@ class CallerAuthTest(unittest.TestCase):
         code, body = self._call(self._policy(), "/charge", "master-value")
         self.assertEqual(code, 502)
         self.assertIn("upstream unreachable", body)
+
+
+class LiveKeyIssuanceTest(unittest.TestCase):
+    """A key issued to a *running* gateway must work, and a revoked one must stop.
+
+    The operator's sequence is: start the gateway, issue a key, hand it to an
+    agent. If the running process only knows the keys it loaded at startup, the
+    agent holds a key that cannot work until someone restarts the service -- and
+    sees a 401 with nothing to indicate that a restart is the remedy. The same
+    applies to revocation: a revoked key that keeps working is worse than one
+    that never worked.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.store = TraceStore(Path(self._tmp.name) / "runtime.db")
+        os.environ["SAFETY_GATEWAY"] = "1"
+        os.environ["TEST_MASTER_KEY"] = "master-value"
+        self.addCleanup(os.environ.pop, "SAFETY_GATEWAY", None)
+        self.addCleanup(os.environ.pop, "TEST_MASTER_KEY", None)
+
+        policy = GatewayPolicy(session_environment="prod", master_key_env="TEST_MASTER_KEY")
+        policy.register(
+            Route(
+                path="/charge",
+                upstream="http://127.0.0.1:1/charge",
+                action="charge",
+                risk="read",
+            )
+        )
+        self.server, _handler = build_gateway_server(self.store, policy, port=0)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def _post(self, token: str) -> tuple[int, str]:
+        request = urllib.request.Request(
+            self.base + "/charge", data=b"{}", method="POST"
+        )
+        request.add_header("Authorization", f"Bearer {token}")
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request, timeout=5)
+        return int(raised.exception.code), raised.exception.read().decode()
+
+    def test_a_key_issued_after_startup_is_accepted(self) -> None:
+        self.store.save_virtual_key("late-key", "late", ["/charge"], expires_at=None)
+        status, body = self._post("late-key")
+        # 502 means it reached the (deliberately dead) upstream: authenticated
+        # and authorised. A 401 would mean the key was never picked up.
+        self.assertEqual(status, 502, body)
+
+    def test_a_revoked_key_stops_working_on_a_running_gateway(self) -> None:
+        self.store.save_virtual_key("doomed", "doomed", ["/charge"], expires_at=None)
+        self.assertEqual(self._post("doomed")[0], 502)
+
+        self.assertTrue(self.store.revoke_virtual_key("doomed"))
+        self.assertEqual(self._post("doomed")[0], 401)
 
 
 if __name__ == "__main__":

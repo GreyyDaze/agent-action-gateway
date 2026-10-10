@@ -43,11 +43,9 @@ verify-boundary:
 	  echo "  This says nothing about whether your setup is safe."; \
 	  exit 2; }
 	@cd deploy && docker compose up -d gateway
-	@cd deploy && SAFETY_MASTER_KEY=$${SAFETY_MASTER_KEY:-} \
-	  docker compose run --rm --no-deps --network agent_net \
-	    -v "$$(pwd)/verify_boundary.py:/probe.py:ro" \
-	    -e SAFETY_PROBE_KEY="$${SAFETY_PROBE_KEY:-}" \
-	    python:3.12-slim python /probe.py --gateway http://gateway:8080
+	@cd deploy && docker compose run --rm probe; status=$$?; \
+	  if [ $$status -eq 2 ]; then echo "INCONCLUSIVE: the probe could not determine the boundary."; fi; \
+	  exit $$status
 
 doctor:
 	$(PYTHON) -m safety_layer.interface.cli gateway doctor \

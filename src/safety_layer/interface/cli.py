@@ -194,8 +194,11 @@ def run_gateway(args: argparse.Namespace) -> int:
         print(f"Safety gateway on unix://{args.unix_socket}")
     else:
         print(f"Safety gateway on http://{args.host}:{server.server_address[1]}/")
-    print(f"access token: {getattr(handler, 'access_token', '')}")
-    print(f"registered routes: {len(policy.routes)} (anything else is refused)")
+    # Flushed explicitly: under a service manager or a container, stdout is a
+    # pipe and therefore block-buffered, so an unflushed banner stays in the
+    # buffer. The operator would see no output at all and no access token.
+    print(f"access token: {getattr(handler, 'access_token', '')}", flush=True)
+    print(f"registered routes: {len(policy.routes)} (anything else is refused)", flush=True)
     server.serve_forever()
     return EXIT_PASS
 
