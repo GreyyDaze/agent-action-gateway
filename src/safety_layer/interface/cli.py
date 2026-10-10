@@ -71,6 +71,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wall.add_argument("--db", default="data/runtime.db")
 
+    path = sub.add_parser(
+        "path",
+        help="score how each run got there, not just whether it finished",
+    )
+    path.add_argument("--db", default="data/runtime.db")
+    path.add_argument("--run", help="score only this run")
+    path.add_argument("--format", choices=("text", "json"), default="text")
+    path.add_argument(
+        "--expect",
+        help="comma-separated actions a run was supposed to attempt",
+    )
+
     gateway = sub.add_parser(
         "gateway",
         help="serve the HTTP gateway for your routes (it holds the upstream keys)",
@@ -470,6 +482,49 @@ def gateway_doctor(args: argparse.Namespace) -> int:
     return EXIT_PASS
 
 
+def run_path_report(args: argparse.Namespace) -> int:
+    """Score the path each recorded run took.
+
+    Additive only: nothing here changes a verdict. A run that finished cleanly
+    can still have reached for something it should not have, and that is the
+    thing worth seeing. Reporting is always safe; gating is a separate decision.
+    """
+    from ..evaluation.trajectory import score
+
+    traces = TraceStore(args.db).snapshot()["traces"]
+    by_run: dict[str, list] = {}
+    for trace in traces:
+        by_run.setdefault(str(trace.get("run_id")), []).append(trace)
+
+    expected = [a.strip() for a in (args.expect or "").split(",") if a.strip()]
+    selected = {args.run} if args.run else set(by_run)
+
+    report = []
+    for run_id, steps in sorted(by_run.items()):
+        if run_id not in selected:
+            continue
+        report.append({"run_id": run_id, **score(steps, expected_actions=expected).as_dict()})
+
+    if args.format == "json":
+        print(json.dumps({"runs": report}, indent=2))
+    else:
+        for entry in report:
+            if entry["clean"]:
+                print(f"{entry['run_id']}  clean path  penalty=0")
+                continue
+            print(f"{entry['run_id']}  penalty={entry['penalty']}  {', '.join(entry['kinds'])}")
+            for signal in entry["signals"]:
+                print(f"    step {signal['step']}: {signal['detail']}")
+        if report and all(entry["clean"] for entry in report):
+            print("\nNo safety problems found in the recorded paths.")
+        elif not report:
+            print("No runs recorded.")
+
+    # A finding is not a failure of the tool. Exit 0 unless nothing was scored,
+    # so this composes in a pipeline without being mistaken for a gate.
+    return EXIT_PASS if report else EXIT_FAIL
+
+
 def _delegate(prog: str, args: list[str], module: str, attr: str = "main") -> int:
     """Run a subcommand's implementation with `sys.argv` set for its parser.
 
@@ -530,6 +585,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "wall":
         announce("your run history — the failures recorded in your database.")
         return run_wall(args)
+    if args.command == "path":
+        announce("how your recorded runs got there — not a quality judgement.")
+        return run_path_report(args)
     if args.command == "gateway":
         announce("your route config — the gateway holds the upstream credentials.")
         if args.gateway_cmd == "issue-key":

@@ -67,6 +67,24 @@ result["enforcement"]   # "observe"
 `run()` records a trace. It does **not** authorize anything — tools it does not
 know about are not enforced. Use `session()` when you want protection.
 
+## Scoring how a run got there
+
+`safety wall` groups what broke. `safety path` answers a different question:
+did the run get there safely, or did it reach the right answer by trying
+something it should not have first?
+
+~~~bash
+safety path --db data/runtime.db
+~~~
+
+It reports the signals defined in `docs/trajectory-signals.md` — a held
+destructive action, a tripped budget, a no-progress loop, excessive hops, a
+declared action that never happened. Verbosity is deliberately not a signal: a
+long path is not automatically a bad one, and a score nobody can argue with is
+worse than none.
+
+It reports and never gates. Nothing about an existing verdict changes.
+
 ## CLI
 
 ~~~bash
