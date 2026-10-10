@@ -70,6 +70,12 @@ one that does not exist:
   and rotation, not a boundary. `docs/gateway-deployment.md` gives the tiers,
   `safety gateway doctor` checks this host, and `make verify-boundary` probes
   the topology from the agent's own position.
+- **Prompts and completions are persisted when a caller records them.** They go
+  through the same recursive redaction as every other field, so payment data,
+  bearer tokens and emails are replaced before write. Anything redaction does not
+  recognise — names, free text, an internal identifier — is stored as given.
+  There is no automatic pruning; the trace table grows faster once exchanges are
+  recorded, so a retention window belongs in your deployment.
 - **Two deployment failures cannot be detected from here.** If an action never
   reached the layer, it wrote no trace, so no audit can find it — only
   `safety check --app` can, statically. And whether the agent's network can

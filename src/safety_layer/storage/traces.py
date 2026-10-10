@@ -131,6 +131,25 @@ class TraceStore(SqliteStore):
         # v4: virtual keys table for gateway caller authentication
         yield 4, [_VIRTUAL_KEYS_TABLE]
 
+        # v5: the model exchange itself. `input_json`/`output_json` record the
+        # task and the tool result; neither records what was actually sent to the
+        # model or what came back, so an audit could not reconstruct the
+        # exchange. Cost and latency live here too, because a run's spend is a
+        # property of its steps.
+        exchange = [
+            "ALTER TABLE trace_events ADD COLUMN prompt_json TEXT",
+            "ALTER TABLE trace_events ADD COLUMN completion_json TEXT",
+            "ALTER TABLE trace_events ADD COLUMN tokens_in INTEGER",
+            "ALTER TABLE trace_events ADD COLUMN tokens_out INTEGER",
+            "ALTER TABLE trace_events ADD COLUMN cost_usd REAL",
+            "ALTER TABLE trace_events ADD COLUMN latency_ms REAL",
+        ]
+        current = self._columns("trace_events")
+        if current:
+            yield 5, [stmt for stmt in exchange if _added_column(stmt) not in current]
+        else:
+            yield 5, []
+
     def append_trace(self, event: TraceEvent, *, enforcement: str | None = None) -> int:
         """Persist a trace event after deterministic redaction.
 
@@ -143,8 +162,10 @@ class TraceStore(SqliteStore):
                 INSERT INTO trace_events(
                     run_id, step, event, input_json, output_json, status,
                     flags_json, capture_class, provider_metadata_json,
-                    provider_evidence_json, replay_of_trace_id, enforcement
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    provider_evidence_json, replay_of_trace_id, enforcement,
+                    prompt_json, completion_json, tokens_in, tokens_out,
+                    cost_usd, latency_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.run_id,
@@ -159,6 +180,19 @@ class TraceStore(SqliteStore):
                     json.dumps(redact(event.provider_evidence or {}), sort_keys=True),
                     event.replay_of_trace_id,
                     enforcement,
+                    # Prompts carry whatever the user typed, so they go through
+                    # the same recursive redaction as every other field rather
+                    # than being trusted because they are "just text".
+                    json.dumps(redact(event.prompt), default=str)
+                    if event.prompt is not None
+                    else None,
+                    json.dumps(redact(event.completion), default=str)
+                    if event.completion is not None
+                    else None,
+                    event.tokens_in,
+                    event.tokens_out,
+                    event.cost_usd,
+                    event.latency_ms,
                 ),
             )
             return int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
@@ -182,6 +216,12 @@ class TraceStore(SqliteStore):
                 provider_metadata=event.provider_metadata,
                 provider_evidence=event.provider_evidence,
                 replay_of_trace_id=original_trace_id,
+                prompt=event.prompt,
+                completion=event.completion,
+                tokens_in=event.tokens_in,
+                tokens_out=event.tokens_out,
+                cost_usd=event.cost_usd,
+                latency_ms=event.latency_ms,
             )
         )
 
@@ -292,6 +332,12 @@ class TraceStore(SqliteStore):
             trace["provider_metadata"] = json.loads(trace.pop("provider_metadata_json", "{}"))
             trace["provider_evidence"] = json.loads(trace.pop("provider_evidence_json", "{}"))
             trace["replay_of_trace_id"] = trace.pop("replay_of_trace_id", None)
+            # The exchange columns are NULL for rows written before v5, and for
+            # every step that never called a model. Absence is meaningful: it
+            # means "we were not told", not "it was empty".
+            for column, field in (("prompt_json", "prompt"), ("completion_json", "completion")):
+                raw = trace.pop(column, None)
+                trace[field] = json.loads(raw) if raw is not None else None
             traces.append(trace)
 
         return {"traces": traces, "receipts": receipts, "gate_verdicts": gates}

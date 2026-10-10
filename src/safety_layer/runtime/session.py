@@ -108,6 +108,49 @@ class SafetySession:
     def pending_approvals(self) -> list[Approval]:
         return self.approvals.pending()
 
+    # -- model exchange ----------------------------------------------------
+
+    def record_model_exchange(
+        self,
+        prompt: str | None = None,
+        completion: str | None = None,
+        *,
+        tokens_in: int | None = None,
+        tokens_out: int | None = None,
+        cost_usd: float | None = None,
+        latency_ms: float | None = None,
+        event: str = "model.exchange",
+        status: str = "completed",
+    ) -> int:
+        """Record one prompt/completion pair against this run.
+
+        The SDK does not own the adopter's model call, so it cannot see the
+        prompt on its own. Without this, a trace shows what the task was and
+        what the tool returned, but not what the model was actually given --
+        and an audit that cannot reconstruct the exchange cannot explain a bad
+        one.
+
+        Redaction is applied on write like every other field, so a caller may
+        pass a raw prompt without pre-sanitising it. Omitted values stay NULL,
+        which means "not captured" rather than "empty".
+        """
+        return self.store.append_trace(
+            TraceEvent(
+                self.run_id,
+                0,
+                event,
+                None,
+                None,
+                status,
+                prompt=prompt,
+                completion=completion,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost_usd=cost_usd,
+                latency_ms=latency_ms,
+            )
+        )
+
     # -- tools ------------------------------------------------------------
 
     def tool(

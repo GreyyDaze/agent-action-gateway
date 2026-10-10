@@ -254,6 +254,34 @@ The SDK does not claim:
 
 These are scope boundaries, not hidden implementation gaps.
 
+## What gets recorded
+
+Every trace row keeps the task (`input`) and what the tool returned
+(`output`), redacted before it is written. Neither of those is the model
+exchange, so a session can record it separately:
+
+~~~python
+with session() as ctx:
+    completion = call_your_model(prompt)
+    ctx.record_model_exchange(
+        prompt, completion.text,
+        tokens_in=usage.prompt_tokens, tokens_out=usage.completion_tokens,
+        cost_usd=usage.cost, latency_ms=usage.elapsed_ms,
+    )
+~~~
+
+The SDK does not own your model call, so it cannot see this by itself. If you
+do not call it, the exchange columns stay NULL — which means *not captured*,
+not *empty*. An audit that reads a NULL as zero spend would be wrong.
+
+Prompts and completions go through the same recursive redaction as every other
+field, so a card number, email, bearer token or IBAN in either is replaced
+before it reaches disk. You do not need to sanitise before handing them over.
+
+**Growth.** Prompts are typically several times larger than tool results, so a
+run that records exchanges makes `trace_events` grow much faster. There is no
+automatic pruning yet; plan a retention window before storing at volume.
+
 ## Dashboard security
 
 The dashboard binds `127.0.0.1` by default and is a single-operator local tool.
