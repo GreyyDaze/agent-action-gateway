@@ -439,7 +439,12 @@ class TraceStore(SqliteStore):
         import json
         with self.connection() as connection:
             rows = connection.execute(
-                "SELECT key, name, routes_json, expires_at, revoked FROM virtual_keys"
+                # Ordered explicitly. Without it the row order is whatever the
+                # engine feels like returning, which differed between SQLite and
+                # PostgreSQL -- and any caller comparing two listings would see a
+                # difference that is not a difference in the data.
+                "SELECT key, name, routes_json, expires_at, revoked "
+                "FROM virtual_keys ORDER BY key"
             ).fetchall()
             return [
                 {

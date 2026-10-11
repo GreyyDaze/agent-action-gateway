@@ -46,6 +46,10 @@ safety_layer = ["data/golden/*.json", "data/calibration/*.json"]
 # that needs a parser, so it is opt-in rather than a dependency every adopter
 # inherits. JSON route tables need nothing.
 yaml = ["PyYAML>=6"]
+# PostgreSQL needs a driver; SQLite needs nothing. The store picks the backend
+# from the --db target, so the extra is only required when a postgres:// URL is
+# actually used.
+postgres = ["psycopg[binary]>=3.1"]
 dev = ["pytest>=8,<9", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.11", "PyYAML>=6"]
 
 [tool.pytest.ini_options]

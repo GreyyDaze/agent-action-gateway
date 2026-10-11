@@ -85,6 +85,26 @@ worse than none.
 
 It reports and never gates. Nothing about an existing verdict changes.
 
+## Choosing a database
+
+The `--db` flag takes a path or a `postgres://` URL:
+
+~~~bash
+safety path --db data/runtime.db                              # SQLite
+safety path --db postgresql://user:pw@host/db --format json   # PostgreSQL
+~~~
+
+Both run the same code. `tests/test_backend_agreement.py` asserts that, running
+each check twice and comparing the results, rather than claiming it.
+
+PostgreSQL needs the `psycopg` package: `pip install 'agent-safety-eval-layer[postgres]'`.
+
+| | SQLite | PostgreSQL |
+|---|---|---|
+| Good for | one host, one writer | several hosts or gateway replicas |
+| Setup | nothing | a database |
+| Concurrency | single host | across hosts |
+
 ## CLI
 
 ~~~bash

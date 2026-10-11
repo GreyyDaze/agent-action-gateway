@@ -368,6 +368,22 @@ make the enforcement path non-stdlib for every adopter, and a protocol
 implementation here would be untested against the real specification. Pair this
 with whichever MCP library you already use.
 
+## Database backends
+
+`--db` takes a filesystem path (SQLite) or a `postgres://` URL (PostgreSQL). The
+schema and the migrations are declared once and run on either.
+
+A `postgres://` URL needs `psycopg`, which is an optional extra:
+
+    pip install 'agent-safety-eval-layer[postgres]'
+
+`tests/test_backend_agreement.py` runs every store check against both engines and
+compares the answers. When `SAFETY_TEST_POSTGRES` is not set, the PostgreSQL half
+skips loudly rather than passing quietly.
+
+Writes remain single-writer-per-row. PostgreSQL removes the single-host ceiling;
+it does not turn this into a distributed lock service.
+
 ## Dashboard security
 
 The dashboard binds `127.0.0.1` by default and is a single-operator local tool.

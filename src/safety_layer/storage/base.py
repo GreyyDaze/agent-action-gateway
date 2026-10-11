@@ -1,4 +1,4 @@
-"""Shared SQLite persistence base.
+"""Shared persistence base, for SQLite and PostgreSQL alike.
 
 Four stores previously duplicated connection setup, schema creation and
 hand-rolled `PRAGMA table_info` migration loops. That produced four migration
@@ -10,8 +10,15 @@ This module centralizes all three concerns:
 - one connection policy (WAL, busy timeout) applied once;
 - connections that are always closed, via `closing()` rather than the bare
   context manager, which commits but does not close;
-- schema versioning through SQLite's own `user_version`, so migrations run in
-  order and a partially migrated database is impossible.
+- schema versioning in one place, so migrations run in order and a partially
+  migrated database is impossible.
+
+The backend is chosen from the target string: a filesystem path is SQLite, a
+`postgres://` URL is PostgreSQL. Subclasses declare `_migrations()` once and
+never learn which backend they are on -- `connection()`, `_columns()` and
+`_table_exists()` are the only things that differ, and they are the only things
+overridden. That is what makes `tests/test_backend_agreement.py` meaningful: the
+same statements run against both engines.
 """
 
 from __future__ import annotations
@@ -22,36 +29,64 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
+#: URL schemes that select a backend. A bare path is SQLite; these are not
+#: silently treated as file names, because a typo'd URL must not create an
+#: empty SQLite database and report success.
+POSTGRES_SCHEMES = ("postgres://", "postgresql://")
 
-class SqliteStore:
+
+def _resolve(target: str | Path) -> tuple[str, str]:
+    """Pick a backend from the `--db` target."""
+    text = str(target)
+    if text.startswith(POSTGRES_SCHEMES):
+        return "postgres", text
+    if "://" in text:
+        scheme = text.split("://", 1)[0]
+        raise ValueError(
+            f"unsupported database scheme {scheme!r}; use a filesystem path, "
+            ":memory:, or a postgres:// URL"
+        )
+    return "sqlite", text
+
+
+class Store:
     """Base for every durable store in this package.
 
     Subclasses declare their schema and their migrations; they never open a
-    connection directly.
+    connection directly and never branch on the backend.
     """
 
     #: Bumped whenever a subclass adds a migration step.
     schema_version: int = 1
 
-    def __init__(self, path: str | Path = ":memory:") -> None:
-        self.path = Path(path)
-        if str(self.path) != ":memory:":
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, target: str | Path = ":memory:") -> None:
+        self.backend, self.path = _resolve(target)
+        if self.backend == "sqlite" and self.path != ":memory:":
+            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
 
     # -- connection lifecycle -------------------------------------------
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> Any:
         """Open a connection. Callers must use it through `connection()`."""
-        connection = sqlite3.connect(str(self.path), timeout=30)
+        if self.backend == "postgres":
+            import psycopg
+            from psycopg.rows import dict_row
+
+            from .postgres import PostgresConnection
+
+            return PostgresConnection(
+                psycopg.connect(self.path, row_factory=dict_row, autocommit=False)
+            )
+        connection = sqlite3.connect(self.path, timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout=30000")
-        if str(self.path) != ":memory:":
+        if self.path != ":memory:":
             connection.execute("PRAGMA journal_mode=WAL")
         return connection
 
     @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
+    def connection(self) -> Iterator[Any]:
         """Yield a connection that is committed and closed.
 
         `sqlite3.Connection.__exit__` commits or rolls back but leaves the
@@ -103,6 +138,12 @@ class SqliteStore:
                         "INSERT INTO schema_migrations (store, version) VALUES (?, ?)",
                         (self.store_name, int(version)),
                     )
+                    # Committed per step, not at the end of the whole loop. The
+                    # next step inspects the schema through its own connection,
+                    # which cannot see uncommitted DDL from this one -- so
+                    # without this the later ALTER steps would decide the
+                    # columns were missing and re-run, or see none at all.
+                    connection.commit()
 
     def applied_migrations(self) -> tuple[int, ...]:
         """Versions of this store's migrations recorded as applied."""
@@ -125,14 +166,27 @@ class SqliteStore:
             return connection.execute(sql, parameters)
 
     def _columns(self, table: str) -> set[str]:
+        """Columns on a table, answered by whichever backend is in use."""
+        if self.backend == "postgres":
+            with self.connection() as connection:
+                return connection.table_columns(table)
         with self.connection() as connection:
             rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
         return {str(row["name"]) for row in rows}
 
     def _table_exists(self, table: str) -> bool:
+        if self.backend == "postgres":
+            with self.connection() as connection:
+                return connection.has_table(table)
         with self.connection() as connection:
             row = connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
                 (table,),
             ).fetchone()
         return row is not None
+
+
+#: The original name, kept so existing imports and adopters' code still work.
+#: It has always been "the store base"; the backend it defaults to was simply
+#: implicit.
+SqliteStore = Store
