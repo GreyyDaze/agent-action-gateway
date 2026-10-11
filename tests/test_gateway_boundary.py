@@ -21,7 +21,13 @@ import unittest.mock
 from pathlib import Path
 
 from safety_layer.interface.cli import load_route_policy
-from safety_layer.interface.gateway import GatewayError, Route, build_gateway_server
+from safety_layer.interface.gateway import (
+    GatewayError,
+    GatewayPolicy,
+    Route,
+    SafetyGateway,
+    build_gateway_server,
+)
 from safety_layer.storage.traces import TraceStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -315,3 +321,79 @@ class MethodGuardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CredentialUnavailableTest(unittest.TestCase):
+    """A secret the gateway cannot read must be a refusal, not a dead socket.
+
+    Found by running the gateway as a different user than the owner of its own
+    secret file: `GatewayError` escaped `handle`, the handler thread died, and
+    the caller received nothing at all.
+    """
+
+    def _gateway(self, store: TraceStore) -> SafetyGateway:
+        policy = GatewayPolicy(session_environment="prod")
+        policy.register(
+            Route(
+                path="/charge",
+                upstream="https://example.invalid",
+                action="charge",
+                risk="read",
+                secret_env="file:/definitely/not/here",
+                environment="prod",
+            )
+        )
+        return SafetyGateway(store, policy, transport=lambda *a: (200, {"ok": True}))
+
+    def test_an_unreadable_secret_returns_a_refusal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TraceStore(Path(directory) / "r.db")
+            result = self._gateway(store).handle("POST", "/charge", {})
+        self.assertEqual(result.status, 503)
+        self.assertIn("credential unavailable", result.body["error"])
+
+    def test_the_refusal_does_not_disclose_the_path_or_owner(self) -> None:
+        """The detail names a file path and a uid. That is for the trace, not
+        for whoever made the request."""
+        with tempfile.TemporaryDirectory() as directory:
+            store = TraceStore(Path(directory) / "r.db")
+            result = self._gateway(store).handle("POST", "/charge", {})
+        rendered = json.dumps(result.body)
+        self.assertNotIn("/definitely/not/here", rendered)
+        self.assertNotIn("uid", rendered)
+
+    def test_the_reason_is_traced_even_though_it_is_not_returned(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TraceStore(Path(directory) / "r.db")
+            self._gateway(store).handle("POST", "/charge", {})
+            events = [t["event"] for t in store.snapshot()["traces"]]
+        self.assertIn("gateway.credential_unavailable", events)
+
+
+class PeerCredRefusalShapeTest(unittest.TestCase):
+    """The same-UID refusal must answer, and must not stop the accept loop.
+
+    The original closed the socket and raised. The caller saw a reset rather
+    than a reason, and the exception escaped `get_request` into the serve loop,
+    so one rejected caller took the gateway down for everyone.
+    """
+
+    def test_the_server_exposes_a_refusal_writer(self) -> None:
+        from safety_layer.interface.gateway import _UnixSocketServer
+
+        self.assertTrue(callable(getattr(_UnixSocketServer, "_refuse", None)))
+
+    def test_get_request_does_not_raise_for_a_same_uid_caller(self) -> None:
+        """It returns a connection and writes the refusal, rather than raising.
+
+        Asserted against the source because constructing a real peercred socket
+        needs two Linux users; `deploy/` and the Linux job exercise the real
+        path. The guard here is that the raise is gone.
+        """
+        import inspect
+
+        from safety_layer.interface.gateway import _UnixSocketServer
+
+        source = inspect.getsource(_UnixSocketServer.get_request)
+        self.assertNotIn("raise GatewayError", source)
+        self.assertIn("_refuse", source)

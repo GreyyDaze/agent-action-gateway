@@ -154,15 +154,33 @@ class GatewayTest(unittest.TestCase):
             "sk_upstream_secret_value_for_custody_test", self.db.read_bytes().decode("utf-8", "ignore")
         )
 
-    def test_missing_credential_is_a_clear_error(self) -> None:
+    def test_missing_credential_is_refused_rather_than_raised(self) -> None:
+        """A secret that cannot be read must produce a reply, not a dead socket.
+
+        `credential()` still raises, which is what the store-level tests assert;
+        what changed is that `handle` answers with a refusal. Previously the
+        exception escaped into the HTTP handler thread and the caller received
+        nothing, so an unreadable secret looked like a dropped connection.
+        """
         gateway = self._gateway()
         approval, payload = self._approve(gateway)
         with mock.patch.dict(os.environ, {}, clear=True):
+            result = gateway.handle(
+                "POST", "/charge", payload,
+                approval_id=approval.approval_id, idempotency_key="key-1",
+            )
+        self.assertEqual(result.status, 503)
+        self.assertIn("credential", result.body["error"].lower())
+
+    def test_credential_itself_still_raises_on_a_missing_variable(self) -> None:
+        """The store-level contract is unchanged; only the handler stopped
+        letting it escape."""
+        with mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(Exception) as raised:
-                gateway.handle(
-                    "POST", "/charge", payload,
-                    approval_id=approval.approval_id, idempotency_key="key-1",
-                )
+                Route(
+                    path="/charge", upstream="u", action="charge",
+                    secret_env="DEFINITELY_NOT_SET_ANYWHERE",
+                ).credential()
         self.assertIn("credential", str(raised.exception).lower())
 
     # -- hold and release -------------------------------------------------

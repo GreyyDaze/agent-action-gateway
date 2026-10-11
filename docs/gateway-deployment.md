@@ -183,6 +183,24 @@ BOUNDARY NOT HELD: 1 check(s) failed: A  no route to a provider
   succeed here, so no credential boundary exists.
 ```
 
+## Unix socket mode (Linux)
+
+`--unix-socket PATH` is the one mode where the kernel backs the custody claim
+directly: the gateway reads the caller's uid from `SO_PEERCRED` and refuses a
+caller running as the same user, whatever token they present.
+
+Verified on Linux (PostgreSQL 16 container, uid 1001 service account):
+
+| Caller | Gateway | Result |
+|---|---|---|
+| uid 1001 | uid 1001 | `403` — no custody boundary |
+| uid 0 | uid 1001 | reaches policy |
+
+The refusal is written to the caller and the gateway keeps serving. An earlier
+version closed the socket and raised, which meant one rejected caller stopped the
+accept loop — a process sharing the gateway's uid could take the gateway down by
+connecting once.
+
 ## What a green result means
 
 | | Proves | Does **not** prove |

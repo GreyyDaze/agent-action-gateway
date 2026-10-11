@@ -252,7 +252,24 @@ class SafetyGateway:
             )
             return GatewayResult(403, {"error": str(exc), "needs_approval": True})
 
-        credential = route.credential()
+        try:
+            credential = route.credential()
+        except GatewayError as exc:
+            # An unreadable secret used to escape `handle` entirely: the handler
+            # thread died and the caller received no response at all, which reads
+            # as a dropped connection rather than a refused action. An operator
+            # whose secret had the wrong owner got a hang instead of the reason.
+            #
+            # The detail goes to the trace, not to the caller -- it names a file
+            # path and a uid, which is not for whoever made the request.
+            self._trace(
+                "gateway.credential_unavailable",
+                {"path": route.path, "action": route.action, "reason": str(exc)},
+            )
+            return GatewayResult(
+                503,
+                {"error": "upstream credential unavailable", "path": route.path},
+            )
         headers = {"Content-Type": "application/json"}
         if credential:
             headers["Authorization"] = f"Bearer {credential}"
@@ -441,14 +458,23 @@ class _UnixSocketServer(ThreadingHTTPServer):
         self.socket = sock
 
     def get_request(self):
+        """Accept a connection, refusing one that cannot be told apart from us.
+
+        The refusal is *written to the caller* and the connection returned
+        normally. The earlier version closed the socket and raised, which did two
+        harmful things: the caller saw a connection reset rather than a reason,
+        and the exception escaped `get_request` into the serve loop, so a single
+        rejected caller stopped the gateway for everyone. A process sharing the
+        gateway's uid could therefore take it down by connecting once.
+        """
         import socket
         import struct
         conn, _ = self.socket.accept()
         # SO_PEERCRED is Linux-only. Looked up rather than referenced directly:
         # a direct reference is an attribute error on macOS and an *unused*
         # type-ignore on Linux, so one of the two platforms always fails a
-        # check. Absent here means the check cannot run, which is recorded
-        # rather than silently treated as a pass.
+        # check. Absent here means the check cannot run, which is stated in the
+        # body rather than silently treated as a pass.
         peercred = getattr(socket, "SO_PEERCRED", None)
         if peercred is not None:
             try:
@@ -457,13 +483,35 @@ class _UnixSocketServer(ThreadingHTTPServer):
                 )
                 _pid, uid, _gid = struct.unpack("3i", creds)
                 if uid == os.geteuid():
-                    conn.close()
-                    raise GatewayError(
-                        "no custody boundary: caller UID equals gateway UID"
+                    self._refuse(
+                        conn,
+                        403,
+                        "no custody boundary: the caller runs as the same user "
+                        "as the gateway",
                     )
             except (OSError, struct.error):
                 pass
         return conn, ("local", 0)
+
+    @staticmethod
+    def _refuse(conn: Any, status: int, message: str) -> None:
+        """Send a minimal HTTP refusal, then close."""
+        body = json.dumps({"error": message}).encode()
+        try:
+            conn.sendall(
+                (
+                    f"HTTP/1.0 {status} Forbidden\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {len(body)}\r\n"
+                    "Connection: close\r\n\r\n"
+                ).encode()
+                + body
+            )
+        except OSError:
+            # The caller vanished mid-handshake. Nothing to explain to it.
+            pass
+        finally:
+            conn.close()
 
     def server_close(self):
         import contextlib
