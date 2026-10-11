@@ -278,9 +278,25 @@ Prompts and completions go through the same recursive redaction as every other
 field, so a card number, email, bearer token or IBAN in either is replaced
 before it reaches disk. You do not need to sanitise before handing them over.
 
-**Growth.** Prompts are typically several times larger than tool results, so a
-run that records exchanges makes `trace_events` grow much faster. There is no
-automatic pruning yet; plan a retention window before storing at volume.
+**Growth and retention.** Prompts are typically several times larger than tool
+results, so a run that records exchanges makes `trace_events` grow much faster.
+
+`safety prune` discards the payloads when you decide to:
+
+~~~bash
+safety prune --db data/runtime.db --older-than 30 --keep-latest 10 --dry-run
+~~~
+
+It clears the prompt and completion and **leaves the row**, with its action,
+timing, cost and outcome intact, stamped `exchange_state=pruned`. A later reader
+can tell "captured and since discarded" from "never captured" -- three states
+rather than a NULL that could mean either. Receipts are never touched.
+
+Nothing prunes automatically. A silent retention policy is a silent deletion of
+evidence, so this is a command a person typed, and running it with neither
+`--older-than` nor `--keep-latest` is refused rather than treated as "prune
+everything". On SQLite the file is also `VACUUM`ed so the space is actually
+returned; PostgreSQL reclaims it on its own.
 
 ## Self-correction
 

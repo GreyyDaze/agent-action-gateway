@@ -83,6 +83,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated actions a run was supposed to attempt",
     )
 
+    prune = sub.add_parser(
+        "prune",
+        help="discard recorded prompts and completions, keeping the evidence",
+    )
+    prune.add_argument("--db", default="data/runtime.db")
+    prune.add_argument(
+        "--older-than",
+        type=float,
+        metavar="DAYS",
+        help="only prune records written more than DAYS ago",
+    )
+    prune.add_argument(
+        "--keep-latest",
+        type=int,
+        metavar="N",
+        help="always keep the newest N recorded exchanges per run",
+    )
+    prune.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what would go without changing anything",
+    )
+
     gateway = sub.add_parser(
         "gateway",
         help="serve the HTTP gateway for your routes (it holds the upstream keys)",
@@ -553,6 +576,37 @@ def _delegate(prog: str, args: list[str], module: str, attr: str = "main") -> in
     return EXIT_PASS
 
 
+def run_prune(args: argparse.Namespace) -> int:
+    """Discard exchange payloads, keeping the rows that record they existed.
+
+    Dry run by default when nothing is specified -- pruning without a bound
+    would delete every exchange recorded so far, which is a decision a person
+    should make rather than a flag someone forgot to pass.
+    """
+    if args.older_than is None and args.keep_latest is None:
+        print(
+            "prune needs --older-than DAYS or --keep-latest N; "
+            "without one it would discard every recorded exchange",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    report = TraceStore(args.db).prune_exchanges(
+        older_than_days=args.older_than,
+        keep_latest_per_run=args.keep_latest,
+        dry_run=args.dry_run,
+    )
+    verb = "would prune" if args.dry_run else "pruned"
+    print(f"{verb} {report['selected']} of {report['candidates']} recorded exchanges")
+    if args.dry_run:
+        print("dry run: nothing changed")
+    else:
+        print(
+            "the rows remain, with exchange_state=pruned; receipts were not touched"
+        )
+    return EXIT_PASS
+
+
 def _run_check(args: argparse.Namespace) -> int:
     """Report on the caller's own integration, never on the library."""
     report = run_check(app=args.app, db=args.db)
@@ -588,6 +642,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "path":
         announce("how your recorded runs got there — not a quality judgement.")
         return run_path_report(args)
+    if args.command == "prune":
+        announce("your recorded prompts and completions — the rows stay.")
+        return run_prune(args)
     if args.command == "gateway":
         announce("your route config — the gateway holds the upstream credentials.")
         if args.gateway_cmd == "issue-key":

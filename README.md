@@ -105,6 +105,19 @@ PostgreSQL needs the `psycopg` package: `pip install 'agent-safety-eval-layer[po
 | Setup | nothing | a database |
 | Concurrency | single host | across hosts |
 
+## Keeping the store small
+
+Recording prompts makes `trace_events` grow quickly. `safety prune` discards the
+payloads on your say-so and keeps the rows:
+
+~~~bash
+safety prune --db data/runtime.db --older-than 30 --dry-run
+~~~
+
+Nothing prunes on its own — a silent retention policy is a silent deletion of
+evidence. Each row survives, marked `exchange_state=pruned`, so "discarded" stays
+distinguishable from "never recorded". See `docs/sdk.md`.
+
 ## CLI
 
 ~~~bash

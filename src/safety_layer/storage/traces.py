@@ -7,6 +7,8 @@ run rather than in memory.
 
 import json
 import sqlite3
+from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -149,6 +151,34 @@ class TraceStore(SqliteStore):
             yield 5, [stmt for stmt in exchange if _added_column(stmt) not in current]
         else:
             yield 5, []
+
+        # v6: when an exchange was pruned, and when the row was written at all.
+        #
+        # `exchange_pruned_at` records that a payload was discarded, so it stays
+        # distinguishable from one that never had one -- "we do not have it and
+        # cannot say why" is the failure this project exists to prevent, and a
+        # bare NULL cannot express it.
+        #
+        # `created_at` existed because retention needed it: `trace_events` had no
+        # timestamp of any kind, so "prune anything older than 30 days" had
+        # nothing to measure against. Backfilled to the migration time, which is
+        # the truth for a row written before the column existed -- an invented
+        # older date would sort ahead of real history.
+        additions_v6 = [
+            "ALTER TABLE trace_events ADD COLUMN exchange_pruned_at TEXT",
+            "ALTER TABLE trace_events ADD COLUMN created_at TEXT",
+        ]
+        seen = self._columns("trace_events")
+        if not seen:
+            yield 6, []
+        else:
+            missing = [s for s in additions_v6 if _added_column(s) not in seen]
+            if any("created_at" in s for s in missing):
+                missing.append(
+                    "UPDATE trace_events SET created_at = CURRENT_TIMESTAMP "
+                    "WHERE created_at IS NULL"
+                )
+            yield 6, missing
 
     def append_trace(self, event: TraceEvent, *, enforcement: str | None = None) -> int:
         """Persist a trace event after deterministic redaction.
@@ -338,6 +368,15 @@ class TraceStore(SqliteStore):
             for column, field in (("prompt_json", "prompt"), ("completion_json", "completion")):
                 raw = trace.pop(column, None)
                 trace[field] = json.loads(raw) if raw is not None else None
+            # Three states, not two: captured, never captured, and captured then
+            # discarded. Collapsing the last into the middle would leave a reader
+            # unable to tell a missing record from a deleted one.
+            trace["exchange_pruned_at"] = trace.pop("exchange_pruned_at", None)
+            trace["exchange_state"] = (
+                "pruned" if trace["exchange_pruned_at"]
+                else "captured" if trace["prompt"] is not None or trace["completion"] is not None
+                else "never_recorded"
+            )
             traces.append(trace)
 
         return {"traces": traces, "receipts": receipts, "gate_verdicts": gates}
@@ -417,6 +456,104 @@ class TraceStore(SqliteStore):
         )
 
     # Virtual key management methods
+    def prune_exchanges(
+        self,
+        *,
+        older_than_days: float | None = None,
+        keep_latest_per_run: int | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Drop recorded prompts and completions, keeping the evidence around them.
+
+        Prompts and completions are several times larger than the rest of a trace
+        row, so a system recording exchanges grows quickly. That growth is a real
+        operational problem -- but so is deleting an audit trail by surprise.
+
+        The rules follow from that:
+
+        - **The row survives.** Only the payload columns are cleared. The action,
+          the timing, the cost and the outcome stay, because those are the record
+          that something happened.
+        - **The pruning is recorded.** `exchange_pruned_at` is stamped, so a
+          later reader can tell "this was captured and has since been discarded"
+          apart from "this was never captured". A bare NULL cannot say which,
+          and that ambiguity is the one this project refuses to create.
+        - **Nothing runs automatically.** Pruning is a command someone typed. A
+          silent retention policy is a silent deletion of evidence.
+        - **Receipts are never touched.** They are the replay record and are small.
+
+        `older_than_days` and `keep_latest_per_run` combine: a row is pruned only
+        if it matches *both* when both are given, so "keep the last 10 of each
+        run" and "only anything past 30 days" compose instead of fighting.
+
+        `dry_run` reports what would go without changing anything.
+        """
+        if older_than_days is None and keep_latest_per_run is None:
+            raise ValueError(
+                "give older_than_days, keep_latest_per_run, or both"
+            )
+        if older_than_days is not None and older_than_days < 0:
+            raise ValueError("older_than_days must not be negative")
+        if keep_latest_per_run is not None and keep_latest_per_run < 0:
+            raise ValueError("keep_latest_per_run must not be negative")
+
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT id, run_id, step FROM trace_events "
+                "WHERE prompt_json IS NOT NULL OR completion_json IS NOT NULL "
+                "ORDER BY run_id, id"
+            ).fetchall()
+
+            # Rows arrive ordered by (run_id, id), so walking backwards gives
+            # each run's newest rows first and the counter is exact rather than
+            # a guess about ordering.
+            selected: list[int] = []
+            kept_in_run = 0
+            previous_run: str | None = None
+            for row in reversed(rows):
+                run_id, trace_id = str(row["run_id"]), int(row["id"])
+                if run_id != previous_run:
+                    previous_run, kept_in_run = run_id, 0
+                kept_in_run += 1
+                if keep_latest_per_run is not None and kept_in_run <= keep_latest_per_run:
+                    continue
+                if older_than_days is not None:
+                    age = _age_days(connection, trace_id)
+                    if age is None or age < older_than_days:
+                        continue
+                selected.append(trace_id)
+            selected.sort()
+
+            report = {
+                "candidates": len(rows),
+                "selected": len(selected),
+                "dry_run": dry_run,
+                "trace_ids": selected,
+            }
+            if dry_run or not selected:
+                return report
+
+            stamped = datetime.now(UTC).isoformat(timespec="seconds")
+            for trace_id in selected:
+                connection.execute(
+                    "UPDATE trace_events SET prompt_json = NULL, "
+                    "completion_json = NULL, exchange_pruned_at = ? WHERE id = ?",
+                    (stamped, trace_id),
+                )
+            report["pruned_at"] = stamped
+
+        # Outside the transaction above, because SQLite refuses to VACUUM from
+        # within one. Clearing a column frees pages for reuse but does not return
+        # them to the filesystem, so the file keeps its old size and a prune
+        # that shrinks nothing reads as a no-op that reported success.
+        # PostgreSQL reclaims space on its own; this is SQLite-only.
+        if not dry_run and selected and self.backend == "sqlite":
+            with closing(self._connect()) as connection, connection:
+                connection.execute("VACUUM")
+            report["compacted"] = True
+        return report
+
+
     def save_virtual_key(self, key: str, name: str, routes: list[str], expires_at: float | None, revoked: bool = False) -> None:
         """Save or update a virtual key."""
         import json
@@ -464,6 +601,26 @@ class TraceStore(SqliteStore):
                 "UPDATE virtual_keys SET revoked=1 WHERE key=?", (key,)
             )
             return cursor.rowcount > 0
+
+
+
+def _age_days(connection: Any, trace_id: int) -> float | None:
+    """Days since a row was written, or None if it carries no timestamp."""
+    row = connection.execute(
+        "SELECT created_at FROM trace_events WHERE id = ?", (trace_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    raw = str(row["created_at"] or "").strip()
+    if not raw:
+        return None
+    try:
+        stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - stamp).total_seconds() / 86400.0
 
 
 def _added_column(statement: str) -> str:

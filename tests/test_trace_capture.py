@@ -122,10 +122,10 @@ class ExchangeCaptureTest(unittest.TestCase):
 
 class MigrationTest(unittest.TestCase):
     def test_an_older_database_opens_without_losing_rows(self) -> None:
-        """The exchange columns are additive, so a v4 file must still work.
+        """The exchange columns are additive, so a pre-v5 file must still work.
 
-        Simulated by rolling the file back to v4 -- columns dropped and the
-        migration row removed -- then reopening it.
+        Simulated by rolling the file back -- columns dropped and the migration
+        rows removed -- then reopening it.
         """
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "runtime.db"
@@ -144,12 +144,15 @@ class MigrationTest(unittest.TestCase):
                 ):
                     connection.execute(f"ALTER TABLE trace_events DROP COLUMN {column}")
                 connection.execute(
-                    "DELETE FROM schema_migrations WHERE store = ? AND version = 5",
+                    "ALTER TABLE trace_events DROP COLUMN exchange_pruned_at"
+                )
+                connection.execute(
+                    "DELETE FROM schema_migrations WHERE store = ? AND version IN (5, 6)",
                     (TraceStore.store_name,),
                 )
 
             reopened = TraceStore(path)
-            self.assertEqual(reopened.applied_migrations(), (1, 2, 3, 4, 5))
+            self.assertEqual(reopened.applied_migrations(), (1, 2, 3, 4, 5, 6))
             reopened.append_trace(
                 TraceEvent("run-new", 1, "agent", {"a": 1}, {"b": 2}, "completed", prompt="hi")
             )
