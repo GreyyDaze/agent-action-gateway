@@ -165,6 +165,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     proxy.add_argument("--config", required=True, help="JSON (or YAML) file listing the servers")
     proxy.add_argument("--db", default="data/runtime.db")
+    proxy.add_argument(
+        "--http", action="store_true",
+        help="serve over HTTP at /mcp (as its own service) instead of stdio; agents need "
+             "the token in AGENT_GATEWAY_PROXY_TOKEN",
+    )
+    proxy.add_argument("--host", default="127.0.0.1", help="with --http: address to bind")
+    proxy.add_argument("--port", type=int, default=8090, help="with --http: port")
+    proxy.add_argument(
+        "--allow-origin", action="append", default=[],
+        help="with --http: a browser origin allowed to call the proxy (default: none)",
+    )
+
+    connect = sub.add_parser(
+        "mcp-connect",
+        help="for apps that start MCP servers as commands: forward to an MCP proxy run with --http",
+    )
+    connect.add_argument("url", help="the proxy's URL, e.g. https://proxy.internal:8090/mcp")
+    connect.add_argument(
+        "--token-env", default="AGENT_GATEWAY_PROXY_TOKEN",
+        help="environment variable holding the token (default: AGENT_GATEWAY_PROXY_TOKEN)",
+    )
 
     pins = sub.add_parser(
         "mcp-pins",
@@ -324,6 +345,15 @@ def run_mcp_proxy(args: argparse.Namespace) -> int:
         serve_proxy,
     )
 
+    tokens: tuple[str, ...] = ()
+    if args.http:
+        from agent_action_gateway.integrations.mcp_http import TOKEN_ENV, TokenError, parse_tokens
+
+        try:
+            tokens = parse_tokens(os.environ.get(TOKEN_ENV))
+        except TokenError as exc:
+            print(f"mcp-proxy: {exc}", file=sys.stderr)
+            return EXIT_USAGE
     try:
         config = load_proxy_config(args.config)
     except (OSError, ConfigError) as exc:
@@ -351,7 +381,42 @@ def run_mcp_proxy(args: argparse.Namespace) -> int:
         file=sys.stderr,
         flush=True,
     )
+    if args.http:
+        from agent_action_gateway.integrations.mcp_http import serve_proxy_http
+
+        if args.host not in {"127.0.0.1", "localhost", "::1"}:
+            print(
+                f"mcp-proxy: listening on {args.host} in plain HTTP. Put HTTPS in front of it "
+                "(a reverse proxy), or the token travels in clear text.",
+                file=sys.stderr,
+            )
+        print(
+            f"MCP over HTTP: http://{args.host}:{args.port}/mcp "
+            f"({len(tokens)} token(s) accepted). Run this as its own user, container or "
+            "host, so the agent cannot read the config or the database.",
+            file=sys.stderr,
+            flush=True,
+        )
+        serve_proxy_http(proxy, args.config, tokens, args.host, args.port, args.allow_origin)
+        return EXIT_PASS
     serve_proxy(proxy, args.config)
+    return EXIT_PASS
+
+
+def run_mcp_connect(args: argparse.Namespace) -> int:
+    """Forward MCP over stdio to a proxy served with --http."""
+    from agent_action_gateway.integrations.mcp_http import Connector
+
+    token = os.environ.get(args.token_env, "")
+    if not token:
+        print(f"mcp-connect: set {args.token_env} to the proxy's token", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        connector = Connector(args.url, token)
+    except ValueError as exc:
+        print(f"mcp-connect: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    connector.serve(sys.stdin)
     return EXIT_PASS
 
 
@@ -864,6 +929,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_mcp_server(args)
     if args.command == "mcp-proxy":
         return run_mcp_proxy(args)
+    if args.command == "mcp-connect":
+        return run_mcp_connect(args)
     if args.command == "mcp-pins":
         return run_mcp_pins(args)
     if args.command == "mcp-login":

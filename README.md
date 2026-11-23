@@ -5,37 +5,95 @@
 **Let AI agents change real systems safely. You control what they can do, and
 you can prove what they did.**
 
-## The problem
+## 1. Overview
 
-An AI agent picks actions and calls tools to do them. Some tools change real
-systems: they delete a table, deploy code, or restart a service. When the agent
-calls such a tool directly:
+AI agents call tools that change real systems: they delete tables, deploy code,
+restart services. Called directly, there is **no control** (a wrong or
+prompt-injected agent still acts) and **no proof** (no record of what it tried,
+what ran, and what was refused).
 
-- **There is no control.** The action runs even if the agent is wrong or was
-  tricked by a prompt injection.
-- **There is no proof.** No clear record shows what the agent tried, what ran,
-  and what was refused.
+This package puts a **checkpoint** between the agent and those tools. The agent
+decides what to do. The checkpoint decides if it runs, and records it either way.
 
-## The idea
+## 2. Key features
 
-Put a checkpoint between the agent and the tools that change things. The agent
-decides what to do. The checkpoint decides if it runs, and records it either
-way.
+| | Problem | What the checkpoint does |
+|---|---|---|
+| **Control** | A risky action runs unseen | It waits until a person approves **that exact action**. The approval works once. |
+| | The agent acts in the wrong environment | A `prod` tool is refused from a `dev` or `staging` session. |
+| | A retry repeats the action | The same action does not run twice, even after a crash. |
+| | The agent loops or runs too long | Limits on steps, time and cost stop the run. |
+| | The agent holds the real API key | With the gateway, it never sees the key. |
+| **Prove** | No record of what happened | Every checked action is recorded, with secrets hidden, and shown in a dashboard. |
+| | A new version may be less safe | A release gate tests it on your cases and fails if it got worse. |
 
-The checks happen in this order:
+Smaller features (stop and ask for a missing value, risk decided per call for
+tools like `execute_sql`, tool pinning, the bypass scanner) are explained in the
+[SDK guide](docs/sdk.md), the [gateway guide](docs/gateway-deployment.md) and the
+[evaluation guide](docs/evaluation.md).
+
+## 3. Technology stack
+
+- **Python 3.11+, standard library only.** No required dependencies in a safety tool.
+- **SQLite** by default, **PostgreSQL** optional: approvals and records survive a crash.
+- **MCP** (stdio and Streamable HTTP) and **HTTP**, written without an SDK (why: section 8).
+- **pytest, ruff, mypy** in CI on Python 3.11 to 3.13.
+
+## 4. Core concepts
+
+- **Risk class:** `read`, `write` or `destructive`. Anything undeclared is
+  destructive. Everything except `read` needs an approval.
+- **Exact approval:** bound to the action and its arguments, used once, expires
+  after 15 minutes.
+- **Effect claim:** recorded *before* the action runs, keyed on what the action
+  is. A retry finds it and gets the first result instead of acting again
+  ([details](docs/receipt-guarantees.md)).
+- **Pinning:** the MCP proxy saves each tool's definition; a changed tool is
+  hidden until a person accepts it.
+- **Virtual key:** the gateway holds the real key; the agent gets a key that only
+  works for its allowed routes.
+
+## 5. Architecture
+
+```mermaid
+flowchart LR
+    A[Your agent] -->|Python| L["Library: session()"]
+    A -->|MCP| P[MCP proxy]
+    L --> E{{"enforce()"}}
+    P --> E
+    E --> T[Your tools and MCP servers]
+    P -.->|optional| G[Gateway: holds keys]
+    A -->|HTTP| G
+    G --> API[Real APIs]
+    E --> S[(Records)]
+    G --> S
+    S --> D[Dashboard]
+```
+
+| Part | Use it when your agent calls | Checks |
+|---|---|---|
+| **Library** (`session()`) | Python functions | everything in section 6 |
+| **MCP proxy** (`agent-gateway mcp-proxy`) | MCP tools, started as a command or reached by URL (`--http`) | everything in section 6, plus pinning |
+| **Gateway** (`agent-gateway gateway`) | HTTP APIs, key kept from the agent | routes, environment, key custody, approval (off when the route file holds keys); no limits or effect claim of its own |
+
+For full checks *and* key custody, put the gateway behind the proxy
+([architecture](docs/architecture.md)).
+
+## 6. Execution flow
+
+Every call goes through `enforce()` in this order. Nothing reaches the tool until
+all checks pass, and every outcome is recorded.
 
 ```mermaid
 flowchart TD
-    T[Task starts] --> I{"Required inputs<br/>given?"}
-    I -->|no| Q[Stop and ask a person]
-    I -->|yes| A[Agent picks an action]
-    A --> L{"Within limits?<br/>steps, time, cost"}
-    L -->|yes| E{"Allowed in this<br/>environment?"}
-    E -->|yes| P{"If risky: did a person<br/>approve this exact action?"}
-    P -->|yes| O{"Has this action<br/>already run?"}
+    I{"Required inputs given?"} -->|no| Q[Stop and ask]
+    I -->|yes| L{"Within limits?"}
+    L -->|yes| E{"Right environment?"}
+    E -->|yes| P{"If risky: exact approval?"}
+    P -->|yes| O{"Already ran?"}
     O -->|no| R[Run it]
-    O -->|yes| D[Return the earlier result,<br/>do not run it again]
-    L -->|no| B[Block it, with the reason]
+    O -->|yes| D[Return the earlier result]
+    L -->|no| B[Block, with the reason]
     E -->|no| B
     P -->|no| B
     R --> REC[(Record)]
@@ -43,81 +101,25 @@ flowchart TD
     B --> REC
 ```
 
-## What it does
+## 7. Implementation
 
-Each row is one check from the diagram, in the same order.
+| Feature | Main files |
+|---|---|
+| Check pipeline | `engine/enforcement.py` |
+| Sessions, wrapped tools, stop-and-ask | `runtime/session.py` |
+| Approvals, limits | `policy/locks.py`, `policy/fuses.py` |
+| Effect claims | `audit/receipts.py`, `policy/fingerprint.py` |
+| MCP proxy, per-call risk | `integrations/mcp_proxy.py`, `guards/sql.py` |
+| Gateway, key custody | `integrations/gateway.py`, `credential/` |
+| Redaction | `guards/redaction.py` |
 
-| | Problem | What the checkpoint does |
-|---|---|---|
-| **Control** | The agent guesses a value (which table, which environment) | A required field that is empty stops the run and asks a person. A guess it fills in is not detected, but a risky action shows the person the exact values before it runs (see approval below). |
-| | The agent loops or runs too long | Limits on steps, time and cost stop the run. |
-| | The agent acts in the wrong environment | A tool marked `prod` is refused from a `dev` or `staging` session. |
-| | A risky action runs unseen | It waits until a person approves **that exact action**. The approval works once. |
-| | A retry repeats the action | The same action does not run twice, even after a crash. |
-| | The agent holds the key | With the gateway (below), the agent never sees the real key. |
-| **Prove** | No record of what happened | Every checked action is recorded, with secrets hidden. |
-| | No way to tell if a new version is safer | A release gate tests it on your own cases, and fails if it got worse. |
-
-Tested, not just claimed: in `make proof`, 1,000 crashed retries cause **1**
-side effect, and **0** destructive actions run without a valid approval.
-
-## Install
-
-Python 3.11 or newer:
-
-```bash
-pip install agent-action-gateway
-```
-
-## Connect your agent
-
-How your agent calls its tools decides which part you use:
-
-| If your agent calls | Use | How |
-|---|---|---|
-| Python functions | the library | wrap the functions with `session()`, as in the example below |
-| tools on MCP servers | the MCP proxy | `agent-gateway mcp-proxy --config servers.json`: your agent connects to the proxy only, and the proxy connects to the MCP servers you list (local or remote) |
-| APIs over HTTP, with the key kept away from the agent | the gateway | send the calls to `agent-gateway gateway` instead of the API |
-
-What each one checks:
-
-| | Library | MCP proxy | Gateway |
-|---|---|---|---|
-| Limits (steps, time, cost, loops) | yes | yes | no |
-| Environment | yes | yes | yes |
-| Approval of the exact action | yes | yes | yes, unless the route file has a `credentials` block |
-| Once-only effect | yes | yes | only through the upstream's `Idempotency-Key` |
-| Stop and ask when a required field is empty | yes | yes, for the arguments a tool requires | no |
-| Key kept from the agent | no | no | yes, run as its own service |
-
-Three things to know:
-
-- **The proxy checks only the calls that go through it.** If your agent can also
-  reach a real MCP server directly, those calls are not checked. List only the
-  proxy in your agent's config.
-- **The proxy needs no routes.** It reads each server's tool list. A tool counts
-  as read-only only if you say so in a rule, or if its server marks it
-  `readOnlyHint` and you trust that server. Every other tool needs an approval.
-  For a tool that does anything (one `execute_sql` or `run_command` tool), a
-  rule can decide on each call from its arguments: plain `SELECT`s run, and
-  everything else waits for approval.
-  A tool whose definition later changes is held back until you accept it, and
-  edits to the config apply without a restart.
-- **Keeping the key from the agent** works only with the gateway, run as its own
-  service where the agent cannot reach it. The proxy can forward to the gateway,
-  so one agent gets the full checks and key custody. See the
-  [gateway guide](docs/gateway-deployment.md).
-
-### Example: the library
-
-Wrap your tool, and give the agent the wrapped version:
+Wrap a tool and give the agent the wrapped version:
 
 ~~~python
 from agent_action_gateway import session
 
 def drop_table(table: str, intent_key: str = "") -> dict:
-    # Your real code goes here. `intent_key` identifies this effect: pass it to
-    # your provider as an idempotency key, so a retry cannot apply it twice.
+    # Your real code. Pass `intent_key` to your provider as an idempotency key.
     return {"dropped": table}
 
 with session(environment="prod") as ctx:
@@ -131,43 +133,77 @@ with session(environment="prod") as ctx:
     drop(table="users", approval_id=approval.approval_id)   # allowed, and only once
 ~~~
 
-Your agent is any function that takes the task and the tools. Give it the
-wrapped tools:
+Your agent is any function that takes the task and the tools:
 
 ~~~python
 result = ctx.run(agent, task, tools={"drop_table": drop})
 result["status"]   # "blocked" if any action was refused
 ~~~
 
-## See what happened
+More: [SDK guide](docs/sdk.md).
+
+## 8. Technical decisions
+
+| Decision | Why | Trade-off |
+|---|---|---|
+| Unknown means destructive | a forgotten tool must not run freely | new tools need a rule or an approval |
+| Approval used once, for exact arguments | it cannot be reused for another action | a retry after a failure needs a new approval |
+| Claim the effect before running | the only way to catch a repeat after a crash | needs a store that survives restarts |
+| A proxy instead of changing MCP servers | works with servers you do not control | calls that skip the proxy are not checked |
+| Keys in a separate gateway | an agent cannot leak a key it never had | one more service to run |
+| MCP written without the SDK | no dependencies, full control in a security proxy; tested against the official SDK client | we follow MCP spec changes ourselves |
+| Built-in release gate, not promptfoo or DeepEval | it reads the gateway's own records: blocked, approved and repeated actions | fewer features than those tools |
+
+## 9. Failures, security and limits
+
+- **Unknown result** (crash or timeout mid-call): held as unfinished, never
+  repeated silently; the agent is told to check first.
+- **Dead MCP server:** restarted (at most 3 times a minute), tools re-checked
+  against the pins. A broken config edit keeps the last good config.
+- **Proxy isolation:** run with `--http` as its own user or container, so the
+  agent cannot change its config or approvals; agents need a token.
+- **Secrets:** records are redacted before they are written.
+- **Dashboard:** needs the token printed at start; refuses non-local addresses
+  without one.
+- **Gateway:** refuses unregistered routes, hosts not on the allow-list, and
+  names that resolve to private addresses.
+
+**Limits:** it checks actions, not reasoning. It cannot detect a guessed value.
+Only calls through the checkpoint are checked. The SQL check cannot see inside
+your own database functions. "Once" needs a provider idempotency key or lookup.
+Not independently audited. ([full list](docs/gateway-deployment.md#known-limitations))
+
+## 10. Testing
+
+- About 650 automated tests, plus lint and type checks, in CI.
+- `make proof`: 1,000 crashed retries cause **1** side effect; **0** destructive
+  actions run without a valid approval.
+- Tried once with Claude Code against the MCP proxy (test tools); not yet with
+  Claude Desktop or Cursor. PostgreSQL tests need a test database.
+
+## 11. Setup
+
+```bash
+pip install agent-action-gateway
+```
 
 | To | Run |
 |---|---|
-| see each run step by step, and approve waiting actions | `agent-gateway dashboard` |
-| find code that calls around the checkpoint | `agent-gateway check --app your_agent.py` |
-| test a new agent version before you ship it | `agent-gateway gate check --cases your-cases.json ...` ([evaluation guide](docs/evaluation.md)) |
+| check MCP tool calls | `agent-gateway mcp-proxy --config servers.json` |
+| run the proxy as its own service | `agent-gateway mcp-proxy --config servers.json --http` |
+| run the key-holding gateway | `agent-gateway gateway --config routes.json --db gateway.db` |
+| see runs and approve | `agent-gateway dashboard` |
+| find calls that skip the checkpoint | `agent-gateway check --app your_agent.py` |
+| test a new agent version | `agent-gateway gate check --cases your-cases.json ...` ([guide](docs/evaluation.md)) |
 
-## Limits
+Secrets come from environment variables: the upstream keys named in the route
+file, `AGENT_GATEWAY_MASTER_KEY`, `AGENT_GATEWAY_DASHBOARD_TOKEN`,
+`AGENT_GATEWAY_PROXY_TOKEN` (proxy over HTTP), and `${NAME}`
+in the proxy config. Run the gateway where the agent cannot read its keys
+(separate user, container or host); see [`deploy/`](deploy/) and the
+[gateway guide](docs/gateway-deployment.md).
 
-It checks actions, not reasoning: it does not judge the agent's plan or stop
-hallucinations. It cannot promise "once" if your provider has no idempotency
-key and no lookup. Deferred work is in [ROADMAP.md](ROADMAP.md).
-
-## Documentation
-
-- [SDK guide](docs/sdk.md): sessions, approvals, limits, stop-and-ask
-- [Gateway deployment](docs/gateway-deployment.md): self-hosting and what it protects
-- [Receipt guarantees](docs/receipt-guarantees.md): exactly what "once" means
-- [Evaluation](docs/evaluation.md): the release gate and run scoring
-- [Architecture](docs/architecture.md): how the package is organized
-
-## Development
-
-```bash
-pip install -e ".[dev]"
-make verify     # lint, type check, tests
-make proof      # reproduce the numbers above
-```
+Develop: `pip install -e ".[dev]"`, then `make verify` and `make proof`.
 
 ## License
 

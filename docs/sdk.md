@@ -440,12 +440,46 @@ Cursor use works as it is:
   tested with the real `agent-gateway gateway` process started from a route file.
 - **Boundary.** The proxy checks only what goes through it. Remove any direct
   connection from the agent to the real servers.
-- **Not supported yet:** finding a remote server's sign-in endpoints automatically
-  (OAuth discovery and client registration), and connecting to servers over
-  anything but stdio and Streamable HTTP.
-- **Tested with:** this project's tests, the official Python MCP SDK client, and
-  one run of Claude Code (with a stand-in database tool). It has not been run with
-  Claude Desktop or Cursor.
+- **Run it as its own service (HTTP).** Started by the agent's app over stdio, the
+  proxy runs as the agent's own user: an agent with shell or file access could
+  change its config or its database, where approvals live, and an agent that can
+  only reach MCP servers by URL cannot use it at all. With `--http` the proxy
+  runs as a service and serves MCP's Streamable HTTP transport at `/mcp`:
+
+  ```bash
+  AGENT_GATEWAY_PROXY_TOKEN=... agent-gateway mcp-proxy --config servers.json \
+      --db gateway.db --http --host 127.0.0.1 --port 8090
+  ```
+
+  Run it as its own user, container or host, so the agent cannot read the config,
+  the database or the real servers' secrets. Every request needs
+  `Authorization: Bearer <token>`; give several tokens separated by commas, at
+  least 16 characters each. A token lets an agent call tools through the checks.
+  It cannot approve anything: approvals are given in the dashboard, which has its
+  own token. A request from a web page (with an `Origin` header) is refused unless
+  you allow that origin with `--allow-origin`. Each `initialize` opens a session
+  that belongs to the token that opened it. Replies are plain JSON; there is no
+  event stream, so the agent sees tool-list changes the next time it lists tools.
+  Outside this machine, put HTTPS in front of it (a reverse proxy).
+
+  An agent that takes a URL connects to `https://<host>/mcp` with the token as a
+  bearer header. An app that only starts commands (Claude Desktop, Cursor) uses
+  `mcp-connect`, which forwards stdio to the URL and holds nothing else:
+
+  ```json
+  { "mcpServers": { "safe-tools": {
+      "command": "agent-gateway",
+      "args": ["mcp-connect", "https://proxy.internal/mcp"],
+      "env": { "AGENT_GATEWAY_PROXY_TOKEN": "..." } } } }
+  ```
+
+  `mcp-connect` refuses plain `http` to another machine, never follows a
+  redirect, and opens a new session by itself if the proxy restarted. Not built:
+  OAuth sign-in for agents (platforms that only connect with OAuth cannot use the
+  proxy yet).
+- **Tested with:** this project's tests, the official Python MCP SDK client (over
+  stdio, over HTTP, and through `mcp-connect`), and one run of Claude Code (with a
+  stand-in database tool). It has not been run with Claude Desktop or Cursor.
 
 ### Route-based MCP server
 

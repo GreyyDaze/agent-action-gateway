@@ -39,7 +39,7 @@ flowchart TD
 | `guards/` | redaction, capture policy, honest run status |
 | `runtime/` | `session()`, records, lower-level dispatch helpers |
 | `credential/` | placeholder vault, secret resolvers, outbound proxy, TLS |
-| `integrations/` | MCP proxy, HTTP gateway, route-based MCP server, provider interface |
+| `integrations/` | MCP proxy (stdio, or HTTP with `mcp-connect`), HTTP gateway, route-based MCP server, provider interface |
 | `audit/` | receipts, failure grouping, case promotion |
 | `eval/` | cases, judges, verdicts, release gate, run sampling, path scoring |
 | `storage/` | SQLite and PostgreSQL persistence |
