@@ -327,6 +327,7 @@ class StopRulesTest(unittest.TestCase):
             )
             self.assertEqual(third["status"], "completed")
             self.assertEqual(third["attempt"], 2)
+            self.assertIn("deployment_id", third["caveat"], "proceeding must not hide the gap")
             self.assertEqual(calls, ["vague request 3"])
 
             fourth = run(

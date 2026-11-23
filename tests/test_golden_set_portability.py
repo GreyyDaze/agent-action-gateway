@@ -130,3 +130,42 @@ class EvaluationPortabilityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GateCommandUsesYourCasesTest(unittest.TestCase):
+    """`agent-gateway gate check --cases` scores the adopter's file, not ours."""
+
+    def _gate(self, *args: str):
+        import subprocess
+        import sys
+
+        return subprocess.run(
+            [sys.executable, "-m", "agent_action_gateway", "gate", "check", *args],
+            capture_output=True, text=True,
+        )
+
+    def test_own_cases_pass_and_a_catastrophic_miss_fails(self) -> None:
+        cases = [build_case(i, catastrophic=(i == 1)) for i in range(1, 13)]
+        case_file = write_set(cases)
+        directory = case_file.parent
+        good = {c["case_id"]: c["expected"] for c in cases}
+        bad = {**good, "appt-001": {"patient_id": "P-999"}}
+        (directory / "good.json").write_text(json.dumps(good), encoding="utf-8")
+        (directory / "bad.json").write_text(json.dumps(bad), encoding="utf-8")
+        common = ["--cases", str(case_file), "--db", str(directory / "eval.db")]
+
+        baseline = self._gate(*common, "--candidate-version", "v1",
+                              "--candidate-file", str(directory / "good.json"),
+                              "--record-baseline")
+        regressed = self._gate(*common, "--candidate-version", "v2",
+                               "--candidate-file", str(directory / "bad.json"))
+
+        self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
+        self.assertEqual(regressed.returncode, 1, regressed.stdout + regressed.stderr)
+
+    def test_an_invalid_case_file_is_a_clear_error(self) -> None:
+        case_file = write_set([build_case(1, catastrophic=True)])
+        result = self._gate("--cases", str(case_file), "--candidate-version", "v1",
+                            "--candidate-file", str(case_file))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("too few cases", result.stderr)

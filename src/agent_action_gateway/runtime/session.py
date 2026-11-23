@@ -464,8 +464,9 @@ class SafetySession:
         tool_map = dict(tools or {})
         if new_turn:
             self.clarification.next_turn()
+        caveat = None
         if required_inputs is not None:
-            stopped = self._check_required_inputs(
+            stopped, caveat = self._check_required_inputs(
                 task, dict(required_inputs), self.batch if batch is None else batch
             )
             if stopped is not None:
@@ -548,6 +549,7 @@ class SafetySession:
             "blocked_decisions": len(blocked),
             "pending_approvals": [a.approval_id for a in self.approvals.pending()],
             "attempt": self.clarification.attempts,
+            "caveat": caveat,
         }
 
     def _record_budget(self) -> None:
@@ -556,8 +558,13 @@ class SafetySession:
 
     def _check_required_inputs(
         self, task: str, required: dict[str, Any], batch: bool
-    ) -> dict[str, Any] | None:
-        """Stop before the agent runs when a required input is missing."""
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Stop before the agent runs when a required input is missing.
+
+        Returns `(stopped_result, caveat)`. After the allowed number of
+        questions the run proceeds, but the missing input is recorded and
+        returned as a caveat rather than silently dropped.
+        """
         base = {"run_id": self.run_id, "enforcement": "enforced", "output": None}
         try:
             proposal = validate_required_input(
@@ -569,7 +576,7 @@ class SafetySession:
                 TraceEvent(self.run_id, 0, "validation", task, str(exc), "blocked")
             )
             return {**base, "status": "blocked", "error": str(exc),
-                    "attempt": self.clarification.attempts}
+                    "attempt": self.clarification.attempts}, None
         self.store.save_clarification_state(self.run_id, self.clarification)
         if proposal.decision == "ASK":
             self.store.append_trace(
@@ -577,8 +584,12 @@ class SafetySession:
             )
             return {**base, "status": "needs_clarification",
                     "missing_fields": proposal.missing_fields,
-                    "attempt": self.clarification.attempts}
-        return None
+                    "attempt": self.clarification.attempts}, None
+        if proposal.caveat:
+            self.store.append_trace(
+                TraceEvent(self.run_id, 0, "validation", task, proposal.caveat, "caveat")
+            )
+        return None, proposal.caveat
 
     def close(self) -> None:
         self.store.append_trace(

@@ -10,7 +10,7 @@ from typing import Any
 from agent_action_gateway.eval.calibration import run_calibration
 from agent_action_gateway.eval.evaluator import evaluate_cases
 from agent_action_gateway.eval.gate import run_gate
-from agent_action_gateway.eval.golden import seed_golden_cases
+from agent_action_gateway.eval.golden import load_golden_set, seed_golden_cases
 from agent_action_gateway.eval.judge import (
     JudgeUnavailableError,
     ProductControlledJudge,
@@ -59,6 +59,10 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--lane", choices=("push", "full"), default="push")
     check.add_argument("--candidate-version", required=True)
     check.add_argument("--candidate-file", required=True)
+    check.add_argument(
+        "--cases",
+        help="your case file (JSON); defaults to the bundled example cases",
+    )
     check.add_argument("--db", default="data/evaluations.db")
     check.add_argument("--record-baseline", action="store_true")
     check.add_argument("--judge-model", default=DEFAULT_GEMINI_MODEL)
@@ -202,7 +206,10 @@ def run_check(args: argparse.Namespace) -> int:
     if args.record_baseline and args.repeat != 1:
         raise SystemExit("--record-baseline cannot be combined with --repeat > 1")
 
-    cases = seed_golden_cases()
+    try:
+        cases = load_golden_set(args.cases) if args.cases else seed_golden_cases()
+    except ValueError as exc:
+        raise SystemExit(f"--cases: {exc}") from exc
     store = EvaluationStore(args.db)
     results = []
     for _ in range(args.repeat):
