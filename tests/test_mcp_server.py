@@ -9,10 +9,10 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from safety_layer.integrations.gateway import GatewayPolicy, Route, SafetyGateway
-from safety_layer.integrations.mcp import MCPToolBridge
-from safety_layer.integrations.mcp_server import MCPServer
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.integrations.gateway import GatewayPolicy, Route, SafetyGateway
+from agent_action_gateway.integrations.mcp import MCPToolBridge
+from agent_action_gateway.integrations.mcp_server import MCPServer
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class MCPServerTest(unittest.TestCase):

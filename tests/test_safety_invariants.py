@@ -17,16 +17,16 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from safety_layer.audit.receipts import (
+from agent_action_gateway.audit.receipts import (
     UnresolvableReceiptError,
     execute_side_effect,
     resolve_unknown,
 )
-from safety_layer.guards.redaction import redact
-from safety_layer.integrations.adapters.mock import MockPaymentProvider
-from safety_layer.observability.dashboard import build_server
-from safety_layer.policy.locks import ApprovalStore
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.guards.redaction import redact
+from agent_action_gateway.integrations.adapters.mock import MockPaymentProvider
+from agent_action_gateway.observability.dashboard import build_server
+from agent_action_gateway.policy.locks import ApprovalStore
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class ReceiptRecoveryTargetTest(unittest.TestCase):
@@ -110,7 +110,7 @@ class NoFabricatedVerdictTest(unittest.TestCase):
     """
 
     def test_completed_run_is_not_recorded_as_pass(self) -> None:
-        from safety_layer.runtime.orchestrator import run
+        from agent_action_gateway.runtime.orchestrator import run
 
         with tempfile.TemporaryDirectory() as directory:
             store = TraceStore(Path(directory) / "runtime.db")
@@ -122,7 +122,7 @@ class NoFabricatedVerdictTest(unittest.TestCase):
             self.assertIn("NOT_EVALUATED", verdicts)
 
     def test_failed_run_is_recorded_as_failed(self) -> None:
-        from safety_layer.runtime.orchestrator import run
+        from agent_action_gateway.runtime.orchestrator import run
 
         def boom(task: str) -> str:
             raise RuntimeError("nope")
@@ -283,7 +283,7 @@ class GateExitContractTest(unittest.TestCase):
     """
 
     def test_exit_codes_are_distinct_and_do_not_collide_with_argparse(self) -> None:
-        from safety_layer.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_UNCERTAIN
+        from agent_action_gateway.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_UNCERTAIN
 
         self.assertEqual(EXIT_PASS, 0)
         self.assertEqual(EXIT_FAIL, 1)
@@ -295,9 +295,9 @@ class NoLoadBearingAssertsTest(unittest.TestCase):
     """Runtime invariants must not disappear under `python -O`."""
 
     def test_source_contains_no_bare_asserts(self) -> None:
-        import safety_layer
+        import agent_action_gateway
 
-        root = Path(safety_layer.__file__).resolve().parent
+        root = Path(agent_action_gateway.__file__).resolve().parent
         offenders: list[str] = []
         for module in sorted(root.glob("*.py")):
             for number, line in enumerate(
@@ -316,7 +316,7 @@ class DeadCodeTest(unittest.TestCase):
     """
 
     def test_duplicated_decider_is_gone(self) -> None:
-        import safety_layer.policy.stop_rules as stop_rules
+        import agent_action_gateway.policy.stop_rules as stop_rules
 
         self.assertFalse(hasattr(stop_rules, "decide_tool_result"))
 
@@ -381,7 +381,7 @@ class PaymentRedactionTest(unittest.TestCase):
         self.assertEqual(redact("order-0000000001234567890"), "order-0000000001234567890")
 
     def test_luhn_validation(self) -> None:
-        from safety_layer.guards.redaction import luhn_valid
+        from agent_action_gateway.guards.redaction import luhn_valid
 
         self.assertTrue(luhn_valid("4111111111111111"))
         self.assertFalse(luhn_valid("4111111111111112"))

@@ -22,7 +22,7 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: safety-gateway
+  name: agent-action-gateway
   namespace: safety
   annotations:
     # Replace with your own workload identity (IRSA, GKE Workload Identity, or a
@@ -33,36 +33,36 @@ metadata:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: safety-gateway-secrets
+  name: agent-action-gateway-secrets
   namespace: safety
 type: Opaque
 stringData:
   # PLACEHOLDER. In production, do not store provider keys here — have the
   # gateway's ServiceAccount exchange its identity for a short-lived credential
   # at request time.
-  SAFETY_MASTER_KEY: "replace-me-with-a-32-byte-random-value"
+  AGENT_GATEWAY_MASTER_KEY: "replace-me-with-a-32-byte-random-value"
   stripe_key: "sk_live_replace_me"
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: safety-gateway
+  name: agent-action-gateway
   namespace: safety
   labels:
-    app: safety-gateway
+    app: agent-action-gateway
     role: gateway
 spec:
   replicas: 1                      # single-writer: the trace database is SQLite
   selector:
     matchLabels:
-      app: safety-gateway
+      app: agent-action-gateway
   template:
     metadata:
       labels:
-        app: safety-gateway
+        app: agent-action-gateway
         role: gateway
     spec:
-      serviceAccountName: safety-gateway
+      serviceAccountName: agent-action-gateway
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
@@ -72,28 +72,28 @@ spec:
           type: RuntimeDefault
       containers:
         - name: gateway
-          image: agent-safety-eval-layer-gateway:local
+          image: agent-action-gateway-gateway:local
           args:
             - gateway
-            - --config=/etc/safety/routes.yaml
-            - --db=/var/lib/safety/gateway.db
+            - --config=/etc/agent-action-gateway/routes.yaml
+            - --db=/var/lib/agent-action-gateway/gateway.db
           ports:
             - name: http
               containerPort: 8080
           env:
-            - name: SAFETY_MASTER_KEY
+            - name: AGENT_GATEWAY_MASTER_KEY
               valueFrom:
-                secretKeyRef: {name: safety-gateway-secrets, key: SAFETY_MASTER_KEY}
+                secretKeyRef: {name: agent-action-gateway-secrets, key: AGENT_GATEWAY_MASTER_KEY}
           volumeMounts:
             - name: routes
-              mountPath: /etc/safety/routes.yaml
+              mountPath: /etc/agent-action-gateway/routes.yaml
               subPath: routes.yaml
               readOnly: true
             - name: secrets
               mountPath: /run/secrets
               readOnly: true
             - name: state
-              mountPath: /var/lib/safety
+              mountPath: /var/lib/agent-action-gateway
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 500m, memory: 256Mi}
@@ -114,21 +114,21 @@ spec:
       volumes:
         - name: routes
           configMap:
-            name: safety-gateway-routes
+            name: agent-action-gateway-routes
         - name: secrets
           secret:
-            secretName: safety-gateway-secrets
+            secretName: agent-action-gateway-secrets
         - name: state
           emptyDir: {}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: safety-gateway-routes
+  name: agent-action-gateway-routes
   namespace: safety
 data:
   routes.yaml: |
-    master_key_env: SAFETY_MASTER_KEY
+    master_key_env: AGENT_GATEWAY_MASTER_KEY
     session_environment: prod
     routes:
       - path: /charge
@@ -142,10 +142,10 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
-  name: safety-gateway
+  name: agent-action-gateway
   namespace: safety
 spec:
-  selector: {app: safety-gateway}
+  selector: {app: agent-action-gateway}
   ports:
     - name: http
       port: 8080
@@ -161,7 +161,7 @@ metadata:
   name: default-deny-ingress
   namespace: safety
 spec:
-  podSelector: {app: safety-gateway}
+  podSelector: {app: agent-action-gateway}
   policyTypes: [Ingress]
   ingress:
     - from:
@@ -203,7 +203,7 @@ metadata:
   name: gateway-egress-to-providers
   namespace: safety
 spec:
-  podSelector: {app: safety-gateway}
+  podSelector: {app: agent-action-gateway}
   policyTypes: [Egress]
   egress:
     # Replace the CIDR with an FQDN rule (Cilium, or your cloud's DNS-based

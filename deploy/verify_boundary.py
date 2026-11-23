@@ -2,7 +2,7 @@
 """Adversarial probe: run from the agent's position and try to escape.
 
 This tests the DEPLOYMENT, not the library. It is written against the Python
-standard library on purpose: if it imported safety_layer, a bug in our own code
+standard library on purpose: if it imported agent_action_gateway, a bug in our own code
 could satisfy it, and a check that cannot distinguish our code from the
 adversary's is not a check.
 
@@ -145,7 +145,7 @@ def main() -> int:
     parser.add_argument("--gateway", default="http://gateway:8080")
     parser.add_argument(
         "--key",
-        default=os.environ.get("SAFETY_PROBE_KEY", ""),
+        default=os.environ.get("AGENT_GATEWAY_PROBE_KEY", ""),
         help="a virtual key scoped to the gateway's routes",
     )
     parser.add_argument(
@@ -181,7 +181,7 @@ def main() -> int:
             record(index, None, str(exc))
 
     if not args.key:
-        record(2, None, "no virtual key supplied; set SAFETY_PROBE_KEY or pass --key")
+        record(2, None, "no virtual key supplied; set AGENT_GATEWAY_PROBE_KEY or pass --key")
     else:
         try:
             record(2, *check_gateway_accepts_a_key(args.gateway, args.key))

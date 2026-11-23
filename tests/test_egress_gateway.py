@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.credential.credentials import CredentialRule
-from safety_layer.integrations.gateway import GatewayPolicy, Route, SafetyGateway
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.credential.credentials import CredentialRule
+from agent_action_gateway.integrations.gateway import GatewayPolicy, Route, SafetyGateway
+from agent_action_gateway.storage.traces import TraceStore
 
 UPSTREAM = "https://api.github.com/user"
 
@@ -85,7 +85,7 @@ class EgressGatewayTest(unittest.TestCase):
         )
         # The shell builds its own headers, so the placeholder must be supplied
         # through the transport path. Directly exercise the egress policy here:
-        from safety_layer.credential.egress import EgressDenied
+        from agent_action_gateway.credential.egress import EgressDenied
 
         with self.assertRaises(EgressDenied):
             policy.egress.enforce("other.example", {"Authorization": placeholder})

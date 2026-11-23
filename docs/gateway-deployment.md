@@ -46,7 +46,7 @@ same thing as B.
 ### Tier 0 — same process. Unsupported.
 
 ```python
-from safety_layer.interface.gateway import build_gateway_server   # refused
+from agent_action_gateway.integrations.gateway import build_gateway_server   # refused
 ```
 
 There is nothing to protect. The gateway refuses to start this way because a
@@ -58,7 +58,7 @@ The kernel enforces this. `systemd`'s `User=` plus `LoadCredential=` means the
 agent's user cannot read `/proc/<pid>/environ` and cannot `ptrace` the gateway.
 
 ```
-deploy/systemd/safety-gateway.service
+deploy/systemd/agent-action-gateway.service
 ```
 
 ### Tier 2 — separate containers (recommended for self-hosting)
@@ -125,7 +125,7 @@ client = SafetyClient(base_url="http://gateway:8080", key=VIRTUAL_KEY)
 Issue the key with the routes that agent is allowed to use:
 
 ```bash
-safety gateway --config routes.json --db gateway.db \
+agent-gateway gateway --config routes.json --db gateway.db \
     issue-key --name billing-agent --ttl 1h --routes /charge
 ```
 
@@ -160,7 +160,7 @@ valid until someone restarted the service.
 Two commands, and they answer different questions.
 
 ```bash
-safety gateway doctor --config routes.json   # this host
+agent-gateway gateway doctor --config routes.json   # this host
 make verify-boundary                        # from the agent's position
 ```
 

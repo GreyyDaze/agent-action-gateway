@@ -17,18 +17,18 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from safety_layer.integrations.gateway import (
+from agent_action_gateway.integrations.gateway import (
     GatewayPolicy,
     Route,
     SafetyGateway,
 )
-from safety_layer.integrations.mcp import (
+from agent_action_gateway.integrations.mcp import (
     MCPToolBridge,
     route_path_for,
     tool_definitions,
     tool_name_for,
 )
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class UpstreamRecorder:
@@ -220,7 +220,7 @@ class TransportIndependenceTest(BridgeTestBase):
         A dependency on an MCP SDK would make this package non-stdlib and would
         tie the enforcement path to someone else's release schedule.
         """
-        import safety_layer.integrations.mcp as module
+        import agent_action_gateway.integrations.mcp as module
 
         self.assertNotIn("mcp", {name for name in dir(module) if name.startswith("_mcp")})
 
@@ -234,7 +234,7 @@ class TransportIndependenceTest(BridgeTestBase):
         import ast
 
         source = (
-            Path(__file__).resolve().parents[1] / "src/safety_layer/interface/mcp.py"
+            Path(__file__).resolve().parents[1] / "src/agent_action_gateway/integrations/mcp.py"
         )
         tree = ast.parse(source.read_text(encoding="utf-8"))
         imported: list[str] = []

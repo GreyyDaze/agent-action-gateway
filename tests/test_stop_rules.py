@@ -2,23 +2,23 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.integrations.adapters.mock import MockPaymentProvider
-from safety_layer.policy.cross_check import CrossCheckSpec, perform_cross_check
-from safety_layer.policy.locks import ApprovalStore, RiskRegistry
-from safety_layer.policy.stop_rules import (
+from agent_action_gateway.integrations.adapters.mock import MockPaymentProvider
+from agent_action_gateway.policy.cross_check import CrossCheckSpec, perform_cross_check
+from agent_action_gateway.policy.locks import ApprovalStore, RiskRegistry
+from agent_action_gateway.policy.stop_rules import (
     AmbiguityBlockedError,
     ClarificationState,
     CrossEnvironmentError,
     StopPolicy,
     enforce_environment,
 )
-from safety_layer.runtime.orchestrator import (
+from agent_action_gateway.runtime.orchestrator import (
     dispatch_external_action,
     evaluate_tool_result,
     execute_tool,
     run,
 )
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class StopRulesTest(unittest.TestCase):

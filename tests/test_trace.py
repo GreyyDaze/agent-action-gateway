@@ -2,11 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.guards.capture import classify_capture, suspicious_flags
-from safety_layer.guards.redaction import redact
-from safety_layer.guards.status import honest_status
-from safety_layer.runtime.records import TraceEvent
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.guards.capture import classify_capture, suspicious_flags
+from agent_action_gateway.guards.redaction import redact
+from agent_action_gateway.guards.status import honest_status
+from agent_action_gateway.runtime.records import TraceEvent
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class TraceEvidenceTests(unittest.TestCase):
@@ -149,7 +149,7 @@ class TraceEvidenceTests(unittest.TestCase):
 
 class FailureWallGroupingTests(unittest.TestCase):
     def test_same_error_step_and_config_are_one_group(self) -> None:
-        from safety_layer.audit.failure_wall import build_failure_wall
+        from agent_action_gateway.audit.failure_wall import build_failure_wall
         traces = [
             {"id": 1, "run_id": "run-1", "step": 4, "event": "tool.execute", "status": "failed",
              "output": {"error": {"type": "TimeoutError"}},
@@ -163,7 +163,7 @@ class FailureWallGroupingTests(unittest.TestCase):
         self.assertEqual(len(groups[0].records), 2)
 
     def test_different_config_does_not_merge(self) -> None:
-        from safety_layer.audit.failure_wall import build_failure_wall
+        from agent_action_gateway.audit.failure_wall import build_failure_wall
         traces = [
             {"id": 1, "run_id": "run-1", "step": 4, "event": "tool.execute", "status": "failed",
              "output": {"error": {"type": "TimeoutError"}},
@@ -175,7 +175,7 @@ class FailureWallGroupingTests(unittest.TestCase):
         self.assertEqual(len(build_failure_wall(traces)), 2)
 
     def test_silent_wrong_run_is_grouped(self) -> None:
-        from safety_layer.audit.failure_wall import build_failure_wall
+        from agent_action_gateway.audit.failure_wall import build_failure_wall
         traces = [
             {"id": 1, "run_id": "run-1", "step": 3, "event": "tool.result", "status": "completed",
              "flags": ["empty-result"], "provider_metadata": {"config": {"model": "m1"}}},
@@ -187,7 +187,10 @@ class FailureWallGroupingTests(unittest.TestCase):
         self.assertEqual(groups[0].signature.error_type, "silent-wrong:empty-result")
 
     def test_confirmation_keeps_ownership_unknown(self) -> None:
-        from safety_layer.audit.failure_wall import build_failure_wall, confirm_failure_group
+        from agent_action_gateway.audit.failure_wall import (
+            build_failure_wall,
+            confirm_failure_group,
+        )
         group = build_failure_wall([{"id": 1, "run_id": "run-1", "step": 1, "event": "tool",
             "status": "failed", "output": {"error": {"type": "ValueError"}}}])[0]
         confirm_failure_group(group)
@@ -195,7 +198,7 @@ class FailureWallGroupingTests(unittest.TestCase):
         self.assertEqual(group.ownership, "unknown")
 
     def test_human_can_merge_groups(self) -> None:
-        from safety_layer.audit.failure_wall import build_failure_wall, merge_failure_groups
+        from agent_action_gateway.audit.failure_wall import build_failure_wall, merge_failure_groups
         first = build_failure_wall([{"id": 1, "run_id": "run-1", "step": 1, "event": "tool-a",
             "status": "failed", "output": {"error": {"type": "ValueError"}}}])[0]
         second = build_failure_wall([{"id": 2, "run_id": "run-2", "step": 2, "event": "tool-b",
@@ -205,7 +208,7 @@ class FailureWallGroupingTests(unittest.TestCase):
         self.assertEqual(merged.ownership, "unknown")
 
     def test_human_can_split_group(self) -> None:
-        from safety_layer.audit.failure_wall import (
+        from agent_action_gateway.audit.failure_wall import (
             build_failure_wall,
             merge_failure_groups,
             split_failure_group,
@@ -224,7 +227,7 @@ class FailureWallGroupingTests(unittest.TestCase):
 
 class FailureWallPersistenceTests(unittest.TestCase):
     def _group(self, trace_id: int, run_id: str, error: str = "TimeoutError"):
-        from safety_layer.audit.failure_wall import build_failure_wall
+        from agent_action_gateway.audit.failure_wall import build_failure_wall
 
         return build_failure_wall([{
             "id": trace_id,
@@ -237,7 +240,7 @@ class FailureWallPersistenceTests(unittest.TestCase):
         }])[0]
 
     def test_group_survives_store_reopen(self) -> None:
-        from safety_layer.audit.wall import FailureWallStore
+        from agent_action_gateway.audit.wall import FailureWallStore
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "failure-wall.db"
@@ -254,7 +257,7 @@ class FailureWallPersistenceTests(unittest.TestCase):
             self.assertEqual(reopened.ownership, "unknown")
 
     def test_confirmation_is_persistent_and_audited(self) -> None:
-        from safety_layer.audit.wall import FailureWallStore
+        from agent_action_gateway.audit.wall import FailureWallStore
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "failure-wall.db"
@@ -272,7 +275,7 @@ class FailureWallPersistenceTests(unittest.TestCase):
             self.assertEqual(FailureWallStore(path).decisions(group.group_id)[0]["decision"], "confirm")
 
     def test_reject_is_persistent_and_audited(self) -> None:
-        from safety_layer.audit.wall import FailureWallStore
+        from agent_action_gateway.audit.wall import FailureWallStore
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "failure-wall.db"
@@ -290,8 +293,8 @@ class FailureWallPersistenceTests(unittest.TestCase):
             self.assertEqual(FailureWallStore(path).decisions(group.group_id)[0]["decision"], "reject")
 
     def test_merge_persists_both_evidence_and_marks_sources_merged(self) -> None:
-        from safety_layer.audit.failure_wall import merge_failure_groups
-        from safety_layer.audit.wall import FailureWallStore
+        from agent_action_gateway.audit.failure_wall import merge_failure_groups
+        from agent_action_gateway.audit.wall import FailureWallStore
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "failure-wall.db"
@@ -312,8 +315,11 @@ class FailureWallPersistenceTests(unittest.TestCase):
             self.assertEqual(FailureWallStore(path).decisions(first.group_id)[0]["decision"], "merge")
 
     def test_split_persists_result_groups_and_marks_source_split(self) -> None:
-        from safety_layer.audit.failure_wall import merge_failure_groups, split_failure_group
-        from safety_layer.audit.wall import FailureWallStore
+        from agent_action_gateway.audit.failure_wall import (
+            merge_failure_groups,
+            split_failure_group,
+        )
+        from agent_action_gateway.audit.wall import FailureWallStore
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "failure-wall.db"

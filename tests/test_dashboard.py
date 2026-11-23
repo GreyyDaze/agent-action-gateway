@@ -18,10 +18,10 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from safety_layer import session
-from safety_layer.observability.dashboard import build_server
-from safety_layer.observability.view import build_run_view, state_meaning
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway import session
+from agent_action_gateway.observability.dashboard import build_server
+from agent_action_gateway.observability.view import build_run_view, state_meaning
+from agent_action_gateway.storage.traces import TraceStore
 
 
 def _soup(html: str) -> str:

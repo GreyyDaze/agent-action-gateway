@@ -3,14 +3,14 @@ requires = ["setuptools==75.8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-safety-eval-layer"
+name = "agent-action-gateway"
 version = "0.2.0"
 description = "Prevention-first safety and evaluation layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 license = { text = "MIT" }
-authors = [{ name = "Agent Safety Layer contributors" }]
+authors = [{ name = "GreyyDaze" }]
 keywords = ["ai-agents", "safety", "evaluation", "guardrails", "ci"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -21,13 +21,12 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/GreyyDaze/agent-safety-eval-layer"
-Repository = "https://github.com/GreyyDaze/agent-safety-eval-layer"
-Issues = "https://github.com/GreyyDaze/agent-safety-eval-layer/issues"
+Homepage = "https://github.com/GreyyDaze/agent-action-gateway"
+Repository = "https://github.com/GreyyDaze/agent-action-gateway"
+Issues = "https://github.com/GreyyDaze/agent-action-gateway/issues"
 
 [project.scripts]
-safety = "safety_layer.cli:main"
-gate = "safety_layer.gate_cli:main"
+agent-gateway = "agent_action_gateway.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -36,7 +35,7 @@ where = ["src"]
 # The golden set and calibration set are runtime artifacts owned by the
 # package, so they ship inside it. data-files would install relative to
 # sys.prefix (the venv root), which no loader can locate reliably.
-safety_layer = ["data/golden/*.json", "data/calibration/*.json"]
+agent_action_gateway = ["data/golden/*.json", "data/calibration/*.json"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["data/*.db", "data/*.db-shm", "data/*.db-wal"]
@@ -94,22 +93,22 @@ ignore = [
 # provider/protocol methods take `order_id` they do not need in order to
 # satisfy the shared interface.
 "tests/*" = ["ARG001", "ARG002", "ARG005", "SIM117"]
-"src/safety_layer/integrations/adapters/base.py" = ["ARG002"]
-"src/safety_layer/integrations/adapters/mock.py" = ["ARG002"]
-"src/safety_layer/eval/judge.py" = ["ARG002"]
-"src/safety_layer/policy/stop_rules.py" = ["ARG002"]
-"src/safety_layer/integrations/gateway.py" = ["ARG002"]
-"src/safety_layer/credential/egress_proxy.py" = ["ARG002"]
-"src/safety_layer/credential/tls.py" = ["ARG002"]
+"src/agent_action_gateway/integrations/adapters/base.py" = ["ARG002"]
+"src/agent_action_gateway/integrations/adapters/mock.py" = ["ARG002"]
+"src/agent_action_gateway/eval/judge.py" = ["ARG002"]
+"src/agent_action_gateway/policy/stop_rules.py" = ["ARG002"]
+"src/agent_action_gateway/integrations/gateway.py" = ["ARG002"]
+"src/agent_action_gateway/credential/egress_proxy.py" = ["ARG002"]
+"src/agent_action_gateway/credential/tls.py" = ["ARG002"]
 # Deliberate re-exports kept reachable for backwards compatibility; only the
 # names in __all__ are advertised.
-"src/safety_layer/__init__.py" = ["F401"]
+"src/agent_action_gateway/__init__.py" = ["F401"]
 "docs/examples/*" = ["ARG001"]
 
 [tool.mypy]
 python_version = "3.11"
-files = ["src/safety_layer"]
-exclude = ["safety_layer/proofs"]
+files = ["src/agent_action_gateway"]
+exclude = ["agent_action_gateway/proofs"]
 # The package is fully annotated but historically lenient; this turns on the
 # checks that catch real defects without demanding annotations everywhere.
 check_untyped_defs = true
@@ -122,7 +121,7 @@ ignore_missing_imports = true
 
 [tool.coverage.run]
 branch = true
-source = ["safety_layer"]
+source = ["agent_action_gateway"]
 
 [tool.coverage.report]
 # Ratchet. Coverage was 68% before the interface-layer tests; the floor is set
@@ -150,13 +149,13 @@ exclude_lines = [
 # Mutation testing checks whether tests would NOTICE a bug, not just execute a
 # line. Dev-only tool; the running product stays stdlib-only. Scoped to the
 # safety-critical code where a missed fault is expensive.
-source_paths = ["src/safety_layer/"]
+source_paths = ["src/agent_action_gateway/"]
 only_mutate = [
-    "src/safety_layer/policy/*",
-    "src/safety_layer/engine/*",
-    "src/safety_layer/audit/*",
-    "src/safety_layer/credential/*",
-    "src/safety_layer/guards/*",
+    "src/agent_action_gateway/policy/*",
+    "src/agent_action_gateway/engine/*",
+    "src/agent_action_gateway/audit/*",
+    "src/agent_action_gateway/credential/*",
+    "src/agent_action_gateway/guards/*",
 ]
 pytest_add_cli_args_test_selection = ["tests/"]
 # Repo files that tests read by relative path; mutmut copies only source+tests.

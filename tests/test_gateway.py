@@ -20,14 +20,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
-from safety_layer.integrations.gateway import (
+from agent_action_gateway.integrations.gateway import (
     GatewayPolicy,
     Route,
     SafetyGateway,
     VirtualKey,
     build_gateway_server,
 )
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.storage.traces import TraceStore
 
 UPSTREAM_KEY = "sk_upstream_secret_value_for_custody_test"
 
@@ -101,7 +101,7 @@ class GatewayTest(unittest.TestCase):
         """Record through the real handler so custody is genuinely exercised."""
         request_line = f"POST {upstream} HTTP/1.1"
         del request_line
-        from safety_layer.integrations.gateway import _forward
+        from agent_action_gateway.integrations.gateway import _forward
 
         return _forward(upstream, payload, headers)
 
@@ -246,7 +246,7 @@ class GatewayTest(unittest.TestCase):
         import urllib.error
         import urllib.request
 
-        os.environ["SAFETY_GATEWAY"] = "1"
+        os.environ["AGENT_GATEWAY"] = "1"
         try:
             server, handler = build_gateway_server(self.store, GatewayPolicy())
             handler.gateway = self._gateway()
@@ -263,7 +263,7 @@ class GatewayTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
         finally:
-            del os.environ["SAFETY_GATEWAY"]
+            del os.environ["AGENT_GATEWAY"]
 
 
 class CallerAuthTest(unittest.TestCase):
@@ -277,12 +277,12 @@ class CallerAuthTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.store = TraceStore(Path(self._tmp.name) / "runtime.db")
-        os.environ["SAFETY_GATEWAY"] = "1"
+        os.environ["AGENT_GATEWAY"] = "1"
         os.environ["TEST_MASTER_KEY"] = "master-value"
         self.addCleanup(self._cleanup)
 
     def _cleanup(self) -> None:
-        os.environ.pop("SAFETY_GATEWAY", None)
+        os.environ.pop("AGENT_GATEWAY", None)
         os.environ.pop("TEST_MASTER_KEY", None)
         self._tmp.cleanup()
 
@@ -382,9 +382,9 @@ class LiveKeyIssuanceTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.store = TraceStore(Path(self._tmp.name) / "runtime.db")
-        os.environ["SAFETY_GATEWAY"] = "1"
+        os.environ["AGENT_GATEWAY"] = "1"
         os.environ["TEST_MASTER_KEY"] = "master-value"
-        self.addCleanup(os.environ.pop, "SAFETY_GATEWAY", None)
+        self.addCleanup(os.environ.pop, "AGENT_GATEWAY", None)
         self.addCleanup(os.environ.pop, "TEST_MASTER_KEY", None)
 
         policy = GatewayPolicy(session_environment="prod", master_key_env="TEST_MASTER_KEY")

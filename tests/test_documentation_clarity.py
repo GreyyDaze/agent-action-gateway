@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "src" / "safety_layer"
+SOURCE = ROOT / "src" / "agent_action_gateway"
 
 # Internal shorthand. None of it means anything to a reader who has not read
 # the project's own planning documents.
@@ -85,7 +85,7 @@ class NoInternalJargonTest(unittest.TestCase):
 
     def test_proof_output_is_labelled_by_property(self) -> None:
         """Regression guard for the P1-P6 relabel."""
-        from safety_layer.proofs.proof import PROOFS
+        from agent_action_gateway.proofs.proof import PROOFS
 
         for guarantee, _paths, _statement in PROOFS:
             with self.subTest(guarantee=guarantee):
@@ -116,7 +116,7 @@ class PackagingMetadataTest(unittest.TestCase):
         name = self.config["project"]["name"]
         self.assertEqual(
             name,
-            "agent-safety-eval-layer",
+            "agent-action-gateway",
             "package name must match the repository to avoid a PyPI collision",
         )
 
@@ -188,8 +188,8 @@ class ErrorMessageClarityTest(unittest.TestCase):
         import json
         import tempfile
 
-        from safety_layer.eval.golden import load_golden_set
-        from safety_layer.eval.models import GOLDEN_SET_VERSION
+        from agent_action_gateway.eval.golden import load_golden_set
+        from agent_action_gateway.eval.models import GOLDEN_SET_VERSION
 
         def case(index: int = 1, *, catastrophic: bool = False) -> dict[str, object]:
             return {
@@ -261,22 +261,22 @@ class PublicSurfaceTest(unittest.TestCase):
 
     def test_public_surface_is_minimal(self) -> None:
         """Advertising internals invites callers to depend on them."""
-        import safety_layer
+        import agent_action_gateway
 
         self.assertEqual(
-            sorted(safety_layer.__all__),
+            sorted(agent_action_gateway.__all__),
             ["FuseLimits", "SafetySession", "run", "session"],
         )
 
     def test_documented_entry_points_are_importable(self) -> None:
-        import safety_layer
+        import agent_action_gateway
 
-        for name in safety_layer.__all__:
+        for name in agent_action_gateway.__all__:
             with self.subTest(name=name):
-                self.assertTrue(hasattr(safety_layer, name))
+                self.assertTrue(hasattr(agent_action_gateway, name))
 
     def test_session_exposes_the_documented_methods(self) -> None:
-        from safety_layer.runtime.session import SafetySession
+        from agent_action_gateway.runtime.session import SafetySession
 
         for method in ("tool", "run", "request_approval", "approve", "deny"):
             with self.subTest(method=method):
@@ -300,7 +300,7 @@ class CommandScopeClarityTest(unittest.TestCase):
         import sys
 
         result = subprocess.run(
-            [sys.executable, "-m", "safety_layer", *args],
+            [sys.executable, "-m", "agent_action_gateway", *args],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -330,7 +330,7 @@ class CommandScopeClarityTest(unittest.TestCase):
         import sys
 
         help_text = subprocess.run(
-            [sys.executable, "-m", "safety_layer", "--help"],
+            [sys.executable, "-m", "agent_action_gateway", "--help"],
             cwd=ROOT,
             capture_output=True,
             text=True,

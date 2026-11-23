@@ -2,10 +2,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.integrations.adapters.mock import MockProvider
-from safety_layer.integrations.adapters.refund_demo_agent import make_refund_agent
-from safety_layer.runtime.orchestrator import run
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.integrations.adapters.mock import MockProvider
+from agent_action_gateway.integrations.adapters.refund_demo_agent import make_refund_agent
+from agent_action_gateway.runtime.orchestrator import run
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class SmokeTest(unittest.TestCase):
@@ -21,7 +21,7 @@ class SmokeTest(unittest.TestCase):
             self.assertEqual(len(snapshot["gate_verdicts"]), 1)
             # A completed run has not been evaluated for quality. Recording
             # PASS here would manufacture durable evidence that no evaluation
-            # produced; quality verdicts come from `safety gate check`.
+            # produced; quality verdicts come from `agent-gateway gate check`.
             self.assertEqual(
                 snapshot["gate_verdicts"][0]["verdict"], "NOT_EVALUATED"
             )

@@ -1,6 +1,6 @@
-from safety_layer.eval.evaluator import evaluate_cases
-from safety_layer.eval.judge import JudgeDecision
-from safety_layer.eval.models import GoldenCase
+from agent_action_gateway.eval.evaluator import evaluate_cases
+from agent_action_gateway.eval.judge import JudgeDecision
+from agent_action_gateway.eval.models import GoldenCase
 
 
 class FakeJudge:
@@ -35,7 +35,7 @@ def test_judge_wait_is_applied_between_real_judge_requests(monkeypatch):
     judge = FakeJudge()
     waits = []
 
-    monkeypatch.setattr("safety_layer.eval.evaluator.sleep", waits.append)
+    monkeypatch.setattr("agent_action_gateway.eval.evaluator.sleep", waits.append)
 
     summary = evaluate_cases(
         (case,),

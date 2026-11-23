@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from safety_layer.policy.fingerprint import fingerprint
+from agent_action_gateway.policy.fingerprint import fingerprint
 
 
 def test_the_same_effect_produces_the_same_key() -> None:

@@ -1,4 +1,4 @@
-"""`safety check` — verifying the caller's wiring rather than the library.
+"""`agent-gateway check` — verifying the caller's wiring rather than the library.
 
 The library's own suites prove the enforcement path works. They cannot show
 whether a given application routes actions through it, so these tests pin the
@@ -19,18 +19,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.observability.wiring import (
+from agent_action_gateway.observability.wiring import (
     Status,
     audit_database,
     run_check,
     scan_code,
 )
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.storage.traces import TraceStore
 
 ROOT = Path(__file__).resolve().parents[1]
 
 GUARDED = '''
-from safety_layer import session
+from agent_action_gateway import session
 
 def build():
     with session() as ctx:
@@ -42,7 +42,7 @@ def build():
 # The documented wrapper pattern: the wrapper is *supposed* to call the
 # provider. Flagging this would make the checker useless on correct code.
 WRAPPED_PROVIDER_CALL = '''
-from safety_layer import session
+from agent_action_gateway import session
 
 def build(provider):
     with session() as ctx:
@@ -56,7 +56,7 @@ def build(provider):
 
 BYPASSES_LAYER = '''
 import stripe
-from safety_layer import session
+from agent_action_gateway import session
 
 def build(provider):
     stripe.PaymentIntent.create(amount=400000)
@@ -191,7 +191,7 @@ class DatabaseAuditTest(unittest.TestCase):
 
     def test_populated_database_reports_actions(self) -> None:
         path = Path(tempfile.mkdtemp()) / "real.db"
-        from safety_layer.runtime.session import session
+        from agent_action_gateway.runtime.session import session
 
         with session(store=TraceStore(path)) as ctx:
             tool = ctx.tool(
@@ -245,7 +245,7 @@ class DetectionBreadthTest(unittest.TestCase):
         import sqlite3
 
         path = Path(tempfile.mkdtemp()) / "enforced.db"
-        from safety_layer.runtime.session import session
+        from agent_action_gateway.runtime.session import session
 
         with session(store=TraceStore(path)) as ctx:
             tool = ctx.tool(lambda **k: {"status": "ok"}, action="lookup", risk="read")
@@ -259,7 +259,7 @@ class DetectionBreadthTest(unittest.TestCase):
     def test_observe_only_run_is_reported_as_a_failure(self) -> None:
         """The gap `run()` leaves is now visible after the fact."""
         path = Path(tempfile.mkdtemp()) / "observed.db"
-        from safety_layer import run
+        from agent_action_gateway import run
 
         run(lambda task: "done", "smoke", store=TraceStore(path))
 
@@ -274,7 +274,7 @@ class DetectionBreadthTest(unittest.TestCase):
 
         result = subprocess.run(
             [sys.executable, "-c",
-             "from safety_layer import run\nrun(lambda t: 'done', 'smoke')\n"],
+             "from agent_action_gateway import run\nrun(lambda t: 'done', 'smoke')\n"],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -288,7 +288,7 @@ class CommandTest(unittest.TestCase):
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, "-m", "safety_layer", "check", *args],
+            [sys.executable, "-m", "agent_action_gateway", "check", *args],
             cwd=ROOT,
             capture_output=True,
             text=True,

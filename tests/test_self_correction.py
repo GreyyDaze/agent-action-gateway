@@ -15,8 +15,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.runtime.session import session
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.runtime.session import session
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class RetryHarness(unittest.TestCase):

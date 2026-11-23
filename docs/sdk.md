@@ -5,7 +5,7 @@ The SDK is the small boundary between an existing agent and the safety layer.
 ## 3-line adoption
 
 ```python
-from safety_layer import run
+from agent_action_gateway import run
 
 result = run(agent, task)
 print(result["status"])
@@ -16,7 +16,7 @@ The application still owns `agent`, its model, its provider, and its model loop.
 ## Package layout
 
 ```
-safety_layer/
+agent_action_gateway/
 ├── core/        deterministic enforcement: fuses, locks, stop rules, receipts
 ├── evidence/    redaction, capture policy, honest status, failure grouping
 ├── storage/     SQLite persistence, one connection policy and migration strategy
@@ -28,7 +28,7 @@ safety_layer/
 └── proofs/      verification scripts and manual drills
 ```
 
-The package ships all of these. Import from `safety_layer` itself; the
+The package ships all of these. Import from `agent_action_gateway` itself; the
 submodule layout is an implementation detail and may change.
 
 ## Ownership boundary
@@ -80,7 +80,7 @@ policy.
 #### Using a session
 
 ```python
-from safety_layer import session
+from agent_action_gateway import session
 
 with session() as ctx:
     refund = ctx.tool(refund_fn, action="refund", risk="destructive")
@@ -162,7 +162,7 @@ usage error. Keeping them distinct means CI logs can tell "the change regressed"
 
 A **single run** is not an evaluation and does not produce PASS or FAIL. `run()`
 records `NOT_EVALUATED` for a completed run and `FAIL` only when the agent
-raised. Quality verdicts come exclusively from `safety gate check`, which
+raised. Quality verdicts come exclusively from `agent-gateway gate check`, which
 compares a candidate against a recorded baseline.
 
 ## Provider boundary
@@ -281,10 +281,10 @@ before it reaches disk. You do not need to sanitise before handing them over.
 **Growth and retention.** Prompts are typically several times larger than tool
 results, so a run that records exchanges makes `trace_events` grow much faster.
 
-`safety prune` discards the payloads when you decide to:
+`agent-gateway prune` discards the payloads when you decide to:
 
 ~~~bash
-safety prune --db data/runtime.db --older-than 30 --keep-latest 10 --dry-run
+agent-gateway prune --db data/runtime.db --older-than 30 --keep-latest 10 --dry-run
 ~~~
 
 It clears the prompt and completion and **leaves the row**, with its action,
@@ -336,7 +336,7 @@ tell you whether the runs arriving from production have degraded, because those
 runs were never evaluated.
 
 ~~~bash
-safety gate online --db data/runtime.db --sample 0.2
+agent-gateway gate online --db data/runtime.db --sample 0.2
 ~~~
 
 **It reports; it does not block.** Promotion to a failing exit code requires
@@ -367,7 +367,7 @@ it converts a `GatewayPolicy` into MCP-shaped tool definitions and routes every
 `call_tool` through the same `SafetyGateway.handle` the HTTP gateway uses.
 
 ~~~python
-from safety_layer.interface.mcp import MCPToolBridge, tool_definitions
+from agent_action_gateway.integrations.mcp import MCPToolBridge, tool_definitions
 
 bridge = MCPToolBridge.from_policy(store, policy)
 tools = tool_definitions(policy)      # register these with your MCP library
@@ -391,10 +391,10 @@ schema and the migrations are declared once and run on either.
 
 A `postgres://` URL needs `psycopg`, which is an optional extra:
 
-    pip install 'agent-safety-eval-layer[postgres]'
+    pip install 'agent-action-gateway[postgres]'
 
 `tests/test_backend_agreement.py` runs every store check against both engines and
-compares the answers. When `SAFETY_TEST_POSTGRES` is not set, the PostgreSQL half
+compares the answers. When `AGENT_GATEWAY_TEST_POSTGRES` is not set, the PostgreSQL half
 skips loudly rather than passing quietly.
 
 Writes remain single-writer-per-row. PostgreSQL removes the single-host ceiling;
@@ -423,11 +423,11 @@ dashboard invalidates in-flight forms. That is intentional.
 From outside the repository, after installing the package:
 
 ```bash
-python -c 'from safety_layer import run; print(run(lambda task: f"handled: {task}", "smoke"))'
-safety --help
-safety check --db data/runtime.db
+python -c 'from agent_action_gateway import run; print(run(lambda task: f"handled: {task}", "smoke"))'
+agent-gateway --help
+agent-gateway check --db data/runtime.db
 ```
 
-`safety check` reports on your own integration. Evidence about this library is
+`agent-gateway check` reports on your own integration. Evidence about this library is
 published in the CI badge and in `docs/history/release-proof.md`; regenerate it
 from a source checkout with `make proof`.

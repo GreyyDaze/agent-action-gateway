@@ -46,7 +46,7 @@ custody and egress. `integrations/` are thin adapters. `storage/` is the leaf.
 Old import paths (`core/`, `evidence/`, `interface/`, `providers/`,
 `evaluation/`, and the old storage submodules) remain as thin re-export shims.
 Existing code and tests keep working; new code imports from the canonical
-packages above. The console scripts (`safety`, `gate`) point at the new paths.
+packages above. The console scripts (`agent-gateway`, `gate`) point at the new paths.
 
 ## Configuration
 

@@ -3,11 +3,11 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from safety_layer.integrations.adapters.mock import MockPaymentProvider
-from safety_layer.policy.locks import ApprovalStore, RiskRegistry
-from safety_layer.policy.safety import SafetyBlockedError, check_action
-from safety_layer.runtime.orchestrator import dispatch_external_action
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.integrations.adapters.mock import MockPaymentProvider
+from agent_action_gateway.policy.locks import ApprovalStore, RiskRegistry
+from agent_action_gateway.policy.safety import SafetyBlockedError, check_action
+from agent_action_gateway.runtime.orchestrator import dispatch_external_action
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class ApprovalLockTest(unittest.TestCase):

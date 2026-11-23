@@ -26,6 +26,6 @@ jobs:
           python -m mutmut run
           python -m mutmut export-cicd-stats
       - name: Full proof suites (larger job count overnight)
-        run: python -m safety_layer.proofs.proof --jobs 1000
+        run: python -m agent_action_gateway.proofs.proof --jobs 1000
       - name: Chaos crash-injection
-        run: python -m safety_layer.proofs.chaos --jobs 1000
+        run: python -m agent_action_gateway.proofs.chaos --jobs 1000

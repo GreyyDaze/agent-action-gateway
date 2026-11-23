@@ -17,7 +17,7 @@
 #
 # Bring it up:
 #     printf 'sk_live_replace_me' > secrets/stripe_key && chmod 600 secrets/stripe_key
-#     export SAFETY_MASTER_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
+#     export AGENT_GATEWAY_MASTER_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
 #     docker compose up -d gateway
 #
 # Then verify the boundary actually holds, rather than assuming it:
@@ -30,28 +30,28 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.gateway
-    image: agent-safety-eval-layer-gateway:local
+    image: agent-action-gateway-gateway:local
     restart: unless-stopped
     # Non-root, so the process that would have to be compromised is not root.
     # The gateway also refuses to read a world-readable secret.
     user: "1001:1001"
     environment:
-      SAFETY_MASTER_KEY: ${SAFETY_MASTER_KEY:?set SAFETY_MASTER_KEY before starting}
-      SAFETY_GATEWAY: "1"
+      AGENT_GATEWAY_MASTER_KEY: ${AGENT_GATEWAY_MASTER_KEY:?set AGENT_GATEWAY_MASTER_KEY before starting}
+      AGENT_GATEWAY: "1"
     volumes:
-      - ./routes.example.json:/etc/safety/routes.json:ro
+      - ./routes.example.json:/etc/agent-action-gateway/routes.json:ro
       - ./secrets:/run/secrets:ro
       # A named volume, not an anonymous one. The trace database and every
       # issued virtual key live here, so losing it on restart would silently
       # revoke every key your agents already hold -- they would start receiving
       # 401s with nothing in the logs to explain it.
-      - gateway-state:/var/lib/safety
+      - gateway-state:/var/lib/agent-action-gateway
     command:
       - gateway
       - --config
-      - /etc/safety/routes.json
+      - /etc/agent-action-gateway/routes.json
       - --db
-      - /var/lib/safety/gateway.db
+      - /var/lib/agent-action-gateway/gateway.db
       # 0.0.0.0 so other containers on agent_net can reach it. A container bound
       # to 127.0.0.1 is reachable only by itself, which makes the gateway
       # useless as a sidecar. This is safe because the port is NOT published to
@@ -89,7 +89,7 @@ services:
     volumes:
       - ./verify_boundary.py:/probe/verify_boundary.py:ro
     environment:
-      SAFETY_PROBE_KEY: ${SAFETY_PROBE_KEY:-}
+      AGENT_GATEWAY_PROBE_KEY: ${AGENT_GATEWAY_PROBE_KEY:-}
     command:
       - python
       - /probe/verify_boundary.py

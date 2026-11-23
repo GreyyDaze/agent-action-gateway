@@ -1,6 +1,6 @@
-# Agent Safety Layer
+# Agent Action Gateway
 
-[![CI](https://github.com/GreyyDaze/agent-safety-eval-layer/actions/workflows/ci.yml/badge.svg)](https://github.com/GreyyDaze/agent-safety-eval-layer/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/agent-safety-eval-layer.svg)](https://pypi.org/project/agent-safety-eval-layer/) [![Python](https://img.shields.io/pypi/pyversions/agent-safety-eval-layer.svg)](https://pypi.org/project/agent-safety-eval-layer/)
+[![CI](https://github.com/GreyyDaze/agent-action-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/GreyyDaze/agent-action-gateway/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/agent-action-gateway.svg)](https://pypi.org/project/agent-action-gateway/) [![Python](https://img.shields.io/pypi/pyversions/agent-action-gateway.svg)](https://pypi.org/project/agent-action-gateway/)
 
 Prevention-first safety and evaluation layer for AI agents.
 
@@ -103,17 +103,17 @@ python -m pip install -U pip
 python -m pip install ".[dev]"
 ~~~
 
-The package exposes the `safety` CLI.
+The package exposes the `agent-gateway` CLI.
 
 ## Adoption
 
 Your agent obtains its tools from a session. It never receives the raw
 functions, so there is nothing to bypass — for tools it obtained that way. Code
 your own agent reaches directly is outside this guarantee, and
-`safety check --app` is how you find it.
+`agent-gateway check --app` is how you find it.
 
 ~~~python
-from safety_layer import session
+from agent_action_gateway import session
 
 with session() as ctx:
     refund = ctx.tool(refund_fn, action="refund", risk="destructive")
@@ -196,7 +196,7 @@ Full SDK boundary, limitations, and gate exit semantics: `docs/sdk.md`.
 ### Observation only: `run()`
 
 ~~~python
-from safety_layer import run
+from agent_action_gateway import run
 
 result = run(agent, task)
 result["enforcement"]   # "observe"
@@ -207,12 +207,12 @@ know about are not enforced. Use `session()` when you want protection.
 
 ## Scoring how a run got there
 
-`safety wall` groups what broke. `safety path` answers a different question:
+`agent-gateway wall` groups what broke. `agent-gateway path` answers a different question:
 did the run get there safely, or did it reach the right answer by trying
 something it should not have first?
 
 ~~~bash
-safety path --db data/runtime.db
+agent-gateway path --db data/runtime.db
 ~~~
 
 It reports the signals defined in `docs/trajectory-signals.md` — a held
@@ -228,14 +228,14 @@ It reports and never gates. Nothing about an existing verdict changes.
 The `--db` flag takes a path or a `postgres://` URL:
 
 ~~~bash
-safety path --db data/runtime.db                              # SQLite
-safety path --db postgresql://user:pw@host/db --format json   # PostgreSQL
+agent-gateway path --db data/runtime.db                              # SQLite
+agent-gateway path --db postgresql://user:pw@host/db --format json   # PostgreSQL
 ~~~
 
 Both run the same code. `tests/test_backend_agreement.py` asserts that, running
 each check twice and comparing the results, rather than claiming it.
 
-PostgreSQL needs the `psycopg` package: `pip install 'agent-safety-eval-layer[postgres]'`.
+PostgreSQL needs the `psycopg` package: `pip install 'agent-action-gateway[postgres]'`.
 
 | | SQLite | PostgreSQL |
 |---|---|---|
@@ -245,11 +245,11 @@ PostgreSQL needs the `psycopg` package: `pip install 'agent-safety-eval-layer[po
 
 ## Keeping the store small
 
-Recording prompts makes `trace_events` grow quickly. `safety prune`
+Recording prompts makes `trace_events` grow quickly. `agent-gateway prune`
 discards the payloads on your say-so and keeps the rows:
 
 ~~~bash
-safety prune --db data/runtime.db --older-than 30 --dry-run
+agent-gateway prune --db data/runtime.db --older-than 30 --dry-run
 ~~~
 
 Nothing prunes on its own — a silent retention policy is a silent deletion of
@@ -259,24 +259,24 @@ distinguishable from "never recorded". See `docs/sdk.md`.
 ## CLI
 
 ~~~bash
-safety check --app myproject.agent:build     # is your agent actually wrapped?
-safety run "Process the refund for Ava"       # run the bundled demo
-safety gate check --lane push --candidate-version v1 --candidate-file answers.json
-safety wall --db data/runtime.db             # group the failures you recorded
+agent-gateway check --app myproject.agent:build     # is your agent actually wrapped?
+agent-gateway run "Process the refund for Ava"       # run the bundled demo
+agent-gateway gate check --lane push --candidate-version v1 --candidate-file answers.json
+agent-gateway wall --db data/runtime.db             # group the failures you recorded
 ~~~
 
 Every command prints a `SCOPE:` line first, saying what it is reporting on.
 Each one takes your code, your cases, your database or your config as input.
 
-### `safety check` — is your agent actually wrapped?
+### `agent-gateway check` — is your agent actually wrapped?
 
 The library's own suites prove the enforcement path works. They cannot show
 whether *your* application routes actions through it, so this command inspects
 yours:
 
 ~~~bash
-safety check --app myproject/agent.py     # static scan of your code
-safety check --db data/runtime.db        # audit of actions you recorded
+agent-gateway check --app myproject/agent.py     # static scan of your code
+agent-gateway check --db data/runtime.db        # audit of actions you recorded
 ~~~
 
 It reports tools wrapped with `ctx.tool`, direct provider imports, and provider
@@ -295,8 +295,8 @@ in the CI badge above and in `docs/history/release-proof.md`. To regenerate it
 from a source checkout:
 
 ~~~bash
-make proof        # or: python -m safety_layer.proofs.proof --jobs 1000
-make chaos        # or: python -m safety_layer.proofs.chaos --jobs 1000
+make proof        # or: python -m agent_action_gateway.proofs.proof --jobs 1000
+make chaos        # or: python -m agent_action_gateway.proofs.chaos --jobs 1000
 ~~~
 
 This runs the deterministic crash-recovery proof and the remaining verification suites. It prints one labeled result per safety guarantee and exits non-zero on failure.
@@ -304,7 +304,7 @@ This runs the deterministic crash-recovery proof and the remaining verification 
 For individual verification suites:
 
 ~~~bash
-python -m safety_layer.chaos --jobs 1000
+python -m agent_action_gateway.chaos --jobs 1000
 pytest -q tests/test_approvals.py
 pytest -q tests/test_evaluation.py tests/test_gate.py
 pytest -q tests/test_stop_rules.py
@@ -317,7 +317,7 @@ Semantic-judge calibration needs a provider credential. The deterministic gate t
 For the dashboard:
 
 ~~~bash
-python -m safety_layer.interface.dashboard --db data/runtime.db --host 127.0.0.1 --port 8000
+python -m agent_action_gateway.observability.dashboard --db data/runtime.db --host 127.0.0.1 --port 8000
 ~~~
 
 ## What the system enforces
@@ -336,7 +336,7 @@ python -m safety_layer.interface.dashboard --db data/runtime.db --host 127.0.0.1
 
 - **Evaluation gate:** deterministic checks run first; semantic judging is optional and returns PASS, FAIL, or UNCERTAIN.
 - **Trajectory scoring:** reports whether a run reached its answer by a path it should not have taken. Reports, never gates.
-- **Bypass detection:** `safety check --app` and `--db` find code and recorded runs that never crossed the layer.
+- **Bypass detection:** `agent-gateway check --app` and `--db` find code and recorded runs that never crossed the layer.
 - **Judge calibration:** tests whether your judge is any good, rather than trusting it.
 
 The external agent and its model provider are not owned by this project.
@@ -364,7 +364,7 @@ refunds, not a template you are expected to keep.
 The SDK entry point is intentionally small:
 
 ~~~python
-from safety_layer import run
+from agent_action_gateway import run
 
 result = run(agent, task)
 print(result["status"])
@@ -383,7 +383,7 @@ compromised agent, and it is the reason the rest of the pipeline is worth
 having.
 
 ~~~bash
-safety gateway --config routes.json --db gateway.db
+agent-gateway gateway --config routes.json --db gateway.db
 ~~~
 
 The property this buys is conditional, and the condition is the whole point:
@@ -398,7 +398,7 @@ Kubernetes manifests for each tier, none of which contain an `agent` service,
 because your agent is your code.
 
 ~~~bash
-safety gateway doctor --config routes.json   # this host
+agent-gateway gateway doctor --config routes.json   # this host
 make verify-boundary                        # from the agent's position
 ~~~
 
@@ -430,7 +430,7 @@ Deferred work is tracked in `ROADMAP.md`. The PRD and build plan remain the sour
 Start the self-hosted dashboard against the same runtime database:
 
 ~~~bash
-python -m safety_layer.interface.dashboard --db data/runtime.db --host 127.0.0.1 --port 8000
+python -m agent_action_gateway.observability.dashboard --db data/runtime.db --host 127.0.0.1 --port 8000
 ~~~
 
 It shows one run top to bottom, in the order the operator needs it:
@@ -463,7 +463,7 @@ source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install ".[dev]"
 pytest -q
-python -m safety_layer --help
+python -m agent_action_gateway --help
 ~~~
 
 The release acceptance target is:

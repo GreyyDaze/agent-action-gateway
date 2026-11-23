@@ -1,15 +1,15 @@
 # Developer verification and day-to-day tasks.
 #
 # The proof and chaos suites verify this library's own behaviour, not an
-# adopter's integration, so they live here rather than in the installed `safety`
+# adopter's integration, so they live here rather than in the installed `agent-gateway`
 # CLI. Evidence about the library is published in the README badge and
 # docs/history/release-proof.md; these targets are how a contributor produces it.
 #
 # `make` is optional. Every target below is a thin wrapper, so the underlying
 # command works on its own wherever make is unavailable:
 #
-#     python -m safety_layer.proofs.proof --jobs 1000
-#     python -m safety_layer.proofs.chaos --jobs 1000
+#     python -m agent_action_gateway.proofs.proof --jobs 1000
+#     python -m agent_action_gateway.proofs.chaos --jobs 1000
 
 PYTHON ?= python
 JOBS   ?= 1000
@@ -80,14 +80,14 @@ verify-boundary:
 	  exit $$status
 
 doctor:
-	$(PYTHON) -m safety_layer.interface.cli gateway doctor \
+	$(PYTHON) -m agent_action_gateway.cli gateway doctor \
 	  --config deploy/routes.example.json
 
 proof:
-	$(PYTHON) -m safety_layer.proofs.proof --jobs $(JOBS)
+	$(PYTHON) -m agent_action_gateway.proofs.proof --jobs $(JOBS)
 
 chaos:
-	$(PYTHON) -m safety_layer.proofs.chaos --jobs $(JOBS)
+	$(PYTHON) -m agent_action_gateway.proofs.chaos --jobs $(JOBS)
 
 test:
 	$(PYTHON) -m pytest -q

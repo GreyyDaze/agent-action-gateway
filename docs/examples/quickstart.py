@@ -13,8 +13,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from safety_layer import session
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway import session
+from agent_action_gateway.storage.traces import TraceStore
 
 
 def build_agent(tools: dict) -> str:

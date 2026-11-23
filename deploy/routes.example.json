@@ -2,7 +2,7 @@
   "_comment": [
     "Example route table for the gateway. This file is JSON because the",
     "library has no third-party dependencies and must stay that way.",
-    "YAML is accepted too if PyYAML is installed: pip install 'agent-safety-eval-layer[yaml]'.",
+    "YAML is accepted too if PyYAML is installed: pip install 'agent-action-gateway[yaml]'.",
     "",
     "The two settings that differ from a bare local run:",
     "  master_key_env  the variable holding the key that may issue and revoke",
@@ -13,7 +13,7 @@
     "                  world-readable, or owned by anyone else."
   ],
 
-  "master_key_env": "SAFETY_MASTER_KEY",
+  "master_key_env": "AGENT_GATEWAY_MASTER_KEY",
   "session_environment": "prod",
 
   "routes": [

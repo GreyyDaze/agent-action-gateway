@@ -26,9 +26,9 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from safety_layer import session
-from safety_layer.policy.fuses import FuseLimits
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway import session
+from agent_action_gateway.policy.fuses import FuseLimits
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class CountingProvider:
@@ -239,7 +239,7 @@ class AdoptionContractTest(unittest.TestCase):
         Behavioural tests can pass while the pipeline is no longer on the path,
         so this one asserts the wiring itself.
         """
-        from safety_layer.core import enforcement
+        from agent_action_gateway.engine import enforcement
 
         reached: list[str] = []
         original = enforcement.enforce
@@ -261,7 +261,7 @@ class ObserveModeTest(unittest.TestCase):
     """run() must label itself honestly."""
 
     def test_bare_run_reports_observe_mode(self) -> None:
-        from safety_layer import run
+        from agent_action_gateway import run
 
         with tempfile.TemporaryDirectory() as directory:
             result = run(lambda task: "done", "task", TraceStore(Path(directory) / "r.db"))

@@ -49,11 +49,11 @@ one that does not exist:
 - **`run()` is observation only.** It records a trace; it does not authorize.
   Use `session()` when you want enforcement. `run()` now warns on stderr the
   first time it is called in a process, and every trace it writes records
-  `enforcement="observe"`, so `safety check --db` can report an unprotected
+  `enforcement="observe"`, so `agent-gateway check --db` can report an unprotected
   run after the fact.
 - **An audit cannot see an action that never reached the layer.** If an agent
   calls a provider directly, no trace is written and there is nothing to find.
-  `safety check --app` inspects the code for this; `safety check --db` cannot,
+  `agent-gateway check --app` inspects the code for this; `agent-gateway check --db` cannot,
   and reports `INCONCLUSIVE` rather than a pass when a database has no traces.
   Detecting bypasses is static analysis over a fixed set of provider clients and
   direct network calls, so an unrecognised shape may pass unnoticed.
@@ -68,7 +68,7 @@ one that does not exist:
   needed: the agent must not be able to *read* the key, and must not be able to
   *reach* the provider. A vault supplies neither by itself — it is lifecycle
   and rotation, not a boundary. `docs/gateway-deployment.md` gives the tiers,
-  `safety gateway doctor` checks this host, and `make verify-boundary` probes
+  `agent-gateway gateway doctor` checks this host, and `make verify-boundary` probes
   the topology from the agent's own position.
 - **Prompts and completions are persisted when a caller records them.** They go
   through the same recursive redaction as every other field, so payment data,
@@ -78,7 +78,7 @@ one that does not exist:
   recorded, so a retention window belongs in your deployment.
 - **Two deployment failures cannot be detected from here.** If an action never
   reached the layer, it wrote no trace, so no audit can find it — only
-  `safety check --app` can, statically. And whether the agent's network can
+  `agent-gateway check --app` can, statically. And whether the agent's network can
   reach a provider is a fact about the adopter's network, which the gateway
   process cannot observe without inventing evidence.
 - **No transport encryption is enforced.** The gateway forwards over whatever
@@ -98,6 +98,6 @@ one that does not exist:
   than a silent block.
 - **Beta.** The version has not been independently audited. What stands in its
   place is automated: seven labelled guarantee suites (`make proof`), a static
-  check of the adopter's own wiring (`safety check`), and CI across Python
+  check of the adopter's own wiring (`agent-gateway check`), and CI across Python
   3.11–3.13. None of that is an independent review of the design, and it should
   not be read as one.

@@ -4,8 +4,8 @@ FROM python:3.12-slim
 
 # A fixed uid/gid so a bind-mounted secret can be chowned to a known owner, and
 # so the non-root user is not merely "whatever the next build produces".
-RUN groupadd --gid 1001 safety-gateway \
- && useradd --uid 1001 --gid 1001 --no-create-home --shell /usr/sbin/nologin safety-gateway
+RUN groupadd --gid 1001 agent-action-gateway \
+ && useradd --uid 1001 --gid 1001 --no-create-home --shell /usr/sbin/nologin agent-action-gateway
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir .
 
 # The trace database is written by the gateway user; the volume is created by
 # compose so its ownership follows the same uid.
-RUN mkdir -p /var/lib/safety && chown 1001:1001 /var/lib/safety
+RUN mkdir -p /var/lib/agent-action-gateway && chown 1001:1001 /var/lib/agent-action-gateway
 
 USER 1001:1001
 EXPOSE 8080

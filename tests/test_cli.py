@@ -1,7 +1,7 @@
-"""Tests for the `safety` command line interface.
+"""Tests for the `agent-gateway` command line interface.
 
 `cli.py` had no coverage, which is where the exit-code contract lives. A user
-scripting `safety run` must be able to trust the process status.
+scripting `agent-gateway run` must be able to trust the process status.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_USAGE
-from safety_layer.interface import cli
+from agent_action_gateway import cli
+from agent_action_gateway.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_USAGE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -101,9 +101,9 @@ class RunCommandTest(unittest.TestCase):
 
 
 class DelegationTest(unittest.TestCase):
-    """`safety gate` must actually reach its implementation.
+    """`agent-gateway gate` must actually reach its implementation.
 
-    It once imported from `safety_layer.proofs.gate_cli`, which does not exist,
+    It once imported from `agent_action_gateway.proofs.gate_cli`, which does not exist,
     so every invocation printed an "is a developer verification command" notice
     and exited 1. The parser tests and `--help` tests passed throughout.
     """
@@ -111,13 +111,13 @@ class DelegationTest(unittest.TestCase):
     def test_delegate_resolves_a_full_module_path(self) -> None:
         import importlib
 
-        for module in ("safety_layer.gate_cli",):
+        for module in ("agent_action_gateway.gate_cli",):
             with self.subTest(module=module):
                 self.assertTrue(hasattr(importlib.import_module(module), "main"))
 
     def test_gate_subcommand_is_not_a_dead_end(self) -> None:
         result = subprocess.run(
-            [sys.executable, "-m", "safety_layer", "gate", "--help"],
+            [sys.executable, "-m", "agent_action_gateway", "gate", "--help"],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -131,7 +131,7 @@ class DelegationTest(unittest.TestCase):
         for args in (["gate", "--help"], ["check"], ["wall", "--db", "/nonexistent.db"]):
             with self.subTest(args=args):
                 result = subprocess.run(
-                    [sys.executable, "-m", "safety_layer", *args],
+                    [sys.executable, "-m", "agent_action_gateway", *args],
                     cwd=ROOT,
                     capture_output=True,
                     text=True,
@@ -153,8 +153,8 @@ class WallCommandTest(unittest.TestCase):
             self.assertIn("groups=0", output)
 
     def test_failed_trace_is_grouped(self) -> None:
-        from safety_layer.runtime.records import TraceEvent
-        from safety_layer.storage.traces import TraceStore
+        from agent_action_gateway.runtime.records import TraceEvent
+        from agent_action_gateway.storage.traces import TraceStore
 
         with tempfile.TemporaryDirectory() as directory:
             db = Path(directory) / "w.db"
@@ -175,7 +175,7 @@ class SubprocessTest(unittest.TestCase):
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, "-m", "safety_layer", *args],
+            [sys.executable, "-m", "agent_action_gateway", *args],
             cwd=ROOT,
             capture_output=True,
             text=True,

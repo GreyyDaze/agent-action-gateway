@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import pytest
 
-from safety_layer.credential.egress import forbidden_ip, safe_host
-from safety_layer.guards.redaction import redact
-from safety_layer.policy.fingerprint import _normalise, fingerprint
+from agent_action_gateway.credential.egress import forbidden_ip, safe_host
+from agent_action_gateway.guards.redaction import redact
+from agent_action_gateway.policy.fingerprint import _normalise, fingerprint
 
 
 @pytest.mark.unit

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import unittest
 
-from safety_layer.eval.online import assess, gate_status, group_runs, render, select
+from agent_action_gateway.eval.online import assess, gate_status, group_runs, render, select
 
 
 def trace(run_id: str, event="enforcement.decision", status="completed", step_no=1, **kwargs):

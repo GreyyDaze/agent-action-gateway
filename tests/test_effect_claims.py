@@ -12,9 +12,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer import session
-from safety_layer.policy.fingerprint import fingerprint
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway import session
+from agent_action_gateway.policy.fingerprint import fingerprint
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class EffectClaimTest(unittest.TestCase):

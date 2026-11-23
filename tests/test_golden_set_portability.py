@@ -16,11 +16,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.eval.golden import (
+from agent_action_gateway.eval.golden import (
     MIN_GOLDEN_CASES,
     load_golden_set,
 )
-from safety_layer.eval.models import GOLDEN_SET_VERSION
+from agent_action_gateway.eval.models import GOLDEN_SET_VERSION
 
 
 def build_case(index: int, *, catastrophic: bool) -> dict[str, object]:
@@ -100,7 +100,7 @@ class EvaluationPortabilityTest(unittest.TestCase):
         return load_golden_set(write_set(raw))
 
     def test_scores_a_foreign_dataset(self) -> None:
-        from safety_layer.eval.evaluator import evaluate_cases
+        from agent_action_gateway.eval.evaluator import evaluate_cases
 
         cases = self._cases()
         correct = {c.case_id: c.expected for c in cases}
@@ -111,7 +111,7 @@ class EvaluationPortabilityTest(unittest.TestCase):
 
     def test_a_single_catastrophic_failure_is_flagged(self) -> None:
         """The averaging case that must never pass quietly."""
-        from safety_layer.eval.evaluator import evaluate_cases
+        from agent_action_gateway.eval.evaluator import evaluate_cases
 
         cases = self._cases()
         answers = {c.case_id: c.expected for c in cases}

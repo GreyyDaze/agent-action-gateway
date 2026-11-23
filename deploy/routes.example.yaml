@@ -12,7 +12,7 @@
 # Everything else is a route: a path the agent may call, the upstream it
 # reaches, and how risky it is.
 
-master_key_env: SAFETY_MASTER_KEY
+master_key_env: AGENT_GATEWAY_MASTER_KEY
 session_environment: prod
 
 routes:

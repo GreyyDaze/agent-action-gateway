@@ -7,10 +7,10 @@ import threading
 import unittest
 from unittest import mock
 
-from safety_layer.credential.credentials import CredentialRule, PlaceholderVault
-from safety_layer.credential.egress import EgressDenied, EgressPolicy
-from safety_layer.credential.egress_proxy import ForwardProxy, build_proxy_server
-from safety_layer.credential.tls import MITMTerminator
+from agent_action_gateway.credential.credentials import CredentialRule, PlaceholderVault
+from agent_action_gateway.credential.egress import EgressDenied, EgressPolicy
+from agent_action_gateway.credential.egress_proxy import ForwardProxy, build_proxy_server
+from agent_action_gateway.credential.tls import MITMTerminator
 
 
 class TerminatorTest(unittest.TestCase):
@@ -35,7 +35,7 @@ class TerminatorTest(unittest.TestCase):
         terminator = MITMTerminator(context_provider=mock.Mock(), policy=self.policy)
         placeholder = self.vault.agent_environment()["TOKEN"]
         # Build a policy that would allow the host so the swap is the only gate.
-        from safety_layer.credential.egress import EgressPolicy as EP
+        from agent_action_gateway.credential.egress import EgressPolicy as EP
 
         wide = EP(self.vault, frozenset({"api.github.com", "other.example"}), inject_headers=False)
         terminator = MITMTerminator(context_provider=mock.Mock(), policy=wide)

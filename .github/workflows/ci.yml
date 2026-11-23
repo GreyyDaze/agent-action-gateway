@@ -36,16 +36,15 @@ jobs:
         run: mypy
 
       - name: Run full test suite with coverage floor
-        run: pytest -q --cov=safety_layer --cov-report=term-missing
+        run: pytest -q --cov=agent_action_gateway --cov-report=term-missing
 
       - name: Execute documented SDK example
         run: python docs/examples/quickstart.py
 
       - name: Verify installed CLI
         run: |
-          safety --help
-          gate --help
-          safety wall --db "$RUNNER_TEMP/probe.db"
+          agent-gateway --help
+          agent-gateway wall --db "$RUNNER_TEMP/probe.db"
 
   wheel:
     # Proves the published artifact works, not just the source checkout. This is
@@ -69,8 +68,8 @@ jobs:
           wheel = glob.glob("dist/*.whl")[0]
           names = zipfile.ZipFile(wheel).namelist()
           for expected in (
-              "safety_layer/data/golden/golden-v1.json",
-              "safety_layer/data/calibration/calibration-v1.json",
+              "agent_action_gateway/data/golden/golden-v1.json",
+              "agent_action_gateway/data/calibration/calibration-v1.json",
           ):
               if expected not in names:
                   sys.exit(f"missing from wheel: {expected}")
@@ -83,11 +82,11 @@ jobs:
           "$RUNNER_TEMP/wheelenv/bin/python" -m pip install --upgrade pip
           "$RUNNER_TEMP/wheelenv/bin/python" -m pip install dist/*.whl
           cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/wheelenv/bin/python" -c "import safety_layer, pathlib; print(pathlib.Path(safety_layer.__file__).resolve())"
-          "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer.evaluation.golden import load_golden_set; print(len(load_golden_set()))"
-          "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer.evaluation.calibration import load_calibration_set; print(len(load_calibration_set()))"
-          "$RUNNER_TEMP/wheelenv/bin/python" -c "from safety_layer import run; print('SDK import OK')"
-          "$RUNNER_TEMP/wheelenv/bin/safety" --help
+          "$RUNNER_TEMP/wheelenv/bin/python" -c "import agent_action_gateway, pathlib; print(pathlib.Path(agent_action_gateway.__file__).resolve())"
+          "$RUNNER_TEMP/wheelenv/bin/python" -c "from agent_action_gateway.eval.golden import load_golden_set; print(len(load_golden_set()))"
+          "$RUNNER_TEMP/wheelenv/bin/python" -c "from agent_action_gateway.eval.calibration import load_calibration_set; print(len(load_calibration_set()))"
+          "$RUNNER_TEMP/wheelenv/bin/python" -c "from agent_action_gateway import run; print('SDK import OK')"
+          "$RUNNER_TEMP/wheelenv/bin/agent-gateway" --help
 
   verification:
     # Each suite verifies a named guarantee rather than a phase of work.
@@ -104,4 +103,4 @@ jobs:
           python -m pip install ".[dev]"
 
       - name: Reproduce the verification suites
-        run: python -m safety_layer.proofs.proof --jobs 200
+        run: python -m agent_action_gateway.proofs.proof --jobs 200

@@ -6,7 +6,7 @@ first — this directory is the topology, that document is what the topology buy
 | File | Tier |
 |---|---|
 | `docker-compose.yml` | 2 — separate containers, two networks (recommended self-host) |
-| `systemd/safety-gateway.service` | 1 — separate OS user (minimum) |
+| `systemd/agent-action-gateway.service` | 1 — separate OS user (minimum) |
 | `k8s/gateway.yaml` | 3 — separate host, egress control, workload identity |
 | `routes.example.json` | the route table both use |
 | `verify_boundary.py` | the probe that tests the topology |
@@ -28,7 +28,7 @@ client = SafetyClient(base_url="http://gateway:8080", key=VIRTUAL_KEY)
 
 ```bash
 printf 'sk_live_replace_me' > secrets/stripe_key && chmod 600 secrets/stripe_key
-export SAFETY_MASTER_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
+export AGENT_GATEWAY_MASTER_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
 
 docker compose up -d gateway
 make verify-boundary
@@ -46,13 +46,13 @@ Issue the key against the gateway's own database — the same one the gateway
 reads — and hand it to the probe:
 
 ```bash
-export SAFETY_MASTER_KEY=...            # must match the running gateway's
-KEY=$(docker compose exec -T -e SAFETY_MASTER_KEY gateway \
-        safety gateway --config /etc/safety/routes.json \
-        --db /var/lib/safety/gateway.db \
+export AGENT_GATEWAY_MASTER_KEY=...            # must match the running gateway's
+KEY=$(docker compose exec -T -e AGENT_GATEWAY_MASTER_KEY gateway \
+        agent-gateway gateway --config /etc/agent-action-gateway/routes.json \
+        --db /var/lib/agent-action-gateway/gateway.db \
         issue-key --name billing-agent --ttl 1h --routes /charge)
 
-SAFETY_PROBE_KEY=$KEY make verify-boundary
+AGENT_GATEWAY_PROBE_KEY=$KEY make verify-boundary
 ```
 
 `docker compose exec` needs the key against the gateway's database, not a local
@@ -83,4 +83,4 @@ gateway refuses to start if that file is group- or world-readable, or owned by
 anyone but the gateway's user.
 
 JSON, not YAML, because the library has no third-party dependencies and should
-stay that way. YAML works with `pip install 'agent-safety-eval-layer[yaml]'`.
+stay that way. YAML works with `pip install 'agent-action-gateway[yaml]'`.

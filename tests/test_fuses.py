@@ -5,11 +5,16 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from safety_layer.integrations.adapters.mock import MockPaymentProvider
-from safety_layer.policy.fuses import FuseBudget, FuseController, FuseLimits, FuseTrippedError
-from safety_layer.policy.locks import ApprovalStore, RiskRegistry
-from safety_layer.runtime.orchestrator import dispatch_external_action, execute_tool, run
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.integrations.adapters.mock import MockPaymentProvider
+from agent_action_gateway.policy.fuses import (
+    FuseBudget,
+    FuseController,
+    FuseLimits,
+    FuseTrippedError,
+)
+from agent_action_gateway.policy.locks import ApprovalStore, RiskRegistry
+from agent_action_gateway.runtime.orchestrator import dispatch_external_action, execute_tool, run
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class FuseTest(unittest.TestCase):

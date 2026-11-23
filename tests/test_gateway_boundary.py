@@ -20,15 +20,15 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from safety_layer.cli import load_route_policy
-from safety_layer.integrations.gateway import (
+from agent_action_gateway.cli import load_route_policy
+from agent_action_gateway.integrations.gateway import (
     GatewayError,
     GatewayPolicy,
     Route,
     SafetyGateway,
     build_gateway_server,
 )
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.storage.traces import TraceStore
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy"
@@ -45,7 +45,7 @@ class ShippedExamplesTest(unittest.TestCase):
         """
         policy = load_route_policy(str(DEPLOY / "routes.example.json"))
         self.assertIn("/charge", policy.routes)
-        self.assertEqual(policy.master_key_env, "SAFETY_MASTER_KEY")
+        self.assertEqual(policy.master_key_env, "AGENT_GATEWAY_MASTER_KEY")
 
     def test_every_route_uses_a_post_body(self) -> None:
         """The HTTP shell exposes POST only; a GET route is dead config."""
@@ -201,18 +201,18 @@ class EmbeddedLaunchRefusalTest(unittest.TestCase):
         a REPL. The refusals that hold regardless are the secret-file owner and
         mode checks; this one exists to make the ordinary mistake loud.
         """
-        previous = os.environ.pop("SAFETY_GATEWAY", None)
+        previous = os.environ.pop("AGENT_GATEWAY", None)
         self.addCleanup(
-            lambda: os.environ.__setitem__("SAFETY_GATEWAY", previous)
+            lambda: os.environ.__setitem__("AGENT_GATEWAY", previous)
             if previous is not None
             else None
         )
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "embed_gateway.py"
             script.write_text(
-                "from safety_layer.integrations.gateway import build_gateway_server, "
+                "from agent_action_gateway.integrations.gateway import build_gateway_server, "
                 "GatewayPolicy\n"
-                "from safety_layer.storage.traces import TraceStore\n"
+                "from agent_action_gateway.storage.traces import TraceStore\n"
                 f"build_gateway_server(TraceStore({str(Path(directory) / 'r.db')!r}), "
                 "GatewayPolicy())\n"
             )
@@ -226,8 +226,8 @@ class EmbeddedLaunchRefusalTest(unittest.TestCase):
         self.assertIn("embedded", (result.stderr + result.stdout).lower())
 
     def test_the_cli_launch_path_is_allowed(self) -> None:
-        os.environ["SAFETY_GATEWAY"] = "1"
-        self.addCleanup(os.environ.pop, "SAFETY_GATEWAY", None)
+        os.environ["AGENT_GATEWAY"] = "1"
+        self.addCleanup(os.environ.pop, "AGENT_GATEWAY", None)
         server, handler = build_gateway_server(
             TraceStore(Path(self.enterContext(tempfile.TemporaryDirectory())) / "r.db"),
             load_route_policy(str(DEPLOY / "routes.example.json")),
@@ -273,7 +273,7 @@ class DoctorScopeTest(unittest.TestCase):
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, "-m", "safety_layer.cli", "gateway", "doctor", *args],
+            [sys.executable, "-m", "agent_action_gateway.cli", "gateway", "doctor", *args],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -379,7 +379,7 @@ class PeerCredRefusalShapeTest(unittest.TestCase):
     """
 
     def test_the_server_exposes_a_refusal_writer(self) -> None:
-        from safety_layer.integrations.gateway import _UnixSocketServer
+        from agent_action_gateway.integrations.gateway import _UnixSocketServer
 
         self.assertTrue(callable(getattr(_UnixSocketServer, "_refuse", None)))
 
@@ -392,7 +392,7 @@ class PeerCredRefusalShapeTest(unittest.TestCase):
         """
         import inspect
 
-        from safety_layer.integrations.gateway import _UnixSocketServer
+        from agent_action_gateway.integrations.gateway import _UnixSocketServer
 
         source = inspect.getsource(_UnixSocketServer.get_request)
         self.assertNotIn("raise GatewayError", source)

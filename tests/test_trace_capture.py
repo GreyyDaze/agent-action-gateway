@@ -17,8 +17,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.runtime.records import TraceEvent
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.runtime.records import TraceEvent
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class ExchangeCaptureTest(unittest.TestCase):

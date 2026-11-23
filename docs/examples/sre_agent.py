@@ -16,9 +16,9 @@ import json
 import tempfile
 from pathlib import Path
 
-from safety_layer import session
-from safety_layer.eval.trajectory import score as score_path
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway import session
+from agent_action_gateway.eval.trajectory import score as score_path
+from agent_action_gateway.storage.traces import TraceStore
 
 NAMESPACE = "prod"
 APP = "shop-api"

@@ -10,7 +10,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from safety_layer.credential.credentials import (
+from agent_action_gateway.credential.credentials import (
     PLACEHOLDER_PREFIX,
     CredentialError,
     CredentialNotAllowed,
@@ -19,7 +19,7 @@ from safety_layer.credential.credentials import (
     HttpSecretResolver,
     PlaceholderVault,
 )
-from safety_layer.credential.egress import (
+from agent_action_gateway.credential.egress import (
     EgressDenied,
     EgressPolicy,
     forbidden_ip,

@@ -6,9 +6,9 @@ import socket
 import threading
 import unittest
 
-from safety_layer.credential.credentials import CredentialRule, PlaceholderVault
-from safety_layer.credential.egress import EgressPolicy
-from safety_layer.credential.egress_proxy import ForwardProxy, build_proxy_server
+from agent_action_gateway.credential.credentials import CredentialRule, PlaceholderVault
+from agent_action_gateway.credential.egress import EgressPolicy
+from agent_action_gateway.credential.egress_proxy import ForwardProxy, build_proxy_server
 
 
 class ForwardProxyTest(unittest.TestCase):
@@ -32,7 +32,7 @@ class ForwardProxyTest(unittest.TestCase):
 
     def test_refuses_host_not_in_allow_list(self) -> None:
         proxy = ForwardProxy(self.policy, transport=self._transport)
-        from safety_layer.credential.egress import EgressDenied
+        from agent_action_gateway.credential.egress import EgressDenied
 
         with self.assertRaises(EgressDenied):
             proxy.forward("GET", "http://evil.example/x", {}, b"")
@@ -44,7 +44,7 @@ class ForwardProxyTest(unittest.TestCase):
         )
         proxy = ForwardProxy(self.policy, transport=self._transport)
         placeholder = self.vault.agent_environment()["TOKEN"]
-        from safety_layer.credential.egress import EgressDenied
+        from agent_action_gateway.credential.egress import EgressDenied
 
         with self.assertRaises(EgressDenied):
             proxy.forward("GET", "http://other.example/x", {"Authorization": placeholder}, b"")

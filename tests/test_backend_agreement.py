@@ -5,14 +5,14 @@ nothing changes". A claim like that is worthless unless something checks it, so
 every assertion below runs twice -- once against SQLite, once against PostgreSQL
 -- and compares the observable results.
 
-PostgreSQL is only exercised when `SAFETY_TEST_POSTGRES` is set, because CI
+PostgreSQL is only exercised when `AGENT_GATEWAY_TEST_POSTGRES` is set, because CI
 should not require a database service. When it is unset the PostgreSQL half
 skips loudly rather than quietly passing, which would make this file decorative.
 
 Run it with:
     docker run -d --name pgt -e POSTGRES_PASSWORD=pw -e POSTGRES_DB=safety \\
         -p 55432:5432 postgres:16-alpine
-    SAFETY_TEST_POSTGRES=postgresql://postgres:pw@127.0.0.1:55432/safety \\
+    AGENT_GATEWAY_TEST_POSTGRES=postgresql://postgres:pw@127.0.0.1:55432/safety \\
         python -m pytest tests/test_backend_agreement.py -v
 """
 
@@ -25,12 +25,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from safety_layer.policy.fingerprint import fingerprint
-from safety_layer.policy.locks import ApprovalStore
-from safety_layer.runtime.records import GateVerdict, TraceEvent
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway.policy.fingerprint import fingerprint
+from agent_action_gateway.policy.locks import ApprovalStore
+from agent_action_gateway.runtime.records import GateVerdict, TraceEvent
+from agent_action_gateway.storage.traces import TraceStore
 
-POSTGRES_DSN = os.environ.get("SAFETY_TEST_POSTGRES", "")
+POSTGRES_DSN = os.environ.get("AGENT_GATEWAY_TEST_POSTGRES", "")
 
 
 def backends() -> list[tuple[str, str]]:
@@ -81,7 +81,7 @@ class BackendAgreementTest(unittest.TestCase):
             except Exception as exc:  # surfaced rather than swallowed
                 results.append((name, f"RAISED {type(exc).__name__}: {exc}"))
         if len(results) < 2:
-            self.skipTest("set SAFETY_TEST_POSTGRES to compare backends")
+            self.skipTest("set AGENT_GATEWAY_TEST_POSTGRES to compare backends")
         first, second = results
         self.assertEqual(
             first[1],
@@ -258,7 +258,7 @@ class BackendAgreementTest(unittest.TestCase):
     # -- other tables -----------------------------------------------------
 
     def test_gate_verdicts_and_budgets_agree(self) -> None:
-        from safety_layer.policy.fuses import FuseSnapshot
+        from agent_action_gateway.policy.fuses import FuseSnapshot
 
         def body(target: str) -> Any:
             store = TraceStore(target)
@@ -311,19 +311,19 @@ class TargetParsingTest(unittest.TestCase):
     """A typo must not silently create an empty SQLite file."""
 
     def test_a_path_selects_sqlite(self) -> None:
-        from safety_layer.storage.base import _resolve
+        from agent_action_gateway.storage.base import _resolve
 
         self.assertEqual(_resolve("data/runtime.db"), ("sqlite", "data/runtime.db"))
         self.assertEqual(_resolve(":memory:"), ("sqlite", ":memory:"))
 
     def test_a_postgres_url_selects_postgres(self) -> None:
-        from safety_layer.storage.base import _resolve
+        from agent_action_gateway.storage.base import _resolve
 
         for scheme in ("postgres://", "postgresql://"):
             self.assertEqual(_resolve(f"{scheme}h/db")[0], "postgres")
 
     def test_an_unknown_scheme_is_refused(self) -> None:
-        from safety_layer.storage.base import _resolve
+        from agent_action_gateway.storage.base import _resolve
 
         with self.assertRaises(ValueError) as raised:
             _resolve("mysql://localhost/db")

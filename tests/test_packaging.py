@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_module_cli_exposes_packaging_commands() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "safety_layer", "--help"],
+        [sys.executable, "-m", "agent_action_gateway", "--help"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -29,7 +29,7 @@ def test_module_cli_wall_is_safe_on_empty_database(tmp_path: Path) -> None:
         [
             sys.executable,
             "-m",
-            "safety_layer",
+            "agent_action_gateway",
             "wall",
             "--db",
             str(tmp_path / "runtime.db"),
@@ -50,8 +50,8 @@ def test_evaluation_artifacts_load_from_package_resources() -> None:
     sys.prefix (the venv root) instead of next to the package. The loaders
     resolved a guessed filesystem path and raised on a non-editable install.
     """
-    from safety_layer.eval.calibration import load_calibration_set
-    from safety_layer.eval.golden import load_golden_set
+    from agent_action_gateway.eval.calibration import load_calibration_set
+    from agent_action_gateway.eval.golden import load_golden_set
 
     assert len(load_golden_set()) == 30
     assert len(load_calibration_set()) == 6
@@ -59,10 +59,10 @@ def test_evaluation_artifacts_load_from_package_resources() -> None:
 
 def test_packaged_artifacts_are_not_loaded_from_repo_checkout() -> None:
     """Resolution must not depend on the source tree being present."""
-    from safety_layer.eval.calibration import default_calibration_set_path
-    from safety_layer.eval.golden import default_golden_set_path
+    from agent_action_gateway.eval.calibration import default_calibration_set_path
+    from agent_action_gateway.eval.golden import default_golden_set_path
 
-    package_root = Path(__import__("safety_layer").__file__).resolve().parent
+    package_root = Path(__import__("agent_action_gateway").__file__).resolve().parent
     for resolved in (default_golden_set_path(), default_calibration_set_path()):
         assert package_root in resolved.parents
 
@@ -79,7 +79,7 @@ def test_proof_suite_runs_and_prints_every_guarantee() -> None:
         [
             sys.executable,
             "-m",
-            "safety_layer.proofs.proof",
+            "agent_action_gateway.proofs.proof",
             "--jobs",
             "1",
         ],
@@ -106,11 +106,11 @@ def test_proof_suite_runs_and_prints_every_guarantee() -> None:
 def test_dashboard_snapshot_exposes_runs_and_budget_counters(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
-    from safety_layer.storage.traces import TraceStore
+    from agent_action_gateway.storage.traces import TraceStore
 
     store = TraceStore(tmp_path / "runtime.db")
     store.append_trace(
-        __import__("safety_layer.runtime.records", fromlist=["TraceEvent"]).TraceEvent(
+        __import__("agent_action_gateway.runtime.records", fromlist=["TraceEvent"]).TraceEvent(
             "run-1", 1, "agent", "task", {"ok": True}, "completed"
         )
     )

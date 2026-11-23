@@ -14,11 +14,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer import session
-from safety_layer.audit.receipts import UnresolvableReceiptError, resolve_unknown
-from safety_layer.integrations.adapters.mock import MockPaymentProvider
-from safety_layer.policy.fuses import FuseLimits
-from safety_layer.storage.traces import TraceStore
+from agent_action_gateway import session
+from agent_action_gateway.audit.receipts import UnresolvableReceiptError, resolve_unknown
+from agent_action_gateway.integrations.adapters.mock import MockPaymentProvider
+from agent_action_gateway.policy.fuses import FuseLimits
+from agent_action_gateway.storage.traces import TraceStore
 
 
 class GuardedReceiptTest(unittest.TestCase):
@@ -92,7 +92,7 @@ class GuardedReceiptTest(unittest.TestCase):
         action per job with nothing left unresolved is the exactly-once result;
         a duplicate would show up as actions > jobs.
         """
-        from safety_layer.proofs.chaos import run_proof
+        from agent_action_gateway.proofs.chaos import run_proof
 
         actions, unknown = run_proof(jobs=25)
         self.assertEqual(unknown, 0, "receipts left unresolved")
