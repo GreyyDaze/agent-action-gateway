@@ -330,20 +330,21 @@ class SafetySession:
             resolved_risk != "read" if requires_approval is None else requires_approval
         )
 
-        def guarded(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            self._step += 1
-            arguments = _arguments_from(args, kwargs)
-            # Pop from the payload unconditionally. An `or` chain here silently
-            # left approval_id in the arguments, so every approved call hashed a
-            # payload the operator had never seen.
-            approval_id = kwargs.pop("approval_id", None)
-            if approval_id is None:
-                approval_id = arguments.pop("approval_id", None)
-            else:
-                arguments.pop("approval_id", None)
-            actual_cost = kwargs.pop("actual_cost_usd", None)
-            approval_id = str(approval_id) if approval_id is not None else None
+        def execute(
+            arguments: dict[str, Any],
+            approval_id: str | None,
+            actual_cost: Any,
+            call: Callable[[str | None], Any],
+            describe: Callable[[Any], str | None] | None,
+        ) -> dict[str, Any]:
+            """The whole check-then-run path, with the arguments given as data.
 
+            `guarded` below builds `arguments` from a Python call. A caller that
+            already holds the arguments as a dict (an MCP proxy) uses
+            `guarded.call_with`, so no argument name can collide with the names
+            this function takes.
+            """
+            self._step += 1
             decision = enforcement.enforce(
                 EnforcementContext(
                     store=self.store,
@@ -385,13 +386,10 @@ class SafetySession:
                 return decision.as_dict()
 
             # The intent key is the idempotency token the receipt was written
-            # under. A tool that accepts it can hand it to its provider, so a
-            # crash-recovery replay is recognised as the same action. A tool
-            # that does not accept it still cannot run twice: the effect claim
-            # blocks the second call either way.
-            call_kwargs = dict(kwargs)
-            if decision.intent_key is not None and _accepts_keyword(fn, "intent_key"):
-                call_kwargs.setdefault("intent_key", decision.intent_key)
+            # under. `call` receives it so a tool that accepts it can hand it to
+            # its provider and a crash-recovery replay is recognised as the same
+            # action. A tool that does not accept it still cannot run twice: the
+            # effect claim blocks the second call either way.
             if decision.deduplicated:
                 # The effect already landed in an earlier run. The recorded
                 # outcome is the answer; calling the function again is the
@@ -405,7 +403,7 @@ class SafetySession:
                     "evidence_status": decision.evidence_status,
                 }
             try:
-                payload = _invoke(fn, args, call_kwargs)
+                payload = call(decision.intent_key)
             except BaseException:
                 # The effect is known not to have landed, so the claim is
                 # released and a later attempt is allowed to try again. Left
@@ -417,7 +415,9 @@ class SafetySession:
                 # The call returned, so the effect landed. Without this the
                 # receipt stays `pending` and every later identical call is
                 # refused as in-flight -- which is the opposite of intended.
-                self.store.mark_done(decision.intent_key, None)
+                self.store.mark_done(
+                    decision.intent_key, describe(payload) if describe else None
+                )
             if isinstance(payload, Mapping) and (required_fields or high_stakes or cross_check):
                 validation = enforcement.validate_result(
                     self.store,
@@ -442,6 +442,42 @@ class SafetySession:
                 "evidence_status": decision.evidence_status,
             }
 
+        def guarded(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            arguments = _arguments_from(args, kwargs)
+            # Pop from the payload unconditionally. An `or` chain here silently
+            # left approval_id in the arguments, so every approved call hashed a
+            # payload the operator had never seen.
+            approval_id = kwargs.pop("approval_id", None)
+            if approval_id is None:
+                approval_id = arguments.pop("approval_id", None)
+            else:
+                arguments.pop("approval_id", None)
+            actual_cost = kwargs.pop("actual_cost_usd", None)
+            approval_id = str(approval_id) if approval_id is not None else None
+
+            def call(intent_key: str | None) -> Any:
+                call_kwargs = dict(kwargs)
+                if intent_key is not None and _accepts_keyword(fn, "intent_key"):
+                    call_kwargs.setdefault("intent_key", intent_key)
+                return _invoke(fn, args, call_kwargs)
+
+            return execute(arguments, approval_id, actual_cost, call, None)
+
+        def call_with(
+            arguments: Mapping[str, Any],
+            call: Callable[[str | None], Any],
+            *,
+            approval_id: str | None = None,
+            describe: Callable[[Any], str | None] | None = None,
+        ) -> dict[str, Any]:
+            """Run the checks on `arguments` given as data, then `call(intent_key)`.
+
+            `describe` turns the result into the text stored with the receipt, so
+            a later repeat of the same action can show what the first one did.
+            """
+            return execute(dict(arguments), approval_id, None, call, describe)
+
+        guarded.call_with = call_with  # type: ignore[attr-defined]
         guarded.__name__ = f"guarded_{action}"
         guarded.__doc__ = (
             f"Guarded {action!r} (risk={resolved_risk}). Every call is authorised, "

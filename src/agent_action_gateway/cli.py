@@ -149,6 +149,15 @@ def build_parser() -> argparse.ArgumentParser:
     proxy.add_argument("--config", required=True, help="JSON (or YAML) file listing the servers")
     proxy.add_argument("--db", default="data/runtime.db")
 
+    pins = sub.add_parser(
+        "mcp-pins",
+        help="see and accept MCP tools the proxy is holding back (new or changed definitions)",
+    )
+    pins.add_argument("action", choices=["list", "accept"])
+    pins.add_argument("--tool", help="accept only this tool (default: every waiting tool)")
+    pins.add_argument("--by", default="operator", help="who is accepting, for the record")
+    pins.add_argument("--db", default="data/runtime.db")
+
     dashboard = sub.add_parser(
         "dashboard",
         help="serve the local dashboard: runs, receipts and approvals",
@@ -306,12 +315,36 @@ def run_mcp_proxy(args: argparse.Namespace) -> int:
     )
     for name, risk, why in proxy.describe():
         print(f"  {name:<40} {risk:<12} ({why})", file=sys.stderr)
+    for name, reason in proxy.report_held():
+        print(f"  {name:<40} HELD        ({reason})", file=sys.stderr)
     print(
-        "Tools marked 'default' need an approval. Add rules to change that.",
+        "Tools marked 'default' need an approval. Add rules to change that. "
+        "The config file is watched: edits apply without a restart.",
         file=sys.stderr,
         flush=True,
     )
-    serve_proxy(proxy)
+    serve_proxy(proxy, args.config)
+    return EXIT_PASS
+
+
+def run_mcp_pins(args: argparse.Namespace) -> int:
+    """List or accept the tool definitions the proxy is holding back."""
+    from agent_action_gateway.integrations.mcp_proxy import PinStore
+
+    pins = PinStore(args.db)
+    if args.action == "list":
+        waiting = pins.waiting()
+        if not waiting:
+            print("No MCP tools are waiting.")
+        for tool, why in waiting:
+            print(f"{tool}  ({why})")
+        return EXIT_PASS
+    accepted = pins.accept(args.by, args.tool)
+    if not accepted:
+        print("Nothing to accept.")
+        return EXIT_USAGE if args.tool else EXIT_PASS
+    for tool in accepted:
+        print(f"accepted {tool}")
     return EXIT_PASS
 
 
@@ -775,6 +808,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_mcp_server(args)
     if args.command == "mcp-proxy":
         return run_mcp_proxy(args)
+    if args.command == "mcp-pins":
+        return run_mcp_pins(args)
     if args.command == "egress-serve":
         return run_egress_proxy(args)
     if args.command == "dashboard":

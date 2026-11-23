@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class ParserTest(unittest.TestCase):
     def test_every_documented_command_is_registered(self) -> None:
         parser = cli.build_parser()
-        for command in ("check", "gate", "wall", "path", "prune", "gateway", "mcp-serve", "mcp-proxy", "egress-serve", "dashboard"):
+        for command in ("check", "gate", "wall", "path", "prune", "gateway", "mcp-serve", "mcp-proxy", "mcp-pins", "egress-serve", "dashboard"):
             with self.subTest(command=command):
                 self.assertIn(command, parser.format_help())
 

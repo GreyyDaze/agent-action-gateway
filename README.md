@@ -76,7 +76,7 @@ How your agent calls its tools decides which part you use:
 | If your agent calls | Use | How |
 |---|---|---|
 | Python functions | the library | wrap the functions with `session()`, as in the example below |
-| tools on MCP servers | the MCP proxy | `agent-gateway mcp-proxy --config servers.json`: your agent connects to the proxy only, and the proxy connects to the MCP servers you list |
+| tools on MCP servers | the MCP proxy | `agent-gateway mcp-proxy --config servers.json`: your agent connects to the proxy only, and the proxy connects to the MCP servers you list (local or remote) |
 | APIs over HTTP, with the key kept away from the agent | the gateway | send the calls to `agent-gateway gateway` instead of the API |
 
 What each one checks:
@@ -87,7 +87,7 @@ What each one checks:
 | Environment | yes | yes | yes |
 | Approval of the exact action | yes | yes | yes, unless the route file has a `credentials` block |
 | Once-only effect | yes | yes | only through the upstream's `Idempotency-Key` |
-| Stop and ask for a missing input | yes | no | no |
+| Stop and ask for a missing input | yes | yes, for the arguments a tool requires | no |
 | Key kept from the agent | no | no | yes, run as its own service |
 
 Three things to know:
@@ -98,6 +98,8 @@ Three things to know:
 - **The proxy needs no routes.** It reads each server's tool list. A tool counts
   as read-only only if you say so in a rule, or if its server marks it
   `readOnlyHint` and you trust that server. Every other tool needs an approval.
+  A tool whose definition later changes is held back until you accept it, and
+  edits to the config apply without a restart.
 - **Keeping the key from the agent** works only with the gateway, run as its own
   service where the agent cannot reach it. See the
   [gateway guide](docs/gateway-deployment.md).

@@ -268,9 +268,9 @@ agent-gateway prune --db data/runtime.db --older-than 30 --keep-latest 10 --dry-
 Many agents get tools from MCP servers instead of importing a library. The MCP
 proxy sits between such an agent and those servers. The agent connects to the
 proxy and to nothing else. The proxy connects, as a client, to the servers you
-list, merges their tools into one list (named `server__tool`), and runs every
-call through the same checks as the library: limits, environment, approval and
-once-only effects. It uses no MCP SDK.
+list (a command it starts, or a remote URL), merges their tools into one list
+(named `server__tool`), and runs every call through the same checks as the
+library: limits, environment, approval and once-only effects. It uses no MCP SDK.
 
 ```bash
 agent-gateway mcp-proxy --config servers.json --db gateway.db
@@ -283,10 +283,15 @@ Cursor use works as it is:
 {
   "environment": "staging",
   "servers": {
-    "db": { "command": "npx", "args": ["-y", "some-postgres-mcp"], "environment": "staging" }
+    "db": { "command": "npx", "args": ["-y", "some-postgres-mcp"], "environment": "staging" },
+    "tickets": { "url": "https://mcp.example.com/mcp",
+                 "headers": { "Authorization": "Bearer ${TICKETS_TOKEN}" } }
   },
   "rules": [
     { "match": "db__list_*", "risk": "read" }
+  ],
+  "require": [
+    { "match": "db__run_*", "arguments": ["target_database"] }
   ],
   "limits": { "max_steps": 200 }
 }
@@ -294,26 +299,65 @@ Cursor use works as it is:
 
 - **Tools are discovered.** You do not write routes. At start-up the proxy asks
   each server for its tools and prints each one with its risk class on stderr.
+- **Local and remote servers.** `command` starts a local server over stdio.
+  `url` connects to a remote server over Streamable HTTP, with the `headers` you
+  give. `${NAME}` in any value is read from the environment, so a token never
+  sits in the file. A server that cannot start stops the proxy.
 - **Risk classes.** The first rule that matches the name wins. With no rule, a
   tool is `read` only if its server marks it `readOnlyHint` and the server has
   `trust_hints` on (the default). Everything else is destructive and needs an
-  approval. A server can mislabel its own tools, so set `"trust_hints": false` for
-  a server you do not trust and use rules instead.
+  approval.
+- **Pinned definitions.** A server's hint is its own claim, and the MCP
+  specification says clients should not trust annotations from servers they do
+  not trust. So the first time the proxy sees a server, it pins each tool's full
+  definition. If a tool's definition later changes, or a new tool appears on a
+  server that was already pinned, the tool is hidden from the agent and refused
+  until a person accepts it:
+
+  ```bash
+  agent-gateway mcp-pins list --db gateway.db
+  agent-gateway mcp-pins accept --db gateway.db --tool db__run_sql   # or no --tool for all
+  ```
+
+  Pins are kept in the database, so a change made while the proxy was stopped is
+  caught at the next start. Set `"trust_hints": false` for a server you do not
+  trust at all, and use rules instead.
+- **Stop and ask.** A call that is missing an argument the tool's schema
+  requires (or that `require` lists) is refused before any step is spent or any
+  approval is created. The agent is told what is missing and to ask the user, and
+  the refusal is recorded. Unlike the library, the proxy does not go on after
+  two questions: it keeps refusing.
 - **Approvals.** A blocked call returns an error with an approval id. Approve it
   in `agent-gateway dashboard --db gateway.db`, then the agent repeats the same
-  call. The approval covers those exact arguments and works once.
+  call and the proxy finds the approval itself. The approval covers those exact
+  arguments and works once. A client that wants to pass an id can put it in
+  `params._meta["agent-action-gateway/approval_id"]`. Tool arguments are never
+  read for checks, so any argument name is safe.
+- **Repeats.** If the same action already ran, it is not run again. The agent gets
+  a redacted copy of the first result (up to 16 KB), or a message saying it ran
+  if the result was larger.
+- **Hot reload.** The config file is watched. Adding, removing or changing a
+  server, a rule or a `require` entry applies within about a second, and the
+  agent's client is told the tool list changed (a client that ignores that
+  notification sees the new list the next time it asks). A server that cannot
+  start leaves the running setup as it was. `environment` and `limits` need a
+  restart. A server that announces its own tool changes is picked up too.
 - **Environment.** `environment` is the session's. A server's own `environment`
   is where its tools act; a non-production session cannot reach `prod`.
 - **Limits.** One proxy process is one budget. The defaults are 500 steps and
   one hour; change them under `limits`.
 - **If a call times out or the server dies,** the result is unknown. The attempt
   stays unfinished and the same call is refused until a person settles it.
+- **Keys.** The proxy holds no key of its own. A key a server needs goes in that
+  server's `env` or `headers`. Keeping a key out of the agent's reach also needs
+  the proxy and its servers to run where the agent cannot read them; the proxy
+  does not provide that. Running a gateway route file as one of the proxy's
+  servers (`agent-gateway mcp-serve`) is possible but is not covered by tests.
 - **Boundary.** The proxy checks only what goes through it. Remove any direct
   connection from the agent to the real servers.
-- **Not supported yet:** HTTP servers (stdio only), reloading the config while
-  running, and stopping to ask for a missing input. An argument named
-  `approval_id`, `actual_cost_usd` or `intent_key` is refused, because the
-  checks use those names.
+- **Not supported yet:** Streamable HTTP servers that need OAuth or that only
+  send tool-list changes on a separate stream, and a session that a remote
+  server expires (restart the proxy).
 
 ### Route-based MCP server
 
