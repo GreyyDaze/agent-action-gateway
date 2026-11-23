@@ -11,7 +11,6 @@ from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from agent_action_gateway.guards.redaction import redact
 from agent_action_gateway.runtime.records import GateVerdict, Receipt, TraceEvent
@@ -320,15 +319,6 @@ class TraceStore(SqliteStore):
                     int(state.max_attempts),
                     int(bool(state.asked_this_turn)),
                 ),
-            )
-
-    def append_receipt(self, run_id: str, line: str) -> None:
-        """Append a legacy audit receipt without reusing a unique intent key."""
-        intent_key = f"audit:{run_id}:{uuid4()}"
-        with self.connection() as connection:
-            connection.execute(
-                "INSERT INTO receipts(run_id, step_id, intent_key, action, arguments_json, state) VALUES (?, ?, ?, ?, ?, 'done')",
-                (run_id, "run-audit", intent_key, "legacy", json.dumps({"line": line})),
             )
 
     def create_receipt(self, run_id: str, step_id: str, action: str, arguments: dict[str, Any]) -> Receipt:

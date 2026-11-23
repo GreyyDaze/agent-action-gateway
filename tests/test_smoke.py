@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_action_gateway.runtime.orchestrator import run
+from agent_action_gateway import session
 from agent_action_gateway.storage.traces import TraceStore
 
 
@@ -12,23 +12,25 @@ def restart_agent(task: str) -> dict[str, str]:
 
 
 class SmokeTest(unittest.TestCase):
-    def test_full_run_wires_trace_receipt_and_run_status(self) -> None:
+    def test_full_run_is_recorded_and_reports_completed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TraceStore(Path(tmp) / "runtime.db")
-            result = run(restart_agent, "Restart the api service", store)
-            snapshot = store.snapshot()
+            with session(store=store) as ctx:
+                result = ctx.run(restart_agent, "Restart the api service")
+            events = [t["event"] for t in store.snapshot()["traces"]]
 
             self.assertEqual(result["status"], "completed")
-            self.assertGreaterEqual(len(snapshot["traces"]), 1)
-            self.assertEqual(len(snapshot["receipts"]), 1)
-            self.assertEqual(len(snapshot["gate_verdicts"]), 1)
-            # A completed run has not been evaluated for quality. Recording
-            # PASS here would manufacture durable evidence that no evaluation
-            # produced; quality verdicts come from `agent-gateway gate check`.
-            self.assertEqual(
-                snapshot["gate_verdicts"][0]["verdict"], "NOT_EVALUATED"
-            )
-            self.assertEqual(result["run_status"], "NOT_EVALUATED")
+            self.assertEqual(result["enforcement"], "enforced")
+            self.assertIn("session.start", events)
+            self.assertIn("session.end", events)
+
+    def test_run_records_its_budget_for_the_dashboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "runtime.db")
+            with session(store=store) as ctx:
+                result = ctx.run(restart_agent, "Restart the api service")
+            budgets = store.dashboard_snapshot()["budgets"]
+            self.assertEqual([b["run_id"] for b in budgets], [result["run_id"]])
 
     def test_a_run_that_raises_is_recorded_as_failed(self) -> None:
         def exploding_agent(task: str) -> str:
@@ -36,11 +38,12 @@ class SmokeTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             store = TraceStore(Path(tmp) / "runtime.db")
-            result = run(exploding_agent, "do a thing", store)
+            with session(store=store) as ctx:
+                result = ctx.run(exploding_agent, "do a thing")
 
             self.assertEqual(result["status"], "failed")
-            self.assertEqual(result["run_status"], "FAIL")
-            self.assertEqual(store.snapshot()["gate_verdicts"][0]["verdict"], "FAIL")
+            failed = [t for t in store.snapshot()["traces"] if t["status"] == "failed"]
+            self.assertTrue(failed, "the failure must be recorded")
 
 
 if __name__ == "__main__":

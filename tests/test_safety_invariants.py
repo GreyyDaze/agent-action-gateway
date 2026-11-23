@@ -101,38 +101,6 @@ class RedactionPreservesEvidenceTest(unittest.TestCase):
         self.assertEqual(redact("Bearer abc.def"), "Bearer [REDACTED_SECRET]")
 
 
-class NoFabricatedVerdictTest(unittest.TestCase):
-    """A completed run has not been evaluated and must never claim PASS.
-
-    The old path compared a hardcoded score of 1.0 against a threshold of 0.8 and
-    persisted PASS for every successful run, manufacturing durable evidence that
-    no evaluation produced.
-    """
-
-    def test_completed_run_is_not_recorded_as_pass(self) -> None:
-        from agent_action_gateway.runtime.orchestrator import run
-
-        with tempfile.TemporaryDirectory() as directory:
-            store = TraceStore(Path(directory) / "runtime.db")
-            result = run(lambda task: "done", "a task", store)
-            self.assertEqual(result["status"], "completed")
-            self.assertNotEqual(result["run_status"], "PASS")
-            verdicts = [v["verdict"] for v in store.snapshot()["gate_verdicts"]]
-            self.assertNotIn("PASS", verdicts)
-            self.assertIn("NOT_EVALUATED", verdicts)
-
-    def test_failed_run_is_recorded_as_failed(self) -> None:
-        from agent_action_gateway.runtime.orchestrator import run
-
-        def boom(task: str) -> str:
-            raise RuntimeError("nope")
-
-        with tempfile.TemporaryDirectory() as directory:
-            store = TraceStore(Path(directory) / "runtime.db")
-            result = run(boom, "a task", store)
-            self.assertEqual(result["run_status"], "FAIL")
-
-
 class DashboardApprovalBoundaryTest(unittest.TestCase):
     """The approval queue is the human trust boundary; POSTs must not be forgeable.
 

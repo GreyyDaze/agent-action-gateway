@@ -30,9 +30,19 @@ from agent_action_gateway.engine import enforcement
 from agent_action_gateway.engine.enforcement import Decision, EnforcementContext
 from agent_action_gateway.integrations.adapters.base import ExternalActionProvider
 from agent_action_gateway.policy.cross_check import CrossCheckSpec
-from agent_action_gateway.policy.fuses import FuseBudget, FuseController, FuseLimits
+from agent_action_gateway.policy.fuses import (
+    FuseBudget,
+    FuseController,
+    FuseLimits,
+    FuseTrippedError,
+)
 from agent_action_gateway.policy.locks import Approval, ApprovalStore, RiskRegistry
-from agent_action_gateway.policy.stop_rules import ClarificationState
+from agent_action_gateway.policy.stop_rules import (
+    AmbiguityBlockedError,
+    ClarificationState,
+    StopPolicy,
+    validate_required_input,
+)
 from agent_action_gateway.runtime.records import TraceEvent
 from agent_action_gateway.storage.traces import TraceStore
 
@@ -134,7 +144,9 @@ class SafetySession:
         self.fuse = fuse or FuseController(FuseBudget(self.limits))
         self.registry = registry or RiskRegistry()
         self.approvals = ApprovalStore(self.store)
-        self.clarification = ClarificationState()
+        # Clarification state is per run and durable, so an agent that keeps
+        # asking the same vague question across turns is still counted.
+        self.clarification = _load_clarification(self.store, self.run_id)
         self._step = 0
         self.decisions: list[Decision] = []
 
@@ -437,9 +449,27 @@ class SafetySession:
         task: str,
         *,
         tools: Mapping[str, Callable[..., Any]] | None = None,
+        required_inputs: Mapping[str, Any] | None = None,
+        new_turn: bool = False,
+        batch: bool | None = None,
     ) -> dict[str, Any]:
-        """Run an agent with tools it can only reach through this session."""
+        """Run an agent with tools it can only reach through this session.
+
+        `required_inputs` names the values the task cannot proceed without, with
+        `None` for each one still unknown. If any is missing the agent is not
+        called: the run returns `needs_clarification` so a person can answer,
+        at most once per turn. Pass `new_turn=True` when the person has replied.
+        In batch mode nobody can answer, so a missing input blocks instead.
+        """
         tool_map = dict(tools or {})
+        if new_turn:
+            self.clarification.next_turn()
+        if required_inputs is not None:
+            stopped = self._check_required_inputs(
+                task, dict(required_inputs), self.batch if batch is None else batch
+            )
+            if stopped is not None:
+                return stopped
         self.store.append_trace(
             TraceEvent(self.run_id, 0, "session.start", task, {
                 "environment": self.environment,
@@ -448,12 +478,33 @@ class SafetySession:
             }, "started")
         )
         try:
-            output = _call_agent(agent_fn, task, tool_map)
+            # The time limit applies to the agent itself, not only to its tool
+            # calls: an agent that thinks forever without calling a tool must
+            # still stop. A budget already spent stops the run before it starts.
+            self.fuse.budget.check()
+            with self.fuse.deadline_guard():
+                output = _call_agent(agent_fn, task, tool_map)
             status, error = ("completed", None)
+        except FuseTrippedError as exc:
+            self.store.append_trace(
+                TraceEvent(self.run_id, 9, "fuse", task, str(exc), "blocked")
+            )
+            self._record_budget()
+            return {
+                "run_id": self.run_id,
+                "status": "blocked",
+                "enforcement": "enforced",
+                "output": None,
+                "error": str(exc),
+                "decisions": len(self.decisions),
+                "blocked_decisions": len([d for d in self.decisions if d.blocked]),
+                "attempt": self.clarification.attempts,
+            }
         except Exception as exc:
             self.store.append_trace(
                 TraceEvent(self.run_id, 9, "agent", task, str(exc), "failed")
             )
+            self._record_budget()
             blocked_so_far = [d for d in self.decisions if d.blocked]
             return {
                 "run_id": self.run_id,
@@ -463,6 +514,7 @@ class SafetySession:
                 "error": str(exc),
                 "decisions": len(self.decisions),
                 "blocked_decisions": len(blocked_so_far),
+                "attempt": self.clarification.attempts,
             }
 
         # Counted after the agent runs: decisions are appended as it acts.
@@ -485,6 +537,7 @@ class SafetySession:
                 status,
             )
         )
+        self._record_budget()
         return {
             "run_id": self.run_id,
             "status": status,
@@ -494,7 +547,38 @@ class SafetySession:
             "decisions": len(self.decisions),
             "blocked_decisions": len(blocked),
             "pending_approvals": [a.approval_id for a in self.approvals.pending()],
+            "attempt": self.clarification.attempts,
         }
+
+    def _record_budget(self) -> None:
+        """Persist how much of the budget the run used, for the dashboard."""
+        self.store.record_fuse_snapshot(self.run_id, self.fuse.budget.snapshot())
+
+    def _check_required_inputs(
+        self, task: str, required: dict[str, Any], batch: bool
+    ) -> dict[str, Any] | None:
+        """Stop before the agent runs when a required input is missing."""
+        base = {"run_id": self.run_id, "enforcement": "enforced", "output": None}
+        try:
+            proposal = validate_required_input(
+                StopPolicy(), self.clarification, required, batch=batch
+            )
+        except AmbiguityBlockedError as exc:
+            self.store.save_clarification_state(self.run_id, self.clarification)
+            self.store.append_trace(
+                TraceEvent(self.run_id, 0, "validation", task, str(exc), "blocked")
+            )
+            return {**base, "status": "blocked", "error": str(exc),
+                    "attempt": self.clarification.attempts}
+        self.store.save_clarification_state(self.run_id, self.clarification)
+        if proposal.decision == "ASK":
+            self.store.append_trace(
+                TraceEvent(self.run_id, 0, "validation", task, proposal.missing_fields, "ask")
+            )
+            return {**base, "status": "needs_clarification",
+                    "missing_fields": proposal.missing_fields,
+                    "attempt": self.clarification.attempts}
+        return None
 
     def close(self) -> None:
         self.store.append_trace(
@@ -523,6 +607,17 @@ def session(**kwargs: Any) -> Iterator[SafetySession]:
         yield active
     finally:
         active.close()
+
+
+def _load_clarification(store: TraceStore, run_id: str) -> ClarificationState:
+    persisted = store.load_clarification_state(run_id)
+    if persisted is None:
+        return ClarificationState()
+    return ClarificationState(
+        attempts=persisted["attempts"],
+        max_attempts=persisted["max_attempts"],
+        asked_this_turn=persisted["asked_this_turn"],
+    )
 
 
 # -- argument shaping ------------------------------------------------------

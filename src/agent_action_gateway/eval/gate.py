@@ -5,33 +5,7 @@ import uuid
 
 from agent_action_gateway.eval.models import Baseline, EvaluationSummary, GateResult
 from agent_action_gateway.eval.verdict import decide
-from agent_action_gateway.runtime.records import GateVerdict
 from agent_action_gateway.storage.evaluations import EvaluationStore
-from agent_action_gateway.storage.traces import TraceStore
-
-NOT_EVALUATED = "NOT_EVALUATED"
-
-
-def record_run_status(run_id: str, store: TraceStore, *, failed: bool) -> GateVerdict:
-    """Record the honest outcome of a single run.
-
-    A completed run has NOT been evaluated for quality. The regression gate in
-    run_gate() is what produces PASS/FAIL/UNCERTAIN, and only after comparing a
-    candidate against a recorded baseline. Persisting PASS here, as the previous
-    hardcoded score/threshold comparison did, manufactured durable evidence that
-    no evaluation ever produced.
-
-    A run that raised is recorded as FAILED because that is a directly observed
-    fact, not a judgement about quality.
-    """
-    result = GateVerdict(
-        run_id=run_id,
-        verdict="FAIL" if failed else NOT_EVALUATED,
-        score=0.0 if failed else 0.0,
-        threshold=0.0,
-    )
-    store.append_gate(result)
-    return result
 
 
 def check_compatibility(

@@ -13,7 +13,8 @@ from agent_action_gateway.policy.fuses import (
 )
 from agent_action_gateway.policy.locks import ApprovalStore, RiskRegistry
 from agent_action_gateway.proofs.fakes import MockEffectProvider
-from agent_action_gateway.runtime.orchestrator import dispatch_external_action, execute_tool, run
+from agent_action_gateway.runtime.orchestrator import dispatch_external_action, execute_tool
+from agent_action_gateway.runtime.session import SafetySession
 from agent_action_gateway.storage.traces import TraceStore
 
 
@@ -325,10 +326,10 @@ class FuseTest(unittest.TestCase):
                 while True:
                     pass
 
-            result = run(burn, "burn", store, fuse=fuse)
+            result = SafetySession(store, fuse=fuse).run(burn, "burn")
 
             self.assertEqual(result["status"], "blocked")
-            self.assertIn("wall-clock", result["reason"])
+            self.assertIn("wall-clock", result["error"])
 
     def test_run_is_blocked_if_wall_clock_budget_is_already_exhausted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -343,16 +344,14 @@ class FuseTest(unittest.TestCase):
             now[0] = 10.0
             calls = []
 
-            result = run(
+            result = SafetySession(store, fuse=fuse).run(
                 lambda task: calls.append(task) or "unsafe",
                 "long task",
-                store,
-                fuse=fuse,
             )
 
             self.assertEqual(result["status"], "blocked")
             self.assertEqual(calls, [])
-            self.assertIn("wall-clock", result["reason"])
+            self.assertIn("wall-clock", result["error"])
 
 
 if __name__ == "__main__":

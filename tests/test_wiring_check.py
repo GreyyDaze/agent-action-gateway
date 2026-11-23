@@ -25,6 +25,7 @@ from agent_action_gateway.observability.wiring import (
     run_check,
     scan_code,
 )
+from agent_action_gateway.runtime.records import TraceEvent
 from agent_action_gateway.storage.traces import TraceStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -256,31 +257,18 @@ class DetectionBreadthTest(unittest.TestCase):
         self.assertIs(run_path.status, Status.PASS, report.render())
         assert sqlite3 is not None
 
-    def test_observe_only_run_is_reported_as_a_failure(self) -> None:
-        """The gap `run()` leaves is now visible after the fact."""
+    def test_observe_only_rows_are_reported_as_a_failure(self) -> None:
+        """Rows recorded without enforcement are visible after the fact."""
         path = Path(tempfile.mkdtemp()) / "observed.db"
-        from agent_action_gateway import run
-
-        run(lambda task: "done", "smoke", store=TraceStore(path))
+        TraceStore(path).append_trace(
+            TraceEvent("observed-run", 0, "agent", "smoke", "done", "completed"),
+            enforcement="observe",
+        )
 
         report = audit_database(path)
         run_path = next(f for f in report.findings if f.name == "run path")
         self.assertIs(run_path.status, Status.FAIL, report.render())
         self.assertIn("does not enforce", run_path.detail + " ".join(run_path.locations))
-
-    def test_run_warns_that_it_enforces_nothing(self) -> None:
-        import subprocess
-        import sys
-
-        result = subprocess.run(
-            [sys.executable, "-c",
-             "from agent_action_gateway import run\nrun(lambda t: 'done', 'smoke')\n"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-        )
-        self.assertIn("enforces nothing", result.stderr)
-        self.assertIn("session()", result.stderr)
 
 
 class CommandTest(unittest.TestCase):

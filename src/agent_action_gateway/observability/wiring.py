@@ -3,7 +3,7 @@
 The library's own suites prove the enforcement path works. They say nothing
 about whether a given application uses it, which is the failure this module
 exists to catch: an agent that imports a provider directly, or calls the
-observe-only runner on a path that changes production, is unprotected while every
+unenforced runner on a path that changes production, is unprotected while every
 published check still reports green.
 
 Two inputs, because neither alone is sufficient:
@@ -414,8 +414,8 @@ def audit_database(path: Path) -> Report:
                 ),
                 (
                     (
-                        f"{observed} action(s) were recorded by run(), which does "
-                        f"not enforce anything; use session() for protection"
+                        f"{observed} action(s) were recorded in observe mode, which "
+                        f"does not enforce anything; use session() for protection"
                     ),
                 )
                 if observed

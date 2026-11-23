@@ -257,15 +257,8 @@ class AdoptionContractTest(unittest.TestCase):
         self.assertIn("lookup", reached, "documented path must reach the shared pipeline")
 
 
-class ObserveModeTest(unittest.TestCase):
-    """run() must label itself honestly."""
-
-    def test_bare_run_reports_observe_mode(self) -> None:
-        from agent_action_gateway import run
-
-        with tempfile.TemporaryDirectory() as directory:
-            result = run(lambda task: "done", "task", TraceStore(Path(directory) / "r.db"))
-        self.assertEqual(result.get("enforcement"), "observe")
+class EnforcementLabelTest(unittest.TestCase):
+    """A session run must say it was enforced."""
 
     def test_session_run_reports_enforced(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

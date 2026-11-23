@@ -16,9 +16,15 @@ from agent_action_gateway.runtime.orchestrator import (
     dispatch_external_action,
     evaluate_tool_result,
     execute_tool,
-    run,
 )
+from agent_action_gateway.runtime.session import SafetySession
 from agent_action_gateway.storage.traces import TraceStore
+
+
+def run(agent, task, store, *, run_id=None, required_inputs=None, new_turn=False, batch=False):
+    """Run one turn through a session, the way an adopter's loop would."""
+    ctx = SafetySession(store, run_id=run_id, batch=batch)
+    return ctx.run(agent, task, required_inputs=required_inputs, new_turn=new_turn)
 
 
 class StopRulesTest(unittest.TestCase):
@@ -573,7 +579,7 @@ class StopRulesTest(unittest.TestCase):
             )
             self.assertEqual(result["status"], "needs_clarification")
             events = [e for e in store.snapshot()["traces"] if e["run_id"] == result["run_id"]]
-            self.assertEqual(events[-1]["status"], "ask")
+            self.assertEqual([e["status"] for e in events if e["event"] == "validation"], ["ask"])
 
     def test_run_batch_ambiguity_blocks_and_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -587,7 +593,7 @@ class StopRulesTest(unittest.TestCase):
             )
             self.assertEqual(result["status"], "blocked")
             events = [e for e in store.snapshot()["traces"] if e["run_id"] == result["run_id"]]
-            self.assertEqual(events[-1]["status"], "blocked")
+            self.assertEqual([e["status"] for e in events if e["event"] == "validation"], ["blocked"])
 
 
 if __name__ == "__main__":

@@ -1,12 +1,13 @@
-"""Starts and stops the pieces that make up a run."""
-import sys
+"""Lower-level building blocks for checking tool results and dispatching actions.
+
+`session()` is the API; these functions are what it, the proofs and the tests
+build on.
+"""
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
-from uuid import uuid4
 
 from agent_action_gateway.engine.enforcement import EnforcementContext, enforce
-from agent_action_gateway.eval.gate import record_run_status
 from agent_action_gateway.guards.capture import suspicious_flags
 from agent_action_gateway.guards.status import honest_status
 from agent_action_gateway.integrations.adapters.base import ExternalActionProvider
@@ -14,167 +15,10 @@ from agent_action_gateway.policy.cross_check import CrossCheckSpec, perform_cros
 from agent_action_gateway.policy.fuses import FuseController, FuseTrippedError
 from agent_action_gateway.policy.locks import ApprovalStore, RiskRegistry
 from agent_action_gateway.policy.safety import SafetyBlockedError
-from agent_action_gateway.policy.stop_rules import (
-    AmbiguityBlockedError,
-    ClarificationState,
-    ResultDecision,
-    StopPolicy,
-    validate_required_input,
-)
+from agent_action_gateway.policy.stop_rules import ResultDecision, StopPolicy
 from agent_action_gateway.runtime.records import TraceEvent
 from agent_action_gateway.storage.traces import TraceStore
 
-
-def _persist_fuse(trace_store: TraceStore, run_id: str, fuse: FuseController | None) -> None:
-    if fuse is not None:
-        trace_store.record_fuse_snapshot(run_id, fuse.budget.snapshot())
-
-
-_OBSERVE_WARNING_SHOWN = False
-
-
-def _warn_observe_only() -> None:
-    """Warn once per process that this path enforces nothing."""
-    global _OBSERVE_WARNING_SHOWN
-    if _OBSERVE_WARNING_SHOWN:
-        return
-    _OBSERVE_WARNING_SHOWN = True
-    print(
-        "WARNING: run() records what happens but enforces nothing. Actions "
-        "taken outside a session are not checked. Use session() for "
-        "protection: from agent_action_gateway import session",
-        file=sys.stderr,
-    )
-
-
-def run(
-    agent_fn: Callable[[str], Any],
-    task: str,
-    store: TraceStore | None = None,
-    *,
-    run_id: str | None = None,
-    clarification_state: ClarificationState | None = None,
-    required_inputs: dict[str, Any] | None = None,
-    batch: bool = False,
-    new_turn: bool = False,
-    fuse: FuseController | None = None,
-) -> dict[str, Any]:
-    """Run the agent with durable validation clarification state.
-
-    This records what happened. It does not authorize, budget or receipt
-    anything: tools the agent reaches outside a session are not enforced. The
-    first call in a process says so on stderr, because "observe" in the result
-    is easy to miss and the consequence is an unprotected action.
-    """
-    _warn_observe_only()
-    trace_store = store or TraceStore()
-    active_run_id = run_id or str(uuid4())
-    stop_policy = StopPolicy()
-
-    if clarification_state is None:
-        persisted = trace_store.load_clarification_state(active_run_id)
-        if persisted is None:
-            clarification_state = ClarificationState()
-        else:
-            clarification_state = ClarificationState(
-                attempts=persisted["attempts"],
-                max_attempts=persisted["max_attempts"],
-                asked_this_turn=persisted["asked_this_turn"],
-            )
-
-    if new_turn:
-        clarification_state.next_turn()
-
-    if required_inputs is not None:
-        try:
-            proposal = validate_required_input(
-                stop_policy, clarification_state, required_inputs, batch=batch
-            )
-        except AmbiguityBlockedError as exc:
-            trace_store.save_clarification_state(active_run_id, clarification_state)
-            trace_store.append_trace(
-                TraceEvent(active_run_id, 0, "validation", task, str(exc), "blocked"), enforcement="observe",
-            )
-            return {
-                "run_id": active_run_id,
-                "output": None,
-                "status": "blocked",
-                "reason": str(exc),
-                "attempt": clarification_state.attempts,
-            }
-
-        trace_store.save_clarification_state(active_run_id, clarification_state)
-
-        if proposal.decision == "ASK":
-            trace_store.append_trace(
-                TraceEvent(active_run_id, 0, "validation", task, proposal.missing_fields, "ask"), enforcement="observe",
-            )
-            return {
-                "run_id": active_run_id,
-                "output": None,
-                "status": "needs_clarification",
-                "missing_fields": proposal.missing_fields,
-                "attempt": clarification_state.attempts,
-            }
-
-    trace_store.append_trace(TraceEvent(active_run_id, 0, "before", task, None, "started"), enforcement="observe")
-    if fuse is not None:
-        try:
-            fuse.budget.check()
-        except FuseTrippedError as exc:
-            trace_store.append_trace(
-                TraceEvent(active_run_id, 0, "fuse", task, str(exc), "blocked"), enforcement="observe",
-            )
-            return {
-                "run_id": active_run_id,
-                "output": None,
-                "status": "blocked",
-                "reason": str(exc),
-                "attempt": clarification_state.attempts,
-            }
-    try:
-        if fuse is None:
-            output = agent_fn(task)
-        else:
-            with fuse.deadline_guard():
-                output = agent_fn(task)
-    except FuseTrippedError as exc:
-        trace_store.append_trace(TraceEvent(active_run_id, 1, "fuse", task, str(exc), "blocked"), enforcement="observe")
-        _persist_fuse(trace_store, active_run_id, fuse)
-        return {
-            "run_id": active_run_id,
-            "output": None,
-            "status": "blocked",
-            "reason": str(exc),
-            "attempt": clarification_state.attempts,
-        }
-    except Exception as exc:
-        trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, str(exc), "failed"), enforcement="observe")
-        trace_store.append_receipt(active_run_id, f"RECEIPT run={active_run_id} status=failed")
-        run_status = record_run_status(active_run_id, trace_store, failed=True)
-        _persist_fuse(trace_store, active_run_id, fuse)
-        return {
-            "run_id": active_run_id,
-            "output": None,
-            "run_status": run_status.verdict,
-            "status": "failed",
-            "enforcement": "observe",
-            "attempt": clarification_state.attempts,
-        }
-
-    trace_store.append_trace(TraceEvent(active_run_id, 1, "agent", task, output, "completed"), enforcement="observe")
-    trace_store.append_trace(TraceEvent(active_run_id, 2, "after", output, None, "completed"), enforcement="observe")
-    trace_store.append_receipt(active_run_id, f"RECEIPT run={active_run_id} status=completed")
-    run_status = record_run_status(active_run_id, trace_store, failed=False)
-    _persist_fuse(trace_store, active_run_id, fuse)
-    return {
-        "run_id": active_run_id,
-        "output": output,
-        "run_status": run_status.verdict,
-        "status": "degraded" if fuse is not None and fuse.degraded else "completed",
-        "enforcement": "observe",
-        "attempt": clarification_state.attempts,
-    }
 
 def evaluate_tool_result(
     store: TraceStore,
