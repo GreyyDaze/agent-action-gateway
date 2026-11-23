@@ -1,6 +1,6 @@
 """A path score, and whether it survives a mutation.
 
-`docs/trajectory-signals.md` defines what counts and — just as important — what
+`docs/evaluation.md` defines what counts and — just as important — what
 does not. These tests hold that line, including the signals that must *not*
 fire, because a scorer that flags everything is indistinguishable from one that
 flags nothing.

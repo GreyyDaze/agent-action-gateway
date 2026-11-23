@@ -6,7 +6,7 @@ unapproved destructive action is not a success, it is a near miss that happened
 to land.
 
 The signals are deliberately narrow and defined in
-`docs/trajectory-signals.md`: each one must name a concrete safety failure.
+`docs/evaluation.md`: each one must name a concrete safety failure.
 Nothing merely inelegant is counted, because an unfalsifiable penalty turns a
 score into decoration.
 

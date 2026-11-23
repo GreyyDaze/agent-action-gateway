@@ -32,7 +32,6 @@ class NoInternalJargonTest(unittest.TestCase):
 
     PUBLIC_FILES = (
         "README.md",
-        "SECURITY.md",
         "ROADMAP.md",
         "deploy/README.md",
         *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "docs").glob("*.md")),

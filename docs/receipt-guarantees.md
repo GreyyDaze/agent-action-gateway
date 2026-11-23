@@ -4,6 +4,17 @@ A receipt is the durable record that a side effect was attempted. It is what
 lets the gateway promise that the same effect happens once, even after a crash,
 a restart, or a second worker.
 
+## Contents
+
+- [Storage](#storage)
+- [What "the same effect" means](#what-the-same-effect-means)
+- [Lifecycle](#lifecycle)
+- [Resolving an unknown outcome](#resolving-an-unknown-outcome)
+- [Provider interface](#provider-interface)
+- [Recovery by action type](#recovery-by-action-type)
+- [How this is verified](#how-this-is-verified)
+- [Replay honesty](#replay-honesty)
+
 ## Storage
 
 Receipts are stored in SQLite (WAL mode) on a single host, or in PostgreSQL
@@ -33,19 +44,24 @@ options change what counts as the same effect:
 
 The receipt is claimed **before** the action is sent:
 
-```text
-claim (insert receipt, state pending)
-  |
-  +-- someone else already holds it
-  |     +-- their attempt finished  -> return their result (DEDUPLICATED)
-  |     +-- their attempt failed    -> the effect did not land; may try again
-  |     +-- still pending           -> outcome unknown; refuse (EffectInFlight)
-  |
-  +-- this caller owns it
-        +-- action succeeds        -> done, result recorded
-        +-- action raises          -> failed; a later attempt may retry
-        +-- process dies mid-call  -> stays pending; outcome unknown
+```mermaid
+flowchart TD
+    C[Claim the effect<br/>insert receipt: pending] --> O{Who holds it?}
+    O -->|this caller| R[Call the provider]
+    R -->|succeeds| D[done: result recorded]
+    R -->|raises| F[failed: a later attempt may retry]
+    R -->|process dies mid-call| P[stays pending: outcome unknown]
+    O -->|someone else| S{Their state}
+    S -->|done| DD[return their result: DEDUPLICATED]
+    S -->|failed| RT[the effect did not land: may try again]
+    S -->|pending| IF[refuse: EffectInFlight]
 ```
+
+| Receipt state | Meaning | Next attempt |
+|---|---|---|
+| `pending` | claimed; the outcome is not known yet | refused until resolved |
+| `done` | the effect landed | gets the recorded result |
+| `failed` | the effect did not land | may run |
 
 A receipt left `pending` is the honest state after a crash: nobody knows
 whether the action landed. Running it again risks a duplicate, and reporting

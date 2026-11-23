@@ -17,7 +17,8 @@ def test_required_documents_exist() -> None:
     for relative in (
         "README.md",
         "ROADMAP.md",
-        "SECURITY.md",
+        "docs/evaluation.md",
+        "docs/receipt-guarantees.md",
         "docs/sdk.md",
         "docs/architecture.md",
         "docs/gateway-deployment.md",

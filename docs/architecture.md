@@ -1,74 +1,96 @@
-# Architecture (current)
+# Architecture
 
-This is the source of truth for the package layout.
+How the package is organized, and how one action flows through it.
 
-## Layers and dependency direction
+## Contents
 
-Dependencies point **downward only**:
+- [Layers](#layers)
+- [Package map](#package-map)
+- [How an action flows](#how-an-action-flows)
+- [Configuration](#configuration)
+- [Testing](#testing)
 
+## Layers
+
+Dependencies point **downward only**. A lower layer never imports a higher one.
+
+```mermaid
+flowchart TD
+    A["cli · integrations · observability<br/>(the ways in: CLI, HTTP gateway, MCP, dashboard)"]
+    B["engine · runtime<br/>(the one enforcement pipeline, sessions)"]
+    C["policy · guards · credential<br/>(pure rules, redaction, key custody)"]
+    D["audit · storage<br/>(receipts, records, SQLite/PostgreSQL)"]
+    A --> B --> C --> D
 ```
-  cli / integrations / observability
-             |
-             v
-        engine + runtime
-             |
-             v
-   policy + guards + credential
-             |
-             v
-       audit + storage        (leaf — imports nothing above)
-```
 
-`policy/` is pure decision logic (no I/O). `engine/` is the one enforcement
-pipeline, called by the wrapper, HTTP and MCP doors. `credential/` owns secret
-custody and egress. `integrations/` are thin adapters. `storage/` is the leaf.
+| Layer | Rule |
+|---|---|
+| `policy/` | pure decision logic, with no I/O |
+| `engine/` | the single checking pipeline; every way in calls it |
+| `credential/` | the only place real secrets are handled |
+| `storage/` | the leaf: imports nothing above it |
 
 ## Package map
 
 | Package | Job |
 |---|---|
-| `policy/` | pure rules: risk, approval, budgets, stop rules, hashes |
-| `engine/` | `enforce()` — the single checking pipeline |
-| `guards/` | redaction, capture policy, honest status |
-| `runtime/` | session, orchestrator, records |
-| `credential/` | placeholder vault, resolvers, egress, proxy, TLS |
-| `integrations/` | gateway, MCP, in-process adapters (old `providers/`) |
-| `audit/` | receipts, failure wall, lifecycle stores |
-| `eval/` | golden set, judges, verdict engine, regression gate, online |
-| `storage/` | SQLite/Postgres persistence (leaf) |
-| `observability/` | dashboard, wiring check |
-| `config/` | defaults and the single config loader |
-| `proofs/` | verification scripts about this library; not exposed in the CLI |
+| `policy/` | rules: risk, approval, limits, stop-and-ask, effect fingerprints |
+| `engine/` | `enforce()`, the checking pipeline |
+| `guards/` | redaction, capture policy, honest run status |
+| `runtime/` | `session()`, records, lower-level dispatch helpers |
+| `credential/` | placeholder vault, secret resolvers, outbound proxy, TLS |
+| `integrations/` | HTTP gateway, MCP bridge and server, provider interface |
+| `audit/` | receipts, failure grouping, case promotion |
+| `eval/` | cases, judges, verdicts, release gate, run sampling, path scoring |
+| `storage/` | SQLite and PostgreSQL persistence |
+| `observability/` | dashboard and bypass detection |
+| `proofs/` | verification suites about this library, and their test doubles |
+
+## How an action flows
+
+Every way in (a wrapped tool, the HTTP gateway, the MCP server) calls the same
+pipeline, so none of them is a weaker path:
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Door as session / gateway / MCP
+    participant Engine as engine.enforce()
+    participant Store as audit + storage
+    participant Provider
+    Agent->>Door: proposed action
+    Door->>Engine: action, arguments, context
+    Engine->>Engine: risk, limits, environment, approval
+    alt refused
+        Engine->>Store: record the refusal
+        Engine-->>Agent: blocked, with the reason
+    else allowed
+        Engine->>Store: claim the effect (receipt)
+        Engine->>Provider: call, with the intent key
+        Provider-->>Engine: result
+        Engine->>Store: mark done, record the call
+        Engine-->>Agent: allowed, with the result
+    end
+```
 
 ## Configuration
 
-The library ships **example config templates** only (`deploy/routes.example.json`,
-`deploy/routes.credentials.example.json`). An adopting engineer writes their own
-config in their own project — their hosts, keys, risks and limits — and the
-library reads it. No live policy data is owned by this repo.
+The package ships **example** configuration only: the route files in
+`deploy/`. You write your own in your project (your hosts, keys, risks and
+limits) and the gateway reads it. No live policy lives in this repository.
 
 ## Testing
 
-Test lanes are assigned by `tests/conftest.py` (no per-file edits):
+| Command | Runs |
+|---|---|
+| `make verify` | lint, type check, full test suite |
+| `make test-unit` | fast tests with no I/O |
+| `make test-integration` | database, socket and server tests |
+| `make test-evals` | evaluation suites |
+| `make proof` | every guarantee suite, with the numbers the README quotes |
+| `make mutation` | mutation testing of the safety code (nightly) |
 
-```bash
-make test-unit          # pure, fast
-make test-integration   # DB / sockets / servers
-make test-evals         # quality suites
-make verify             # lint + mypy + full suite
-```
-
-The safety core is additionally checked by **mutation** with `mutmut` (`make mutation`).
-mutmut automatically mutates all safety code (`policy/`, `engine/`, `audit/`,
-`credential/`, `guards/`) and reports a score plus any surviving mutants — a
-behavior change no test detected, which coverage cannot see. Config in
-`pyproject.toml` under `[tool.mutmut]`. It runs nightly in CI
-(`.github/workflows/nightly.yml`), not on every commit. mutmut is dev-only; the
-running product stays stdlib-only.
-
-```bash
-python -m pytest -q        # full suite
-python -m ruff check .
-python -m mypy
-make proof
-```
+Test lanes are assigned in `tests/conftest.py`. Mutation testing (`mutmut`)
+changes the safety code (`policy/`, `engine/`, `audit/`, `credential/`,
+`guards/`) and reports any change no test noticed, which coverage cannot show.
+It is a development tool only; the package itself has no dependencies.

@@ -1,10 +1,23 @@
 # SDK Guide
 
-The SDK is how an agent gets its tools. Your application still owns the agent,
-its model and its loop; the SDK only decides what each tool call may do, and
+The SDK is how your agent gets its tools. Your application still owns the
+agent, its model and its loop; the SDK decides what each tool call may do, and
 records what happened.
 
-## The session
+## Contents
+
+- [Sessions](#sessions)
+- [Control](#control)
+- [What every call goes through](#what-every-call-goes-through)
+- [Results](#results)
+- [Recording](#recording)
+- [Other ways in](#other-ways-in)
+- [Storage and dashboard](#storage-and-dashboard)
+- [Limits of the SDK](#limits-of-the-sdk)
+
+## Sessions
+
+### Open a session and wrap tools
 
 Every guarded tool comes from a session. The agent receives the wrapped
 function, never the raw one, so it cannot route around the checks.
@@ -14,48 +27,38 @@ from agent_action_gateway import session
 
 with session(environment="prod") as ctx:
     drop = ctx.tool(drop_table, action="db.drop_table", risk="destructive")
-    read = ctx.tool(run_query, action="db.query", risk="read")
-    result = ctx.run(agent, task, tools={"drop_table": drop, "query": read})
+    query = ctx.tool(run_query, action="db.query", risk="read")
+    result = ctx.run(agent, task, tools={"drop_table": drop, "query": query})
 ```
+
+### Session API
 
 | Method | Purpose |
 |---|---|
-| `session(store=..., environment=..., limits=...)` | open a session; every argument has a safe default |
-| `ctx.tool(fn, action=..., risk=...)` | wrap a function so every call is checked; `risk` defaults to `destructive` |
-| `ctx.run(agent, task, tools={...})` | run an agent with the guarded tools it may use |
+| `session(store=..., environment=..., limits=..., run_id=..., batch=...)` | open a session; every argument has a safe default |
+| `ctx.tool(fn, action=..., risk=...)` | wrap a function so every call is checked |
+| `ctx.run(agent, task, tools=..., required_inputs=...)` | run an agent with the guarded tools it may use |
 | `ctx.request_approval(action, arguments)` | create an approval bound to those exact arguments |
 | `ctx.approve(id, approver)` / `ctx.deny(id, approver)` | decide a pending approval |
 | `ctx.pending_approvals()` | list approvals waiting on a person |
-| `ctx.retrying(tool, attempts=...)` | retry transient failures, never refusals (see below) |
+| `ctx.retrying(tool, attempts=...)` | retry transient failures, never refusals |
 | `ctx.record_model_exchange(...)` | record a prompt and completion against the run |
 
-`environment` is one of `dev`, `staging` or `prod` (default `dev`). A tool can
-declare where it acts with `target_environment=`; a session cannot reach a
-different environment.
+### `ctx.tool` options
 
-### Risk classes
+| Option | Default | Meaning |
+|---|---|---|
+| `action` | required | the action's name, used in approvals and records |
+| `risk` | `"destructive"` | `"read"` needs no approval; anything else does |
+| `target_environment` | none | where the tool acts: `dev`, `staging` or `prod` |
+| `required_fields` | `()` | fields the tool's result must contain; a result without them is reported, not trusted |
+| `estimated_cost_usd` | `0.0` | counted against the cost limit |
+| `effect_scope` | `""` | keeps identical actions of different tenants apart |
+| `identity_fields` | all arguments | the arguments that define "the same effect" |
 
-| Risk | Default behaviour |
-|---|---|
-| `read` | allowed, still budgeted and recorded |
-| anything else, or not declared | treated as destructive: needs a fresh approval for the exact arguments |
+## Control
 
-### What a guarded call returns
-
-A guarded tool returns a dict rather than raising, so the agent can read what
-happened and adjust:
-
-| Key | Meaning |
-|---|---|
-| `status` | `allowed` or `blocked` |
-| `decision` | `ALLOW`, `APPROVAL`, `FUSE`, `ENVIRONMENT`, `DISPATCH`, `DEDUPLICATED`, or a result-check name |
-| `result` | the tool's return value, or `None` when refused |
-| `error` | why it was refused, when refused |
-| `missing` | required fields the result did not contain |
-| `needs_approval` | true when an approval would resolve the refusal |
-| `risk` | the risk class applied |
-
-## Approvals
+### Approvals
 
 ```python
 approval = ctx.request_approval("db.drop_table", {"table": "users"})
@@ -65,16 +68,18 @@ drop(table="orders", approval_id=approval.approval_id)  # blocked: approval was 
 drop(table="users", approval_id=approval.approval_id)   # allowed
 ```
 
-An approval is bound to the exact arguments, expires (15 minutes by default),
-and works once.
+| Property | Behaviour |
+|---|---|
+| Bound to arguments | a different payload is refused |
+| Expires | after 15 minutes by default |
+| Single use | a second call with the same approval is refused |
 
-## The intent key: doing an effect once
+### Doing an effect once
 
 Each destructive call gets an `intent_key`: a stable identifier for *what the
-action is*, not for which run attempted it. A retry after a crash, a second
-worker, or the same request sent twice all produce the same key, and only the
-first one runs. Later attempts return the recorded result with
-`decision: DEDUPLICATED`.
+action is*, not which run attempted it. A retry after a crash, a second worker,
+or the same request sent twice all produce the same key, and only the first
+runs. Later attempts return the recorded result with `decision: DEDUPLICATED`.
 
 If your function has an `intent_key` parameter (or `**kwargs`), the session
 passes the key in. Hand it to your provider as its idempotency key:
@@ -84,13 +89,12 @@ def drop_table(table: str, intent_key: str = "") -> dict:
     return db_admin.drop(table, idempotency_key=intent_key)
 ```
 
-A function without that parameter still cannot run twice: the gateway blocks
-the second call either way. The parameter matters for the crash case: if the
-process dies *during* the call, a provider that knows the key can say whether
-the effect already happened. Without it, the outcome is marked unknown and left
-for a person to resolve rather than guessed.
+| Your function | Second call | Crash in the middle of the call |
+|---|---|---|
+| accepts `intent_key` | blocked | the provider can say whether it happened |
+| does not | blocked | outcome marked unknown, left for a person |
 
-Two options adjust what counts as "the same effect":
+Adjust what counts as "the same effect":
 
 ```python
 # Two tenants must not suppress each other.
@@ -101,13 +105,16 @@ ctx.tool(open_ticket, action="ticket.open", identity_fields=("service", "title")
 ```
 
 See [receipt-guarantees.md](receipt-guarantees.md) for exactly what "once"
-means, and when it cannot be guaranteed.
+means.
 
-## Limits
+### Limits
 
-Default limits are 50 steps, 600 seconds and $2.00 of model and tool cost per
-session. Calling the same action with the same arguments three times without
-progress is also stopped. Override them:
+| Limit | Default | Applies to |
+|---|---|---|
+| Steps | 50 | guarded calls per run |
+| Time | 600 seconds | the whole run, including an agent that never calls a tool |
+| Cost | $2.00 | model and tool cost reported to the session |
+| Repeats | 3 | the same action with the same arguments and no progress |
 
 ```python
 from agent_action_gateway import FuseLimits, session
@@ -116,33 +123,43 @@ with session(limits=FuseLimits(max_steps=20, max_wall_seconds=120, max_dollars=0
     ...
 ```
 
-## What is checked, and in what order
+A run whose budget is already spent does not start.
 
-Every call through a guarded tool passes these checks before anything reaches
-the outside world:
+### Environments
 
-| Check | Behaviour |
+A session is `dev`, `staging` or `prod` (default `dev`). A tool that declares
+`target_environment="prod"` cannot be called from a `staging` session.
+
+### Stop and ask
+
+Name the inputs a task cannot proceed without, with `None` for each one still
+unknown. If any is missing, the agent is not called:
+
+```python
+result = ctx.run(agent, task, tools=tools, required_inputs={"deployment_id": None})
+```
+
+```mermaid
+flowchart TD
+    S[Required input missing] --> B{Batch mode?}
+    B -->|yes, nobody can answer| X[blocked]
+    B -->|no| Q{Asked fewer than 2 times?}
+    Q -->|yes| A[needs_clarification:<br/>ask a person, once per turn]
+    Q -->|no| C[run proceeds, with a caveat<br/>recorded and returned]
+```
+
+| `ctx.run(...)` option | Meaning |
 |---|---|
-| Required input missing | stop |
-| Critical input ambiguous | ask, or block when no one can answer |
-| Suspiciously empty lookup | cross-check with a second source, then flag |
-| Different environment | block |
-| Limit reached | stop before the action is sent |
-| Same action repeated with no progress | stop |
-| Destructive action without approval | block |
-| Approval expired, used, or for different arguments | block |
-| Safety store unavailable for a write | block; reads continue |
-| Effect already applied | return the recorded result; do not run again |
-| Outcome of an earlier attempt unknown | block until it is resolved |
-| Required evidence missing from the result | report the run as degraded |
+| `required_inputs={"name": value}` | `None` or `""` counts as missing |
+| `new_turn=True` | the person has replied; a new question is allowed |
+| `batch=True` | nobody can answer, so a missing input blocks |
 
-None of this needs configuration. An action whose risk was never declared is
-treated as destructive.
+The count of questions is saved under the session's `run_id`, so it survives
+across turns and processes. Open each turn with the same `run_id`.
 
-## Retrying
+### Retrying
 
-Retrying is the easiest way to turn a limit into a suggestion: a loop that
-retries will eventually get past a cap by asking often enough. So `retrying()`
+Retrying is the easiest way to turn a limit into a suggestion, so `retrying()`
 is asymmetric on purpose:
 
 ```python
@@ -151,18 +168,72 @@ restart = ctx.retrying(ctx.tool(restart_service, action="service.restart"), atte
 
 | Outcome | Behaviour |
 |---|---|
-| Allowed but transient failure | retried up to `attempts` times |
+| Allowed, but a transient failure (`transient: true`, or a 5xx in the result) | retried up to `attempts` times |
 | **Blocked** | **never retried** |
 
-A refusal means policy said no, not that the call was unlucky. What counts as
-transient is deliberately narrow: an explicit `transient: true`, or a 5xx in
-the tool's own result.
+## What every call goes through
 
-## What gets recorded
+The checks run in this order. Steps 1 to 4 never call your function, so a
+refusal there means no side effect at all.
+
+```mermaid
+flowchart LR
+    R[1. Risk class] --> B[2. Limits] --> E[3. Environment] --> A[4. Approval]
+    A --> C[5. Claim the effect] --> D[6. Call your function] --> V[7. Check the result] --> T[8. Record]
+```
+
+| Check | When it fails |
+|---|---|
+| Action has no declared risk | treated as destructive |
+| Limit reached, or the same call repeated with no progress | stopped before the action is sent |
+| Different environment | blocked |
+| Destructive action without a valid approval (missing, expired, used, or for other arguments) | blocked |
+| Safety store unavailable for a write | blocked; reads continue |
+| Effect already applied | the recorded result is returned; your function is not called again |
+| An earlier attempt's outcome is unknown | blocked until it is resolved |
+| Suspiciously empty result, with a cross-check configured | checked against a second source, then flagged |
+| Result missing a `required_fields` entry | reported as `blocked` (`REPORT_PARTIAL`) with the `missing` fields; your function has already run |
+
+## Results
+
+### A guarded call
+
+A guarded tool returns a dict rather than raising, so the agent can read what
+happened and adjust:
+
+| Key | Meaning |
+|---|---|
+| `status` | `allowed` or `blocked` |
+| `decision` | `ALLOW`, `APPROVAL`, `FUSE`, `ENVIRONMENT`, `DISPATCH`, `DEDUPLICATED`, or a result-check name |
+| `result` | your function's return value, or `None` when refused |
+| `error` | why it was refused |
+| `missing` | required fields the result did not contain |
+| `needs_approval` | true when an approval would resolve the refusal |
+| `risk` | the risk class applied |
+
+### A run
+
+| Key | Meaning |
+|---|---|
+| `status` | `completed`, `degraded`, `blocked`, `failed` or `needs_clarification` |
+| `output` | what the agent returned |
+| `error` | why the run stopped, if it did |
+| `missing_fields` | with `needs_clarification`: what to ask for |
+| `caveat` | the run proceeded without a required input |
+| `decisions`, `blocked_decisions` | how many calls were checked, and refused |
+| `pending_approvals` | approvals waiting on a person |
+
+A blocked call makes the whole run `blocked`, whatever the agent says.
+
+## Recording
+
+### What is recorded
 
 Every call is recorded, allowed or blocked, with its input and output redacted
-before it is written. The SDK does not own your model call, so record the model
-exchange yourself if you want it in the audit:
+before it is written. Each run also records how much of its budget it used.
+
+The SDK does not own your model call, so record the model exchange yourself if
+you want it in the audit:
 
 ```python
 completion = call_your_model(prompt)
@@ -173,122 +244,100 @@ ctx.record_model_exchange(
 )
 ```
 
-Redaction is applied on write, so tokens, keys, emails and other personal data
-are replaced before anything reaches disk. A value you did not record stays NULL,
-which means *not captured*, not *empty*.
+Tokens, keys, emails and other personal data are replaced before anything
+reaches disk. A value you did not record stays empty, which means *not
+captured*, not *zero*.
 
 ### Keeping the store small
-
-Prompts grow the store quickly. `agent-gateway prune` discards prompt and
-completion payloads when you decide to, and keeps the rows:
 
 ```bash
 agent-gateway prune --db data/runtime.db --older-than 30 --keep-latest 10 --dry-run
 ```
 
-Each row keeps its action, timing, cost and outcome, marked
-`exchange_state=pruned`, so "discarded" stays distinguishable from "never
-recorded". Receipts are never touched. Nothing prunes automatically, and a
-prune with neither `--older-than` nor `--keep-latest` is refused.
+| Behaviour | Why |
+|---|---|
+| Discards prompt and completion text, keeps the row | the action, timing, cost and outcome stay as evidence |
+| Marks rows `exchange_state=pruned` | "discarded" stays distinguishable from "never recorded" |
+| Never touches receipts | they are the once-only guarantee |
+| Never runs automatically, and refuses with no limit given | a silent retention policy is a silent deletion of evidence |
 
-## MCP
+## Other ways in
 
-Many agents reach tools through the Model Context Protocol instead of importing
-a library. `agent-gateway mcp-serve` serves your configured routes as MCP tools
+### MCP
+
+Many agents get tools over the Model Context Protocol instead of importing a
+library. `agent-gateway mcp-serve` serves your configured routes as MCP tools
 over stdio, with no MCP SDK required:
 
 ```bash
 agent-gateway mcp-serve --config routes.json --db gateway.db
 ```
 
-Every `tools/call` goes through the same policy as the HTTP gateway, so
-arriving over MCP buys the caller nothing: the same records, the same receipts,
-the same refusals. To register the tools with an MCP library you already use:
+Every `tools/call` goes through the same policy as the HTTP gateway: the same
+records, receipts and refusals. To register the tools with an MCP library you
+already use:
 
 ```python
 from agent_action_gateway.integrations.mcp import MCPToolBridge, tool_definitions
 
 bridge = MCPToolBridge.from_policy(store, policy)
 tools = tool_definitions(policy)   # register these with your MCP library
-result = bridge.call_tool("deploy", {"service": "api"}, approval_id=approval_id)
+result = bridge.call_tool("deploy", {"ref": "v2"}, approval_id=approval_id)
 ```
 
-## Custom action providers
+### Custom action providers
 
-For actions that need their own recovery logic, implement this interface:
+For actions that need their own recovery logic, implement:
 
 ```python
 execute(target, intent_key) -> provider_ref
 find(intent_key, target=None) -> provider_ref | None
 ```
 
-`execute` performs the action and returns the provider's reference for it.
-`find` answers whether an uncertain action already happened, and is the only
-part specific to your system. `HttpExternalActionProvider` implements it for any
-HTTP service with a lookup-by-key endpoint.
+| Method | Does |
+|---|---|
+| `execute` | performs the action and returns the provider's reference for it |
+| `find` | answers whether an uncertain action already happened |
 
-## Release gate verdicts
+`HttpExternalActionProvider` implements both for any HTTP service with
+`POST /effects` and `GET /effects/{intent_key}`.
 
-| Verdict | Meaning | Exit code |
-|---|---|---:|
-| PASS | the candidate is at least as good as the baseline | 0 |
-| FAIL | a confirmed regression, or a failed catastrophic case | 1 |
-| UNCERTAIN | the gate could not reach a trustworthy verdict | 3 |
-| usage error | the command line was wrong | 2 |
+## Storage and dashboard
 
-`UNCERTAIN` is non-zero so CI does not pass silently, and it uses 3 so logs can
-tell "the change regressed" (1) from "you typed it wrong" (2).
+### Storage
 
-A single run is not an evaluation. Quality verdicts come only from
-`agent-gateway gate check`, which compares a candidate against a recorded
-baseline.
+| `--db` value | Backend | Use for |
+|---|---|---|
+| a file path | SQLite | one host |
+| `postgresql://...` | PostgreSQL (`pip install 'agent-action-gateway[postgres]'`) | several hosts or gateway replicas |
 
-### Sampling recorded runs
-
-```bash
-agent-gateway gate online --db data/runtime.db --sample 0.2 --seed 7
-```
-
-This samples recorded runs and reports on them. **It does not block** unless
-you pass `--promote`. With `--seed`, the same runs are selected every time, and
-a sample too small to support a conclusion says so.
-
-## Storage
-
-`--db` takes a file path (SQLite) or a `postgresql://` URL (PostgreSQL, with
-`pip install 'agent-action-gateway[postgres]'`). The schema and migrations are
-declared once and run on both. `tests/test_backend_agreement.py` runs the store
-checks on both engines and compares the answers; without
+Both run the same schema and migrations. `tests/test_backend_agreement.py`
+runs the store checks on both and compares the answers; without
 `AGENT_GATEWAY_TEST_POSTGRES` set, the PostgreSQL half skips visibly.
 
-## Dashboard security
+### Dashboard security
 
-The dashboard binds to `127.0.0.1` by default and is meant for one operator.
+```bash
+python -m agent_action_gateway.observability.dashboard --db data/runtime.db
+```
 
-- Every route needs the access token printed at start-up, as `?token=` or an
-  `Authorization: Bearer` header.
-- Approval forms carry a per-process CSRF token, and a POST from another
-  site's `Origin` is rejected.
-- The Content-Security-Policy allows no scripts; the page runs no JavaScript.
+| Protection | Detail |
+|---|---|
+| Access token | printed at start-up; needed on every route as `?token=` or `Authorization: Bearer` |
+| Local by default | binds to `127.0.0.1`; any other address needs an explicit token |
+| CSRF and origin checks | on every approval form; a POST from another site is refused |
+| No scripts | the Content-Security-Policy allows none |
 
-Restarting the dashboard invalidates tokens and in-flight forms on purpose.
-
-## Observation only: `run()`
-
-`agent_action_gateway.runtime.orchestrator.run(agent, task)` records a trace
-and **enforces nothing**: tools the agent reaches directly are not checked. It
-exists for recording an agent before you wrap its tools. For protection, use
-`session()`.
+Restarting the dashboard invalidates tokens and open forms on purpose.
 
 ## Limits of the SDK
 
-The SDK does not:
+| It does not | Because |
+|---|---|
+| prevent hallucinations or judge a plan | it checks actions, not reasoning |
+| guarantee exactly-once without provider idempotency or lookup | nobody can tell whether such an effect landed |
+| replace human approval | it enforces it |
+| control the agent's model calls | your application owns them |
+| keep a key from an agent in the same process | that needs the [self-hosted gateway](gateway-deployment.md) |
 
-- prevent hallucinations or judge whether a plan is correct;
-- guarantee exactly-once execution when the provider has no idempotency key
-  and no way to look up an earlier attempt;
-- replace human approval for high-impact actions;
-- control the agent's model calls;
-- keep a key away from an agent that runs in the same process. For that, run
-  the gateway as a separate service: see
-  [gateway-deployment.md](gateway-deployment.md).
+For the release gate and run scoring, see [evaluation.md](evaluation.md).
