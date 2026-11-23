@@ -14,10 +14,7 @@ from pathlib import Path
 
 from agent_action_gateway.audit.failure_wall import build_failure_wall
 from agent_action_gateway.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_USAGE
-from agent_action_gateway.integrations.adapters.mock import MockProvider
-from agent_action_gateway.integrations.adapters.refund_demo_agent import make_refund_agent
 from agent_action_gateway.observability.wiring import Status, run_check
-from agent_action_gateway.runtime.orchestrator import run
 from agent_action_gateway.storage.traces import TraceStore
 
 
@@ -50,10 +47,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="a trace database to audit for actions that bypassed the layer",
     )
     check.add_argument("--format", choices=("text", "json"), default="text")
-
-    run_parser = sub.add_parser("run", help="run the bundled demo agent through the safety layer")
-    run_parser.add_argument("task", nargs="?", default="Process the refund for Ava")
-    run_parser.add_argument("--db", default="data/runtime.db")
 
     # add_help=False so `--help` and every other flag reach the gate parser
     # untouched; argparse would otherwise intercept them here. `main` also
@@ -125,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     issue_key = gateway_sub.add_parser("issue-key", help="issue a virtual key for an agent")
     issue_key.add_argument("--name", required=True, help="agent name/identifier")
     issue_key.add_argument("--ttl", type=int, default=3600, help="time to live in seconds")
-    issue_key.add_argument("--routes", required=True, help="comma-separated list of allowed routes (e.g., /charge,/refund)")
+    issue_key.add_argument("--routes", required=True, help="comma-separated list of allowed routes (e.g., /deploy,/rollback)")
 
     _ = gateway_sub.add_parser("list-keys", help="list all virtual keys")
 
@@ -461,20 +454,6 @@ def gateway_rotate_master(args: argparse.Namespace) -> int:
     return EXIT_PASS
 
 
-def run_demo(args: argparse.Namespace) -> int:
-    result = run(make_refund_agent(MockProvider()), args.task, TraceStore(args.db))
-    print(f"run={result['run_id']}")
-    print(f"status={result['status']}")
-    run_status = result.get("run_status")
-    if run_status is not None:
-        # A single run is not evaluated for quality. Quality verdicts come from
-        # `agent-gateway gate check`, which compares against a recorded baseline.
-        print(f"run_status={run_status}")
-    # A run that failed or was blocked must not exit 0, or a script driving the
-    # CLI would treat a stopped run as a success.
-    return EXIT_FAIL if result["status"] in {"failed", "blocked"} else EXIT_PASS
-
-
 def run_wall(args: argparse.Namespace) -> int:
     """Print deterministic failure groups. Reporting only; always succeeds."""
     traces = TraceStore(args.db).snapshot()["traces"]
@@ -730,9 +709,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "check":
         return _run_check(args)
-    if args.command == "run":
-        announce("bundled demo — no agent or data of yours is tested here.")
-        return run_demo(args)
     if args.command == "wall":
         announce("your run history — the failures recorded in your database.")
         return run_wall(args)

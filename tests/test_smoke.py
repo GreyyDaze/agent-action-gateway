@@ -2,17 +2,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_action_gateway.integrations.adapters.mock import MockProvider
-from agent_action_gateway.integrations.adapters.refund_demo_agent import make_refund_agent
 from agent_action_gateway.runtime.orchestrator import run
 from agent_action_gateway.storage.traces import TraceStore
+
+
+def restart_agent(task: str) -> dict[str, str]:
+    """A minimal agent: it reports one completed action."""
+    return {"status": "restarted", "service": "api"}
 
 
 class SmokeTest(unittest.TestCase):
     def test_full_run_wires_trace_receipt_and_run_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TraceStore(Path(tmp) / "runtime.db")
-            result = run(make_refund_agent(MockProvider()), "Process the refund for Ava", store)
+            result = run(restart_agent, "Restart the api service", store)
             snapshot = store.snapshot()
 
             self.assertEqual(result["status"], "completed")

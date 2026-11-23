@@ -23,9 +23,9 @@ from agent_action_gateway.audit.receipts import (
     resolve_unknown,
 )
 from agent_action_gateway.guards.redaction import redact
-from agent_action_gateway.integrations.adapters.mock import MockPaymentProvider
 from agent_action_gateway.observability.dashboard import build_server
 from agent_action_gateway.policy.locks import ApprovalStore
+from agent_action_gateway.proofs.fakes import MockPaymentProvider
 from agent_action_gateway.storage.traces import TraceStore
 
 

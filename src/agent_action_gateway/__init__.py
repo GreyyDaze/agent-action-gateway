@@ -38,6 +38,5 @@ from agent_action_gateway.runtime.session import DEFAULT_FUSE_LIMITS, SafetySess
 __all__ = [
     "FuseLimits",
     "SafetySession",
-    "run",
     "session",
 ]

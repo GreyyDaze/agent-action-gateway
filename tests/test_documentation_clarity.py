@@ -32,7 +32,6 @@ class NoInternalJargonTest(unittest.TestCase):
         "README.md",
         "docs/sdk.md",
         "SECURITY.md",
-        "docs/examples/quickstart.py",
     )
 
     def test_public_docs_contain_no_internal_identifiers(self) -> None:
@@ -265,7 +264,7 @@ class PublicSurfaceTest(unittest.TestCase):
 
         self.assertEqual(
             sorted(agent_action_gateway.__all__),
-            ["FuseLimits", "SafetySession", "run", "session"],
+            ["FuseLimits", "SafetySession", "session"],
         )
 
     def test_documented_entry_points_are_importable(self) -> None:
@@ -311,11 +310,6 @@ class CommandScopeClarityTest(unittest.TestCase):
         out = self._run_cli("check")
         self.assertIn("SCOPE:", out)
         self.assertIn("does not re-verify the library itself", out)
-
-    def test_run_says_it_tests_nothing_of_the_readers(self) -> None:
-        out = self._run_cli("run")
-        self.assertIn("SCOPE:", out)
-        self.assertIn("no agent or data of yours is tested", out)
 
     def test_wall_states_its_scope(self) -> None:
         import tempfile

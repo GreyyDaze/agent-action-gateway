@@ -1,4 +1,4 @@
-"""An in-memory provider for tests and the quickstart."""
+"""In-memory test doubles for the verification suites and tests. Not a product API."""
 from dataclasses import dataclass
 
 

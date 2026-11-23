@@ -410,8 +410,8 @@ class Handler(BaseHTTPRequestHandler):
             )
         if not view["has_run"]:
             banner = _empty(
-                "Nothing recorded yet. Run an agent through the safety layer, "
-                "or open this page again after `agent-gateway run`."
+                "Nothing recorded yet. Run an agent through a session, "
+                "then open this page again."
             )
 
         gates = view["gates"]

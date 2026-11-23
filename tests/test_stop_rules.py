@@ -2,7 +2,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_action_gateway.integrations.adapters.mock import MockPaymentProvider
 from agent_action_gateway.policy.cross_check import CrossCheckSpec, perform_cross_check
 from agent_action_gateway.policy.locks import ApprovalStore, RiskRegistry
 from agent_action_gateway.policy.stop_rules import (
@@ -12,6 +11,7 @@ from agent_action_gateway.policy.stop_rules import (
     StopPolicy,
     enforce_environment,
 )
+from agent_action_gateway.proofs.fakes import MockPaymentProvider
 from agent_action_gateway.runtime.orchestrator import (
     dispatch_external_action,
     evaluate_tool_result,

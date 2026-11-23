@@ -16,8 +16,8 @@ from pathlib import Path
 
 from agent_action_gateway import session
 from agent_action_gateway.audit.receipts import UnresolvableReceiptError, resolve_unknown
-from agent_action_gateway.integrations.adapters.mock import MockPaymentProvider
 from agent_action_gateway.policy.fuses import FuseLimits
+from agent_action_gateway.proofs.fakes import MockPaymentProvider
 from agent_action_gateway.storage.traces import TraceStore
 
 

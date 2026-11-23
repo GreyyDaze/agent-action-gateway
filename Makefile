@@ -15,7 +15,7 @@ PYTHON ?= python
 JOBS   ?= 1000
 
 .PHONY: help proof chaos verify test test-unit test-integration test-evals \
-        mutation verify-full lint typecheck quickstart wheel clean \
+        mutation verify-full lint typecheck wheel clean \
         verify-boundary doctor
 
 help:
@@ -30,7 +30,6 @@ help:
 	@echo "test-evals  quality/evaluation suites"
 	@echo "lint        ruff"
 	@echo "typecheck   mypy"
-	@echo "quickstart  run the documented example"
 	@echo "wheel       build the wheel"
 	@echo ""
 	@echo "Adopter deployment (about your setup, not this library):"
@@ -97,9 +96,6 @@ lint:
 
 typecheck:
 	$(PYTHON) -m mypy
-
-quickstart:
-	$(PYTHON) docs/examples/quickstart.py
 
 wheel:
 	$(PYTHON) -m build --wheel

@@ -94,7 +94,7 @@ ignore = [
 # satisfy the shared interface.
 "tests/*" = ["ARG001", "ARG002", "ARG005", "SIM117"]
 "src/agent_action_gateway/integrations/adapters/base.py" = ["ARG002"]
-"src/agent_action_gateway/integrations/adapters/mock.py" = ["ARG002"]
+"src/agent_action_gateway/proofs/fakes.py" = ["ARG002"]
 "src/agent_action_gateway/eval/judge.py" = ["ARG002"]
 "src/agent_action_gateway/policy/stop_rules.py" = ["ARG002"]
 "src/agent_action_gateway/integrations/gateway.py" = ["ARG002"]
@@ -103,7 +103,6 @@ ignore = [
 # Deliberate re-exports kept reachable for backwards compatibility; only the
 # names in __all__ are advertised.
 "src/agent_action_gateway/__init__.py" = ["F401"]
-"docs/examples/*" = ["ARG001"]
 
 [tool.mypy]
 python_version = "3.11"

@@ -16,7 +16,7 @@ def test_module_cli_exposes_packaging_commands() -> None:
         check=True,
     )
     assert "check" in result.stdout
-    assert "run" in result.stdout
+    assert "gateway" in result.stdout
     assert "gate" in result.stdout
     assert "wall" in result.stdout
     # Framework self-verification is not part of the user CLI.

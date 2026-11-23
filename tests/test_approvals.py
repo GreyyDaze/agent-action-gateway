@@ -3,9 +3,9 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from agent_action_gateway.integrations.adapters.mock import MockPaymentProvider
 from agent_action_gateway.policy.locks import ApprovalStore, RiskRegistry
 from agent_action_gateway.policy.safety import SafetyBlockedError, check_action
+from agent_action_gateway.proofs.fakes import MockPaymentProvider
 from agent_action_gateway.runtime.orchestrator import dispatch_external_action
 from agent_action_gateway.storage.traces import TraceStore
 
