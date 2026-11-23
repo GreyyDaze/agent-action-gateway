@@ -83,6 +83,7 @@ class ProxyToGatewayProcessTest(unittest.TestCase):
                 "header": "Authorization",
             }],
             "allowed_hosts": [HOST],
+            "private_hosts": [HOST],
             "routes": [
                 {"path": "/status", "upstream": base + "/status", "action": "status",
                  "risk": "read", "host": HOST, "environment": "prod"},

@@ -289,6 +289,10 @@ def _parse_server(name: str, entry: Any) -> ServerConfig:
     )
 
 
+def _is_web_url(value: str) -> bool:
+    return value.startswith(("http://", "https://"))
+
+
 def _parse_oauth(raw: Any, where: str, remote: bool, headers: Mapping[str, Any]) -> dict[str, str]:
     """Check an `oauth` block. Two flows: client credentials (no person involved)
     and authorization code with PKCE (a person signs in once with `mcp-login`)."""
@@ -301,11 +305,11 @@ def _parse_oauth(raw: Any, where: str, remote: bool, headers: Mapping[str, Any])
     flow = str(raw.get("flow", "client_credentials"))
     if flow not in ("client_credentials", "authorization_code"):
         raise ConfigError(f"{where}: oauth 'flow' must be client_credentials or authorization_code")
-    required = ["token_url", "client_id"]
+    # With the sign-in flow, the endpoints and the client may be left out: `mcp-login`
+    # finds them from the server and registers a client by itself.
+    required = ["token_file"]
     if flow == "client_credentials":
-        required.append("client_secret")
-    else:
-        required += ["authorization_url", "token_file"]
+        required = ["token_url", "client_id", "client_secret"]
     missing = [k for k in required if not raw.get(k)]
     if missing:
         raise ConfigError(f"{where}: 'oauth' needs {', '.join(missing)}")
@@ -316,7 +320,7 @@ def _parse_oauth(raw: Any, where: str, remote: bool, headers: Mapping[str, Any])
     settings = {k: _expand(str(raw[k]), where) for k in keys if raw.get(k)}
     settings["flow"] = flow
     for key in ("token_url", "authorization_url"):
-        if key in settings and not settings[key].startswith(("http://", "https://")):
+        if key in settings and not _is_web_url(settings[key]):
             raise ConfigError(f"{where}: oauth '{key}' must start with http:// or https://")
     if "token_file" in settings:
         settings["token_file"] = str(Path(settings["token_file"]).expanduser())
@@ -734,6 +738,9 @@ class HttpDownstream:
                 f"{self.name}: not signed in. Run: agent-gateway mcp-login "
                 f"--config <your config> --server {self.name}"
             )
+        for key in ("token_url", "client_id", "client_secret"):
+            if tokens.get(key) and not self._oauth.get(key):
+                self._oauth[key] = str(tokens[key])  # found by `mcp-login`
         remaining = float(tokens.get("expires_at", 0)) - time.time()
         if remaining > 30 and not self._force_refresh:
             return str(tokens["access_token"]), remaining
@@ -754,6 +761,7 @@ class HttpDownstream:
         self._force_refresh = False
         lifetime = float(body.get("expires_in", 300))
         write_token_file(path, {
+            **{k: v for k, v in tokens.items() if k in _KEPT_TOKEN_FIELDS},
             "access_token": str(body["access_token"]),
             # A server may rotate the refresh token; if it did not, keep ours.
             "refresh_token": str(body.get("refresh_token", refresh)),
@@ -930,8 +938,124 @@ def write_token_file(path: Path, tokens: Mapping[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+_KEPT_TOKEN_FIELDS = ("token_url", "client_id", "client_secret")
+
+
 class SignInError(Exception):
     """The sign-in did not finish. The message says why and is safe to print."""
+
+
+def _get_json(url: str, timeout: float, *, data: bytes | None = None) -> Any:
+    """Fetch (or post) JSON from a discovery address. Returns None when not found."""
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method="POST" if data is not None else "GET",
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+    )
+    try:
+        # Addresses are checked by `_web_origin` before this is called.
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            return json.loads(response.read())
+    except urllib.error.HTTPError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise SignInError(f"could not read {_origin(url)} ({type(exc).__name__})") from exc
+
+
+def _origin(url: str) -> str:
+    parts = urllib.parse.urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _trusted_address(url: str, what: str) -> str:
+    """A discovered address must be https, or http only to this machine."""
+    parts = urllib.parse.urlsplit(url)
+    local = (parts.hostname or "") in ("localhost", "127.0.0.1", "::1")
+    if parts.scheme == "https" or (parts.scheme == "http" and local):
+        return url
+    raise SignInError(f"the server gave an unsafe {what} address ({_origin(url)}); not using it")
+
+
+def discover_oauth(server_url: str, timeout: float = 30.0) -> dict[str, str]:
+    """Find a remote server's sign-in endpoints, the way the MCP spec describes.
+
+    1. Ask the server something without a token. A 401 may name its metadata
+       (RFC 9728 `resource_metadata`); otherwise try the well-known address.
+    2. That metadata names the authorization server. Read its metadata
+       (RFC 8414, then OpenID Connect) for the authorize, token and registration
+       addresses.
+    """
+    origin = _origin(server_url)
+    path = urllib.parse.urlsplit(server_url).path.rstrip("/")
+    metadata_url = None
+    probe = urllib.request.Request(
+        server_url,
+        data=json.dumps({"jsonrpc": "2.0", "id": 0, "method": "ping"}).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+    )
+    try:
+        urllib.request.urlopen(probe, timeout=timeout).close()  # noqa: S310
+    except urllib.error.HTTPError as exc:
+        challenge = exc.headers.get("WWW-Authenticate", "") if exc.code == 401 else ""
+        found = re.search(r'resource_metadata="([^"]+)"', challenge)
+        metadata_url = found.group(1) if found else None
+    except OSError as exc:
+        raise SignInError(f"could not reach {origin} ({type(exc).__name__})") from exc
+    candidates = [metadata_url] if metadata_url else []
+    candidates += [
+        f"{origin}/.well-known/oauth-protected-resource{path}",
+        f"{origin}/.well-known/oauth-protected-resource",
+    ]
+    issuer = origin  # when the server names none, it is its own authorization server
+    for candidate in candidates:
+        resource = _get_json(_trusted_address(candidate, "metadata"), timeout)
+        if isinstance(resource, dict) and resource.get("authorization_servers"):
+            issuer = str(resource["authorization_servers"][0])
+            break
+    issuer = _trusted_address(issuer, "authorization server").rstrip("/")
+    issuer_path = urllib.parse.urlsplit(issuer).path
+    root = _origin(issuer)
+    for address in (
+        f"{root}/.well-known/oauth-authorization-server{issuer_path}",
+        f"{issuer}/.well-known/openid-configuration",
+    ):
+        meta = _get_json(address, timeout)
+        if isinstance(meta, dict) and meta.get("authorization_endpoint") and meta.get("token_endpoint"):
+            methods = meta.get("code_challenge_methods_supported")
+            if methods is not None and "S256" not in methods:
+                raise SignInError("the server does not support PKCE with S256")
+            result = {
+                "authorization_endpoint": _trusted_address(
+                    str(meta["authorization_endpoint"]), "sign-in"
+                ),
+                "token_endpoint": _trusted_address(str(meta["token_endpoint"]), "token"),
+            }
+            if meta.get("registration_endpoint"):
+                result["registration_endpoint"] = _trusted_address(
+                    str(meta["registration_endpoint"]), "registration"
+                )
+            return result
+    raise SignInError(
+        f"could not find the sign-in endpoints of {origin}; "
+        "set oauth 'authorization_url', 'token_url' and 'client_id' yourself"
+    )
+
+
+def register_client(endpoint: str, redirect_uri: str, timeout: float = 30.0) -> tuple[str, str]:
+    """Register this proxy as a public client (RFC 7591). Returns (client_id, secret or "")."""
+    body = json.dumps({
+        "client_name": "agent-action-gateway MCP proxy",
+        "redirect_uris": [redirect_uri],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }).encode()
+    reply = _get_json(endpoint, timeout, data=body)
+    if not isinstance(reply, dict) or not reply.get("client_id"):
+        raise SignInError("the server refused to register a client")
+    return str(reply["client_id"]), str(reply.get("client_secret", ""))
 
 
 def sign_in(
@@ -951,7 +1075,7 @@ def sign_in(
     import secrets
     import webbrowser
 
-    oauth = config.oauth
+    oauth = dict(config.oauth)
     if oauth.get("flow") != "authorization_code":
         raise SignInError(f"{config.name!r} does not use the authorization_code flow")
     verifier = secrets.token_urlsafe(64)
@@ -992,6 +1116,27 @@ def sign_in(
     redirect_uri = f"http://127.0.0.1:{listener.server_address[1]}/callback"
     threading.Thread(target=listener.serve_forever, daemon=True).start()
     try:
+        if not (oauth.get("authorization_url") and oauth.get("token_url")):
+            found = discover_oauth(str(config.url), config.timeout)
+            oauth.setdefault("authorization_url", found["authorization_endpoint"])
+            oauth.setdefault("token_url", found["token_endpoint"])
+            oauth.setdefault("registration_endpoint", found.get("registration_endpoint", ""))
+            say(f"found the sign-in endpoints of {config.name!r} from the server")
+        if not oauth.get("client_id"):
+            if not oauth.get("registration_endpoint"):
+                found = discover_oauth(str(config.url), config.timeout)
+                oauth["registration_endpoint"] = found.get("registration_endpoint", "")
+            if not oauth["registration_endpoint"]:
+                raise SignInError(
+                    f"{config.name!r}: the server does not register clients by itself; "
+                    "set oauth 'client_id' (and 'client_secret' if it has one)"
+                )
+            oauth["client_id"], registered_secret = register_client(
+                oauth["registration_endpoint"], redirect_uri, config.timeout
+            )
+            if registered_secret:
+                oauth["client_secret"] = registered_secret
+            say(f"registered {config.name!r} as a client of the server")
         query = {
             "response_type": "code",
             "client_id": oauth["client_id"],
@@ -1023,17 +1168,23 @@ def sign_in(
     }
     if oauth.get("client_secret"):
         form["client_secret"] = oauth["client_secret"]
-    downstream = HttpDownstream.from_config(config)
+    downstream = HttpDownstream(
+        config.name, str(config.url), config.headers, config.timeout, oauth
+    )
     try:
         body = downstream._token_request(form)
     except DownstreamError as exc:
         raise SignInError(str(exc)) from exc
     path = Path(oauth["token_file"])
-    write_token_file(path, {
+    saved = {
         "access_token": str(body["access_token"]),
         "refresh_token": str(body.get("refresh_token", "")),
         "expires_at": time.time() + float(body.get("expires_in", 300)),
-    })
+    }
+    for key in _KEPT_TOKEN_FIELDS:  # the proxy needs these to refresh later
+        if oauth.get(key) and not config.oauth.get(key):
+            saved[key] = str(oauth[key])
+    write_token_file(path, saved)
     return path
 
 

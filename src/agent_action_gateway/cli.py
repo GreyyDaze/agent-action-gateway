@@ -268,6 +268,7 @@ def load_route_policy(path: str) -> GatewayPolicy:
         policy.configure_credentials(
             rules,
             allowed_hosts=allowed_hosts,
+            private_hosts=[str(h) for h in document.get("private_hosts", [])],
             enforce_policy=bool(document.get("enforce_policy", False)),
         )
 

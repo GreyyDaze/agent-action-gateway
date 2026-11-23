@@ -598,6 +598,7 @@ class FakeHttpServer:
         fail_calls: int = 0,
         oauth: bool = False,
         stream: bool = False,
+        discovery: bool = False,
     ) -> None:
         import http.server
         import queue
@@ -623,6 +624,8 @@ class FakeHttpServer:
         self.stream_open = threading.Event()
         self.stopping = threading.Event()
         self.extra_tools: list[dict] = []
+        self.discovery = discovery
+        self.registrations: list[dict] = []
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *args) -> None:
@@ -631,6 +634,29 @@ class FakeHttpServer:
             def do_GET(self) -> None:
                 import urllib.parse
 
+                if self.path.startswith("/.well-known/") and outer.discovery:
+                    base = outer.url.replace("/mcp", "")
+                    if "protected-resource" in self.path:
+                        doc = {"resource": outer.url, "authorization_servers": [base]}
+                    elif "oauth-authorization-server" in self.path:
+                        doc = {
+                            "issuer": base,
+                            "authorization_endpoint": base + "/authorize",
+                            "token_endpoint": base + "/token",
+                            "registration_endpoint": base + "/register",
+                            "code_challenge_methods_supported": ["S256"],
+                        }
+                    else:
+                        self.send_response(404)
+                        self.end_headers()
+                        return
+                    data = json.dumps(doc).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 if self.path.startswith("/authorize"):
                     query = {k: v[0] for k, v in urllib.parse.parse_qs(
                         urllib.parse.urlparse(self.path).query).items()}
@@ -669,6 +695,16 @@ class FakeHttpServer:
             def do_POST(self) -> None:
                 import urllib.parse
 
+                if self.path.endswith("/register") and outer.discovery:
+                    registration = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                    outer.registrations.append(registration)
+                    data = json.dumps({"client_id": "dyn-1"}).encode()
+                    self.send_response(201)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 if self.path.endswith("/token"):
                     raw = self.rfile.read(int(self.headers["Content-Length"])).decode()
                     form = {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
@@ -714,6 +750,13 @@ class FakeHttpServer:
                     return
                 if outer.oauth and self.headers.get("Authorization") != f"Bearer {outer.valid_token}":
                     self.send_response(401)
+                    if outer.discovery:
+                        self.send_header(
+                            "WWW-Authenticate",
+                            'Bearer resource_metadata="'
+                            + outer.url.replace("/mcp", "")
+                            + '/.well-known/oauth-protected-resource"',
+                        )
                     self.end_headers()
                     return
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -992,6 +1035,51 @@ class BrowserSignInTest(unittest.TestCase):
         self.addCleanup(proxy.close)
         return proxy
 
+    def test_endpoints_and_client_are_found_from_the_server(self) -> None:
+        self.fake.stop()
+        self.fake = FakeHttpServer(oauth=True, discovery=True)
+        self.addCleanup(self.fake.stop)
+        self.server = ServerConfig(
+            name="remote",
+            url=self.fake.url,
+            oauth={"flow": "authorization_code", "token_file": str(self.token_file)},
+        )
+        saved = json.loads(self.sign_in().read_text())
+        self.assertEqual(saved["client_id"], "dyn-1")
+        self.assertTrue(saved["token_url"].endswith("/token"))
+        registration = self.fake.registrations[0]
+        self.assertEqual(registration["token_endpoint_auth_method"], "none")
+        self.assertTrue(registration["redirect_uris"][0].startswith("http://127.0.0.1:"))
+        # The proxy can use and refresh the sign-in with nothing else configured.
+        proxy = self.proxy()
+        proxy.call_tool("remote__list_items", {})
+        self.fake.token_lifetime = 3600
+        self.fake.valid_token = None  # the server forgets the token: it must refresh
+        proxy.close()
+        again = self.proxy()
+        again.call_tool("remote__list_items", {})
+        refreshed = [f for f in self.fake.token_forms if f["grant_type"] == "refresh_token"]
+        self.assertEqual(refreshed[0]["client_id"], "dyn-1")
+        self.assertIn("client_id", json.loads(self.token_file.read_text()))
+
+    def test_server_without_metadata_needs_the_endpoints_by_hand(self) -> None:
+        self.server = ServerConfig(
+            name="remote",
+            url=self.fake.url,
+            oauth={"flow": "authorization_code", "token_file": str(self.token_file)},
+        )
+        with self.assertRaises(SignInError) as caught:
+            self.sign_in()
+        self.assertIn("could not find the sign-in endpoints", str(caught.exception))
+
+    def test_unsafe_discovered_address_is_refused(self) -> None:
+        from agent_action_gateway.integrations.mcp_proxy import _trusted_address
+
+        with self.assertRaises(SignInError):
+            _trusted_address("http://auth.example.com/token", "token")
+        _trusted_address("https://auth.example.com/token", "token")
+        _trusted_address("http://127.0.0.1:9/token", "token")
+
     def test_signing_in_saves_the_tokens_readable_by_the_owner_only(self) -> None:
         import os
 
@@ -1142,7 +1230,11 @@ class ConfigRemoteTest(unittest.TestCase):
         oauth = config.servers[0].oauth
         self.assertEqual(oauth["flow"], "authorization_code")
         self.assertNotIn("~", oauth["token_file"])  # expanded
-        for drop in ("authorization_url", "token_file", "client_id"):
+        # The endpoints and the client may be left out: `mcp-login` finds them.
+        for drop in ("authorization_url", "client_id"):
+            kept = {k: v for k, v in good["oauth"].items() if k != drop}
+            parse_proxy_config({"servers": {"r": {**good, "oauth": kept}}})
+        for drop in ("token_file",):
             bad = {**good, "oauth": {k: v for k, v in good["oauth"].items() if k != drop}}
             with self.subTest(missing=drop), self.assertRaises(ConfigError):
                 parse_proxy_config({"servers": {"r": bad}})

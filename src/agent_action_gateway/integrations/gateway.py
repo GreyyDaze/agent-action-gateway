@@ -13,6 +13,7 @@ registered is refused, never forwarded.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import secrets
@@ -21,7 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -30,7 +31,13 @@ from agent_action_gateway.credential.credentials import (
     CredentialRule,
     PlaceholderVault,
 )
-from agent_action_gateway.credential.egress import EgressDenied, EgressPolicy
+from agent_action_gateway.credential.egress import (
+    EgressDenied,
+    EgressPolicy,
+    always_forbidden_ip,
+    forbidden_ip,
+    resolve_addresses,
+)
 from agent_action_gateway.engine.enforcement import Decision, EnforcementContext
 from agent_action_gateway.guards.redaction import redact
 from agent_action_gateway.policy.fuses import FuseBudget, FuseController, FuseLimits
@@ -158,6 +165,7 @@ class GatewayPolicy:
         allowed_hosts: frozenset[str] | None = None,
         audit: Any = None,
         dns: Any = None,
+        private_hosts: Iterable[str] = (),
         inject_headers: bool = True,
         enforce_policy: bool = False,
     ) -> None:
@@ -192,7 +200,12 @@ class GatewayPolicy:
         )
         self.allowed_hosts = hosts
         self.egress = EgressPolicy(
-            self.vault, hosts, audit=audit, dns=dns, inject_headers=inject_headers
+            self.vault,
+            hosts,
+            audit=audit,
+            dns=dns or resolve_addresses,
+            inject_headers=inject_headers,
+            private_hosts=private_hosts,
         )
         self.enforcement_enabled = enforce_policy
 
@@ -243,7 +256,7 @@ class SafetyGateway:
             self.registry.register(route.action, route.risk)
         # Load virtual keys from persistent store
         self._load_virtual_keys()
-        self._transport = transport or _forward
+        self._transport = transport or self._guarded_forward
         self._step = 0
 
     def _load_virtual_keys(self) -> None:
@@ -402,6 +415,18 @@ class SafetyGateway:
         status, body = self._transport(route.upstream, payload, headers)
         return GatewayResult(status, body)
 
+    def _guarded_forward(
+        self, upstream: str, payload: Mapping[str, Any], headers: Mapping[str, str]
+    ) -> tuple[int, Mapping[str, Any]]:
+        """The real transport. With credential custody on, it also refuses to
+        connect to a private address unless the operator listed that host."""
+        egress = self.policy.egress
+        if egress is None:
+            return _forward(upstream, payload, headers)
+        return _forward(
+            upstream, payload, headers, opener=_guarding_opener(egress.is_private_host)
+        )
+
     def _authorize(
         self, route: Route, arguments: dict[str, Any], key: str, approval_id: str | None
     ) -> Decision:
@@ -439,8 +464,48 @@ class SafetyGateway:
         )
 
 
+def _checked(connection: Any, allow_private: Any) -> None:
+    """After connecting, look at the address we really reached.
+
+    A name can point somewhere safe when it is checked and somewhere else when it
+    is dialled (DNS rebinding). The address of the open connection cannot lie.
+    """
+    peer = str(connection.sock.getpeername()[0])
+    host = str(connection.host)
+    blocked = always_forbidden_ip(peer) or (forbidden_ip(peer) and not allow_private(host))
+    if blocked:
+        connection.close()
+        raise OSError("connected to a forbidden address")
+
+
+def _guarding_opener(allow_private: Any) -> urllib.request.OpenerDirector:
+    class Plain(http.client.HTTPConnection):
+        def connect(self) -> None:
+            super().connect()
+            _checked(self, allow_private)
+
+    class Secure(http.client.HTTPSConnection):
+        def connect(self) -> None:
+            super().connect()
+            _checked(self, allow_private)
+
+    class PlainHandler(urllib.request.HTTPHandler):
+        def http_open(self, req: Any) -> Any:
+            return self.do_open(Plain, req)
+
+    class SecureHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req: Any) -> Any:
+            return self.do_open(Secure, req)
+
+    return urllib.request.build_opener(PlainHandler, SecureHandler)
+
+
 def _forward(
-    upstream: str, payload: Mapping[str, Any], headers: Mapping[str, str]
+    upstream: str,
+    payload: Mapping[str, Any],
+    headers: Mapping[str, str],
+    *,
+    opener: urllib.request.OpenerDirector | None = None,
 ) -> tuple[int, Mapping[str, Any]]:
     request = urllib.request.Request(
         upstream,
@@ -449,7 +514,7 @@ def _forward(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with (opener.open if opener else urllib.request.urlopen)(request, timeout=20) as response:
             raw = response.read()
             status = int(response.status)
     except urllib.error.HTTPError as exc:

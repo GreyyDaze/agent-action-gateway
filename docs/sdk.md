@@ -311,8 +311,9 @@ Cursor use works as it is:
   server rejects it (once). The secret is never printed or kept in an error.
 - **Browser sign-in.** For a server that needs a person to sign in once (OAuth
   authorization code with PKCE), use `"flow": "authorization_code"` with the
-  server's `authorization_url`, `token_url`, `client_id` and a `token_file`
-  (`client_secret` and `redirect_port` are optional):
+  a `token_file`, and the server's `authorization_url`, `token_url` and `client_id`
+  (or leave those three out, see below; `client_secret` and `redirect_port` are
+  optional):
 
   ```bash
   agent-gateway mcp-login --config servers.json --server tickets
@@ -322,8 +323,13 @@ Cursor use works as it is:
   tokens in `token_file` (mode 0600; a file others can read is refused). The proxy
   then uses them and refreshes them when they expire, or once if the server rejects
   them. If there is no sign-in, or it cannot be refreshed, the proxy says to run
-  `mcp-login`. You give the endpoints yourself: finding them from the server and
-  registering a client automatically is not supported.
+  `mcp-login`. You can leave out `authorization_url`, `token_url` and `client_id`:
+  `mcp-login` then finds the endpoints from the server (RFC 9728 and RFC 8414, as the
+  MCP spec describes) and, if the server allows it, registers a client by itself
+  (RFC 7591). It saves what it found in the token file, so the proxy can refresh the
+  sign-in later. It only accepts discovered addresses that are `https` (or `http`
+  to this machine). If a server offers neither, `mcp-login` says so and you give the
+  values by hand.
 - **Sessions.** If a remote server forgets the proxy's session (HTTP 404), the
   proxy starts a new one and sends the same message again. That is safe because a
   server that does not know the session has not acted on the message.

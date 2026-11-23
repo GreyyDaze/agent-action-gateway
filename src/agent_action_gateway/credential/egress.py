@@ -43,6 +43,9 @@ _FORBIDDEN_NETWORKS = tuple(
     )
 )
 _FORBIDDEN_HOSTNAMES = frozenset({"localhost", "metadata", "metadata.google.internal"})
+# Never reachable, not even for a host the operator listed as private: cloud
+# metadata and the "this network" range.
+_ALWAYS_FORBIDDEN = tuple(ipaddress.ip_network(c) for c in ("169.254.0.0/16", "0.0.0.0/8"))
 
 
 class EgressDenied(RuntimeError):
@@ -59,6 +62,24 @@ def forbidden_ip(address: str) -> bool:
     except ValueError:
         return False
     return any(ip in network for network in _FORBIDDEN_NETWORKS)
+
+
+def always_forbidden_ip(address: str) -> bool:
+    """Whether an address is off limits even for a host the operator called private."""
+    try:
+        ip = ipaddress.ip_address(address.strip().strip("[]"))
+    except ValueError:
+        return False
+    return any(ip in network for network in _ALWAYS_FORBIDDEN)
+
+
+def resolve_addresses(host: str) -> list[str]:
+    """Every address a name points to now. An unknown name gives an empty list:
+    nothing can connect to it, so there is nothing to block."""
+    try:
+        return sorted({str(info[4][0]) for info in socket.getaddrinfo(host, None)})
+    except (OSError, UnicodeError):
+        return []
 
 
 def safe_host(host: str, *, dns: Callable[[str], list[str]] | None = None) -> bool:
@@ -109,8 +130,13 @@ class EgressPolicy:
         audit: Callable[[Mapping[str, Any]], None] | None = None,
         dns: Callable[[str], list[str]] | None = None,
         inject_headers: bool = True,
+        private_hosts: Iterable[str] = (),
     ) -> None:
         self.vault = vault
+        #: Hostnames the operator says point at a private network on purpose
+        #: (an internal service). They skip the private-address check, never the
+        #: metadata one.
+        self.private_hosts = frozenset(h.strip().lower().rstrip(".") for h in private_hosts)
         self.allowed_hosts = allowed_hosts or frozenset()
         self.audit = audit
         self.dns = dns
@@ -128,6 +154,19 @@ class EgressPolicy:
         target = _normalise_host(host)
         return target in {_normalise_host(h) for h in self.allowed_hosts}
 
+    def is_private_host(self, host: str) -> bool:
+        return host.strip().lower().rstrip(".") in self.private_hosts
+
+    def _destination_ok(self, host: str) -> bool:
+        """The name is not forbidden and, where we can look it up, neither is any address."""
+        if not self.is_private_host(host):
+            return safe_host(host, dns=self.dns)
+        lowered = host.strip().lower().rstrip(".")
+        if lowered in {"metadata", "metadata.google.internal"} or always_forbidden_ip(lowered):
+            return False
+        resolver = self.dns or resolve_addresses
+        return not any(always_forbidden_ip(a) for a in resolver(host))
+
     def decide(
         self,
         host: str,
@@ -138,7 +177,7 @@ class EgressPolicy:
         """Return the decision without raising. Always audited, never logs a secret."""
         headers = dict(headers or {})
         outcome: EgressDecision
-        if not safe_host(host, dns=self.dns):
+        if not self._destination_ok(host):
             outcome = EgressDecision(False, host, "forbidden destination")
         elif not self._host_allowed(host):
             outcome = EgressDecision(False, host, "host not in allow-list")
@@ -170,4 +209,12 @@ class EgressPolicy:
         return decision.headers or {}
 
 
-__all__ = ["EgressDecision", "EgressDenied", "EgressPolicy", "forbidden_ip", "safe_host"]
+__all__ = [
+    "EgressDecision",
+    "EgressDenied",
+    "EgressPolicy",
+    "always_forbidden_ip",
+    "forbidden_ip",
+    "resolve_addresses",
+    "safe_host",
+]

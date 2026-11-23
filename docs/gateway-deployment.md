@@ -191,7 +191,13 @@ adds the real credential and makes the call.
   unless it sets `enforce_policy: true`. Otherwise each destructive call would need
   an approval in the proxy and another in the gateway.
 - A route in that mode must point at a hostname the gateway accepts: it refuses
-  `localhost` and literal private addresses as upstreams.
+  `localhost` and literal private addresses as upstreams. It also looks the name up,
+  and refuses it if it points at a loopback, private or cloud-metadata address. After
+  it connects, it checks the address it really reached, so a name that changes its
+  answer between the check and the call (DNS rebinding) is stopped too. If a route
+  must reach an internal service on purpose, list its hostname in `private_hosts` in
+  the route file. That skips the private-address check for that name only. The
+  cloud-metadata range (`169.254.0.0/16`) stays blocked.
 - `/mcp` is reserved: a route cannot use that path.
 
 ### Unix socket mode (Linux)

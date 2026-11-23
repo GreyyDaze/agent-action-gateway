@@ -100,3 +100,60 @@ class EgressGatewayTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrivateDestinationTest(unittest.TestCase):
+    """A name that points at a private address is refused, however it is spelled."""
+
+    def _policy(self, **kwargs):
+        from agent_action_gateway.credential.credentials import CredentialRule, PlaceholderVault
+        from agent_action_gateway.credential.egress import EgressPolicy
+
+        rule = CredentialRule("K", "s3cret", frozenset({"api.example.com"}), "Authorization")
+        return EgressPolicy(
+            PlaceholderVault.from_rules([rule]), frozenset({"api.example.com"}), **kwargs
+        )
+
+    def test_name_resolving_to_loopback_is_refused(self) -> None:
+        policy = self._policy(dns=lambda _h: ["127.0.0.1"])
+        self.assertFalse(policy.decide("api.example.com").allowed)
+
+    def test_operator_can_name_a_private_host(self) -> None:
+        policy = self._policy(dns=lambda _h: ["10.0.0.7"], private_hosts=["api.example.com"])
+        self.assertTrue(policy.decide("api.example.com").allowed)
+
+    def test_private_host_still_cannot_reach_metadata(self) -> None:
+        policy = self._policy(dns=lambda _h: ["169.254.169.254"], private_hosts=["api.example.com"])
+        self.assertFalse(policy.decide("api.example.com").allowed)
+
+    def test_unknown_name_is_left_to_the_connection(self) -> None:
+        from agent_action_gateway.credential.egress import resolve_addresses
+
+        self.assertEqual(resolve_addresses("no-such-host.invalid"), [])
+
+    def test_connection_to_a_private_address_is_closed(self) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        from agent_action_gateway.integrations.gateway import _forward, _guarding_opener
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *args) -> None:
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = f"http://127.0.0.1:{server.server_address[1]}/"
+        status, body = _forward(url, {}, {}, opener=_guarding_opener(lambda _h: False))
+        self.assertEqual(status, 502)
+        self.assertIn("unreachable", body["error"])
+        status, _ = _forward(url, {}, {}, opener=_guarding_opener(lambda _h: True))
+        self.assertEqual(status, 200)
