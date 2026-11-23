@@ -2,8 +2,8 @@
 #
 # The proof and chaos suites verify this library's own behaviour, not an
 # adopter's integration, so they live here rather than in the installed `agent-gateway`
-# CLI. Evidence about the library is published in the README badge and
-# docs/history/release-proof.md; these targets are how a contributor produces it.
+# CLI. Evidence about the library is published in the README badge; these
+# targets are how a contributor produces it.
 #
 # `make` is optional. Every target below is a thin wrapper, so the underlying
 # command works on its own wherever make is unavailable:

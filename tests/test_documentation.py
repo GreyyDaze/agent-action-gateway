@@ -20,8 +20,7 @@ def test_required_documents_exist() -> None:
         "SECURITY.md",
         "docs/sdk.md",
         "docs/architecture.md",
-        "docs/history/release-proof.md",
-        "docs/history/release-handoff.md",
+        "docs/gateway-deployment.md",
     ):
         assert (ROOT / relative).is_file(), relative
 

@@ -291,8 +291,7 @@ nothing is unguarded.
 
 Framework self-verification is **not** a command in the installed CLI, because
 it reports on this library rather than on you. Evidence about the library lives
-in the CI badge above and in `docs/history/release-proof.md`. To regenerate it
-from a source checkout:
+in the CI badge above. To regenerate it from a source checkout:
 
 ~~~bash
 make proof        # or: python -m agent_action_gateway.proofs.proof --jobs 1000
@@ -410,9 +409,7 @@ guarantees and, just as importantly, what it does not.
 
 The current release scope is explicit:
 
-- the 8 deferred edge cases are recorded in `ROADMAP.md`;
-- the 8 🟢 non-goal constraints from the Part 4 triage are recorded there;
-- broader PRD constraints remain authoritative and are not removed by the roadmap.
+- deferred work and explicit non-goals are recorded in `ROADMAP.md`.
 
 This tool does **not** claim:
 
@@ -423,7 +420,7 @@ This tool does **not** claim:
 - ownership of the external agent's LLM calls;
 - a large enterprise observability platform.
 
-Deferred work is tracked in `ROADMAP.md`. The PRD and build plan remain the source of truth for requirements and development history.
+Deferred work is tracked in `ROADMAP.md`.
 
 ## Dashboard
 
@@ -472,7 +469,7 @@ The release acceptance target is:
 fresh install -> full suite green -> all proof numbers reproducible
 ~~~
 
-The final human acceptance step is a cold README walkthrough in a clean machine or sandbox. See `docs/history/release-proof.md`.
+The final human acceptance step is a cold README walkthrough in a clean machine or sandbox.
 
 ## Framework evidence
 
@@ -491,7 +488,7 @@ The final human acceptance step is a cold README walkthrough in a clean machine 
 
 The exact proof output belongs to the verification commands. Do not treat a green unit test as a stronger claim than the proof it actually runs.
 
-The complete recorded evidence is in `docs/history/release-proof.md`.
+Regenerate every number above with `make proof`.
 
 ## Architecture
 

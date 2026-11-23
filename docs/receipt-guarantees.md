@@ -1,8 +1,8 @@
-# Phase 1 Receipt Guarantees
+# Receipt Guarantees
 
 ## Production path
 
-Phase 1 uses SQLite in WAL mode as the production persistence stack for the current self-hosted, single-node product. The storage boundary is durable and transactional. A future multi-node deployment can add PostgreSQL without changing receipt invariants.
+Receipts are stored in SQLite (WAL mode) on a single host, or in PostgreSQL across hosts. The storage boundary is durable and transactional, and both backends keep the same receipt invariants.
 
 The external action boundary is HTTP. The provider receives the same intent key used by the receipt and exposes a verification query for recovery.
 
@@ -42,7 +42,7 @@ We do not claim exactly-once execution when the external system cannot support o
 | Reversible action | Compensate if the provider confirms the original action |
 | Irreversible action | Manual resolution queue |
 
-Phase 2 adds the destructive-action approval lock. Phase 1 only makes the side-effect lifecycle durable and recoverable.
+Approval for destructive actions is a separate lock. Receipts only make the side-effect lifecycle durable and recoverable.
 
 ## Replay honesty
 

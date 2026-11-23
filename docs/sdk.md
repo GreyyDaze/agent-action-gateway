@@ -169,7 +169,7 @@ compares a candidate against a recorded baseline.
 
 The external agent may use any model provider. Its provider is outside this project's control.
 
-The evaluation path may use the supported hosted judge providers defined by the PRD. Provider identity and model metadata are recorded without recording credentials.
+The evaluation path may use the supported hosted judge providers. Provider identity and model metadata are recorded without recording credentials.
 
 Evaluation/proof runs are pinned to their configured provider/model. They must not silently change provider during a comparison.
 
@@ -239,7 +239,6 @@ outside world:
 None of this needs configuration. The defaults are the safe side: an action
 whose risk class was never declared is treated as destructive.
 
-`docs/PRD.md` is the normative contract.
 
 ## Current limitations
 
@@ -429,5 +428,4 @@ agent-gateway check --db data/runtime.db
 ```
 
 `agent-gateway check` reports on your own integration. Evidence about this library is
-published in the CI badge and in `docs/history/release-proof.md`; regenerate it
-from a source checkout with `make proof`.
+published in the CI badge; regenerate it from a source checkout with `make proof`.

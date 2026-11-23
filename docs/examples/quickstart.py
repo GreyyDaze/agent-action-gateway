@@ -5,7 +5,7 @@ thing that matters: an agent that tries to issue an unapproved refund is
 stopped, and the refusal is recorded.
 
 Tools the agent uses are obtained from a session. It never holds the raw
-function, so there is nothing to bypass. See docs/feature-enforcement-integration.md.
+function, so there is nothing to bypass. See docs/sdk.md.
 """
 
 from __future__ import annotations

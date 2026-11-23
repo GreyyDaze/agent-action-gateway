@@ -1,7 +1,6 @@
 # Architecture (current)
 
-This is the source of truth for the package layout. Older plans and handoffs
-live in `docs/history/` and are kept for provenance only.
+This is the source of truth for the package layout.
 
 ## Layers and dependency direction
 
@@ -39,14 +38,7 @@ custody and egress. `integrations/` are thin adapters. `storage/` is the leaf.
 | `storage/` | SQLite/Postgres persistence (leaf) |
 | `observability/` | dashboard, wiring check |
 | `config/` | defaults and the single config loader |
-| `proofs/` | verification scripts, not shipped in the wheel |
-
-## Compatibility
-
-Old import paths (`core/`, `evidence/`, `interface/`, `providers/`,
-`evaluation/`, and the old storage submodules) remain as thin re-export shims.
-Existing code and tests keep working; new code imports from the canonical
-packages above. The console scripts (`agent-gateway`, `gate`) point at the new paths.
+| `proofs/` | verification scripts about this library; not exposed in the CLI |
 
 ## Configuration
 
