@@ -52,12 +52,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, TextIO
 
 from agent_action_gateway.guards.redaction import redact
+from agent_action_gateway.guards.sql import is_read_only_sql
 from agent_action_gateway.policy.fuses import FuseLimits
 from agent_action_gateway.runtime.records import TraceEvent
 from agent_action_gateway.runtime.session import VALID_ENVIRONMENTS, SafetySession
@@ -140,10 +141,87 @@ class ServerConfig:
     timeout: float = 30.0
 
 
+#: Built-in checkers a rule can name with `check`: each says whether one
+#: argument value only reads.
+CHECKERS: dict[str, Callable[[str], bool]] = {"sql": is_read_only_sql}
+
+
 @dataclass(frozen=True)
 class Rule:
     match: str
     risk: str
+    #: For a tool whose risk depends on what it is asked to do (one `execute_sql`
+    #: or `run_command` tool for everything): the argument to look at. The risk
+    #: is then decided on each call: read when that value passes `check` or
+    #: fully matches one of `read_if`, destructive otherwise.
+    argument: str | None = None
+    check: str | None = None
+    read_if: tuple[str, ...] = ()
+    patterns: tuple[re.Pattern[str], ...] = field(default=(), compare=False, repr=False)
+
+    @property
+    def per_call(self) -> bool:
+        return self.argument is not None
+
+    def reads(self, arguments: Mapping[str, Any]) -> bool:
+        """True when this call only reads, by this rule. Anything unclear is not."""
+        if self.argument is None:
+            return False
+        value = arguments.get(self.argument)
+        if not isinstance(value, str):
+            return False
+        if self.check is not None:
+            return CHECKERS[self.check](value)
+        return any(p.fullmatch(value) for p in self.patterns)
+
+
+def _parse_rule(item: Any) -> Rule:
+    if not isinstance(item, Mapping) or "match" not in item:
+        raise ConfigError("each rule needs 'match', and 'risk' or 'argument'")
+    match = str(item["match"])
+    if "argument" not in item:
+        for key in ("check", "read_if"):
+            if key in item:
+                raise ConfigError(f"rule {match!r}: '{key}' needs 'argument'")
+        if "risk" not in item:
+            raise ConfigError(f"rule {match!r}: give 'risk', or 'argument' with a check")
+        risk = str(item["risk"])
+        if risk not in ("read", "write", "destructive"):
+            raise ConfigError(f"rule {match!r}: risk must be read, write or destructive")
+        return Rule(match, risk)
+
+    argument = item["argument"]
+    if not isinstance(argument, str) or not argument:
+        raise ConfigError(f"rule {match!r}: 'argument' must name one of the tool's arguments")
+    if "risk" in item:
+        raise ConfigError(
+            f"rule {match!r}: give 'risk' or 'argument', not both "
+            "(with 'argument' the risk is decided on each call)"
+        )
+    has_check, has_patterns = "check" in item, "read_if" in item
+    if has_check == has_patterns:
+        raise ConfigError(f"rule {match!r}: give exactly one of 'check' or 'read_if'")
+    if has_check:
+        check = item["check"]
+        if check not in CHECKERS:
+            raise ConfigError(
+                f"rule {match!r}: unknown check {check!r} (known: {', '.join(sorted(CHECKERS))})"
+            )
+        return Rule(match, "destructive", argument, str(check))
+    read_if = item["read_if"]
+    if (
+        not isinstance(read_if, list)
+        or not read_if
+        or not all(isinstance(p, str) and p for p in read_if)
+    ):
+        raise ConfigError(f"rule {match!r}: 'read_if' must be a non-empty list of patterns")
+    compiled = []
+    for pattern in read_if:
+        try:
+            compiled.append(re.compile(pattern))
+        except re.error as exc:
+            raise ConfigError(f"rule {match!r}: bad pattern {pattern!r}: {exc}") from exc
+    return Rule(match, "destructive", argument, None, tuple(read_if), tuple(compiled))
 
 
 @dataclass(frozen=True)
@@ -211,14 +289,7 @@ def parse_proxy_config(raw: Any) -> ProxyConfig:
 
     servers = [_parse_server(str(name), entry) for name, entry in servers_raw.items()]
 
-    rules = []
-    for item in raw.get("rules", ()):
-        if not isinstance(item, Mapping) or "match" not in item or "risk" not in item:
-            raise ConfigError("each rule needs 'match' and 'risk'")
-        risk = str(item["risk"])
-        if risk not in ("read", "write", "destructive"):
-            raise ConfigError(f"rule {item['match']!r}: risk must be read, write or destructive")
-        rules.append(Rule(str(item["match"]), risk))
+    rules = [_parse_rule(item) for item in raw.get("rules", ())]
 
     require = []
     for item in raw.get("require", ()):
@@ -1298,11 +1369,16 @@ class ProxiedTool:
     server: str
     tool: str  # what the real server calls it
     risk: str
-    risk_source: str  # rule | hint | default
+    risk_source: str  # rule | sql | pattern | hint | default
     definition: dict[str, Any]
     guarded: Any
     required: tuple[str, ...] = ()
     digest: str = ""
+    #: For a rule with `argument`: the rule that decides each call, and the
+    #: guard used when the call only reads. `guarded` (destructive) is used for
+    #: everything else.
+    call_rule: Rule | None = None
+    read_guarded: Any = None
 
 
 def classify(
@@ -1311,10 +1387,16 @@ def classify(
     rules: Sequence[Rule],
     trust_hints: bool,
 ) -> tuple[str, str]:
-    """Risk class for one tool, and why. Anything unclear is destructive."""
+    """Risk class for one tool, and why. Anything unclear is destructive.
+
+    A rule with `argument` returns ("destructive", "sql" or "pattern"): each
+    call then decides whether it is a read (see `MCPProxy.call_tool`).
+    """
     for rule in rules:
         if fnmatch.fnmatchcase(name, rule.match):
-            return rule.risk, "rule"
+            if not rule.per_call:
+                return rule.risk, "rule"
+            return rule.risk, rule.check or "pattern"
     hints = annotations or {}
     if trust_hints and hints.get("readOnlyHint") is True and hints.get("destructiveHint") is not True:
         return "read", "hint"
@@ -1395,11 +1477,21 @@ class MCPProxy:
                 guarded = self.session.tool(
                     _never_called, action=name, risk=risk, target_environment=target_env
                 )
+                call_rule = self._call_rule(name)
+                read_guarded = None
+                if call_rule is not None:
+                    # Risk is looked up by action name, so the read path needs
+                    # its own name. It shows in the record as `<tool>:read`.
+                    read_guarded = self.session.tool(
+                        _never_called, action=f"{name}:read", risk="read",
+                        target_environment=target_env,
+                    )
                 public = dict(definition)
                 public["name"] = name
                 tools[name] = ProxiedTool(
                     name, server, real, risk, source, public, guarded,
                     self._required_for(name, definition), digest,
+                    call_rule, read_guarded,
                 )
         self.tools = tools
         self.held = held
@@ -1429,6 +1521,13 @@ class MCPProxy:
             if fnmatch.fnmatchcase(name, entry.match):
                 required.extend(entry.arguments)
         return tuple(dict.fromkeys(required))
+
+    def _call_rule(self, name: str) -> Rule | None:
+        """The rule deciding this tool's risk per call, if the first match is one."""
+        for rule in self.rules:
+            if fnmatch.fnmatchcase(name, rule.match):
+                return rule if rule.per_call else None
+        return None
 
     def describe(self) -> list[tuple[str, str, str]]:
         """(tool, risk, why) for each visible tool, for the start-up summary."""
@@ -1542,12 +1641,6 @@ class MCPProxy:
             if missing:
                 return self._ask(entry, missing)
 
-            approvals = self.session.approvals
-            if approval_id is None and entry.risk != "read":
-                usable = approvals.find_usable(name, args)
-                if usable is not None:
-                    approval_id = usable.approval_id
-
             if not self.downstreams[entry.server].alive():
                 try:
                     self._restart(entry.server)
@@ -1559,6 +1652,20 @@ class MCPProxy:
                         f"tool not available: {name} "
                         f"({self.held.get(name, 'it is gone')}; a person must accept it)"
                     )
+
+            # A rule with `argument`: a call that only reads takes the read
+            # path; every other call keeps the destructive guard and needs
+            # approval for its exact arguments.
+            guarded, risk = entry.guarded, entry.risk
+            if entry.call_rule is not None and entry.call_rule.reads(args):
+                guarded, risk = entry.read_guarded, "read"
+
+            approvals = self.session.approvals
+            if approval_id is None and risk != "read":
+                usable = approvals.find_usable(name, args)
+                if usable is not None:
+                    approval_id = usable.approval_id
+
             downstream = self.downstreams[entry.server]
 
             def call(intent_key: str | None) -> dict[str, Any]:
@@ -1569,7 +1676,7 @@ class MCPProxy:
                 return result
 
             try:
-                outcome = entry.guarded.call_with(
+                outcome = guarded.call_with(
                     args, call, approval_id=approval_id, describe=_result_text
                 )
             except ToolReportedError as exc:

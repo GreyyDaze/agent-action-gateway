@@ -49,7 +49,7 @@ Each row is one check from the diagram, in the same order.
 
 | | Problem | What the checkpoint does |
 |---|---|---|
-| **Control** | The agent guesses a missing input | If you marked the input as required, the run stops and asks a person. |
+| **Control** | The agent guesses a value (which table, which environment) | A required field that is empty stops the run and asks a person. A guess it fills in is not detected, but a risky action shows the person the exact values before it runs (see approval below). |
 | | The agent loops or runs too long | Limits on steps, time and cost stop the run. |
 | | The agent acts in the wrong environment | A tool marked `prod` is refused from a `dev` or `staging` session. |
 | | A risky action runs unseen | It waits until a person approves **that exact action**. The approval works once. |
@@ -87,7 +87,7 @@ What each one checks:
 | Environment | yes | yes | yes |
 | Approval of the exact action | yes | yes | yes, unless the route file has a `credentials` block |
 | Once-only effect | yes | yes | only through the upstream's `Idempotency-Key` |
-| Stop and ask for a missing input | yes | yes, for the arguments a tool requires | no |
+| Stop and ask when a required field is empty | yes | yes, for the arguments a tool requires | no |
 | Key kept from the agent | no | no | yes, run as its own service |
 
 Three things to know:
@@ -98,6 +98,9 @@ Three things to know:
 - **The proxy needs no routes.** It reads each server's tool list. A tool counts
   as read-only only if you say so in a rule, or if its server marks it
   `readOnlyHint` and you trust that server. Every other tool needs an approval.
+  For a tool that does anything (one `execute_sql` or `run_command` tool), a
+  rule can decide on each call from its arguments: plain `SELECT`s run, and
+  everything else waits for approval.
   A tool whose definition later changes is held back until you accept it, and
   edits to the config apply without a restart.
 - **Keeping the key from the agent** works only with the gateway, run as its own

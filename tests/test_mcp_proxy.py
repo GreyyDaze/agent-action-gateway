@@ -42,12 +42,16 @@ class ProxyTestCase(unittest.TestCase):
     timeout = 30.0
     limits: FuseLimits | None = None
     require: tuple = ()
+    #: When set, the fake server lists these tools instead of its own.
+    tool_list: list | None = None
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.log = Path(self._tmp.name) / "effects.log"
         self.tools_file = Path(self._tmp.name) / "tools.json"
+        if self.tool_list is not None:
+            self.tools_file.write_text(json.dumps(self.tool_list))
         self.db = Path(self._tmp.name) / "runtime.db"
         server = ServerConfig(
             name="db",
@@ -200,6 +204,139 @@ class RulesTest(ProxyTestCase):
     def test_a_rule_overrides_the_default(self) -> None:
         result = self.proxy.call_tool("db__delete_item", {"id": "1"})
         self.assertFalse(result["isError"], text(result))
+
+
+class SqlRuleTest(ProxyTestCase):
+    rules = parse_proxy_config(
+        {"servers": {"x": {"command": "c"}}, "rules": [{"match": "db__run_sql", "argument": "sql", "check": "sql"}]}
+    ).rules
+
+    # One tool for reads and writes, as most database MCP servers have.
+    tool_list = [{
+        "name": "run_sql", "description": "run any SQL",
+        "inputSchema": {"type": "object", "properties": {"sql": {"type": "string"}},
+                        "required": ["sql"]},
+    }]
+
+    def test_the_tool_is_listed_as_decided_per_call(self) -> None:
+        info = {name: (risk, why) for name, risk, why in self.proxy.describe()}
+        self.assertEqual(info["db__run_sql"], ("destructive", "sql"))
+
+    def test_a_select_runs_without_approval(self) -> None:
+        result = self.proxy.call_tool("db__run_sql", {"sql": "SELECT * FROM migrations"})
+        self.assertFalse(result["isError"], text(result))
+        self.assertEqual(len(self.effects()), 1)
+        self.assertEqual(self.proxy.session.approvals.pending(), [])
+
+    def test_a_drop_is_held_until_that_exact_statement_is_approved(self) -> None:
+        drop = {"sql": "DROP TABLE users"}
+        blocked = self.proxy.call_tool("db__run_sql", drop)
+        self.assertTrue(blocked["isError"])
+        self.assertIn("approval", text(blocked))
+        self.assertEqual(self.effects(), [])
+
+        self.approve_pending()
+        other = self.proxy.call_tool("db__run_sql", {"sql": "DROP TABLE orders"})
+        self.assertTrue(other["isError"], "the approval was for another statement")
+        self.assertEqual(self.effects(), [])
+
+        allowed = self.proxy.call_tool("db__run_sql", drop)
+        self.assertFalse(allowed["isError"], text(allowed))
+        self.assertEqual([e["args"] for e in self.effects()], [drop])
+
+    def test_a_write_hidden_after_a_read_is_held(self) -> None:
+        result = self.proxy.call_tool("db__run_sql", {"sql": "SELECT 1; DELETE FROM users"})
+        self.assertTrue(result["isError"])
+        self.assertEqual(self.effects(), [])
+
+    def test_the_same_approved_statement_does_not_run_twice(self) -> None:
+        delete = {"sql": "DELETE FROM sessions WHERE expired"}
+        self.proxy.call_tool("db__run_sql", delete)
+        self.approve_pending()
+        first = self.proxy.call_tool("db__run_sql", delete)
+        self.assertFalse(first["isError"], text(first))
+        # The approval is used up, so a repeat asks again; once approved, it is
+        # recognised as already done and does not run a second time.
+        self.assertIn("needs a person's approval", text(self.proxy.call_tool("db__run_sql", delete)))
+        self.approve_pending("bob")
+        again = self.proxy.call_tool("db__run_sql", delete)
+        self.assertIn("already ran", json.dumps(again))
+        self.assertEqual(len(self.effects()), 1)
+
+    def test_a_missing_sql_argument_is_asked_for_not_run(self) -> None:
+        result = self.proxy.call_tool("db__run_sql", {})
+        self.assertTrue(result["isError"])
+        self.assertEqual(self.effects(), [])
+
+
+
+def _rules(*rules: dict) -> tuple:
+    return parse_proxy_config({"servers": {"x": {"command": "c"}}, "rules": list(rules)}).rules
+
+
+class ArgumentRuleConfigTest(unittest.TestCase):
+    def test_bad_rules_are_refused(self) -> None:
+        bad = [
+            {"match": "t", "argument": "sql", "check": "sql", "risk": "read"},
+            {"match": "t", "argument": "", "check": "sql"},
+            {"match": "t", "argument": "sql"},
+            {"match": "t", "argument": "sql", "check": "sql", "read_if": ["x"]},
+            {"match": "t", "argument": "sql", "check": "regex"},
+            {"match": "t", "argument": "cmd", "read_if": []},
+            {"match": "t", "argument": "cmd", "read_if": "ls"},
+            {"match": "t", "argument": "cmd", "read_if": ["ls("]},
+            {"match": "t", "check": "sql"},
+            {"match": "t", "read_if": ["ls"]},
+            {"match": "t"},
+        ]
+        for rule in bad:
+            with self.subTest(rule=rule), self.assertRaises(ConfigError):
+                _rules(rule)
+
+    def test_the_whole_value_must_match_a_pattern(self) -> None:
+        (rule,) = _rules({"match": "t", "argument": "cmd", "read_if": [r"ls( [\w./-]+)*"]})
+        for value in ["ls", "ls -la", "ls /var/log ./x"]:
+            with self.subTest(value=value):
+                self.assertTrue(rule.reads({"cmd": value}))
+        tricks = [
+            "ls; rm -rf /", "ls && rm x", "ls | sh", "ls\nrm x", "ls $(rm x)",
+            "ls `rm x`", "rm x; ls", " ls", "ls > out", "", None, 42, ["ls"],
+        ]
+        for value in tricks:
+            with self.subTest(value=value):
+                self.assertFalse(rule.reads({"cmd": value}))
+        self.assertFalse(rule.reads({}))
+
+    def test_a_loose_pattern_is_the_operators_choice(self) -> None:
+        # Documented limit: the pattern decides. `ls.*` lets a chained command
+        # through, so patterns must exclude ; & | ` $ and new lines.
+        (rule,) = _rules({"match": "t", "argument": "cmd", "read_if": ["ls.*"]})
+        self.assertTrue(rule.reads({"cmd": "ls; rm -rf /"}))
+
+
+class PatternRuleTest(ProxyTestCase):
+    rules = _rules({"match": "db__run_sql", "argument": "sql", "read_if": [r"SELECT \w+ FROM \w+"]})
+    tool_list = SqlRuleTest.tool_list
+
+    def test_the_tool_is_listed_as_decided_per_call(self) -> None:
+        info = {name: (risk, why) for name, risk, why in self.proxy.describe()}
+        self.assertEqual(info["db__run_sql"], ("destructive", "pattern"))
+
+    def test_a_matching_call_runs_and_others_need_approval(self) -> None:
+        ok = self.proxy.call_tool("db__run_sql", {"sql": "SELECT name FROM users"})
+        self.assertFalse(ok["isError"], text(ok))
+        held = self.proxy.call_tool("db__run_sql", {"sql": "SELECT name FROM users; DROP TABLE x"})
+        self.assertIn("needs a person's approval", text(held))
+        self.assertEqual(len(self.effects()), 1)
+
+    def test_a_later_plain_rule_does_not_override_the_first_match(self) -> None:
+        self.assertEqual(
+            classify("db__run_sql", None, _rules(
+                {"match": "db__run_sql", "argument": "sql", "check": "sql"},
+                {"match": "db__*", "risk": "read"},
+            ), True),
+            ("destructive", "sql"),
+        )
 
 
 class UntrustedHintsTest(ProxyTestCase):

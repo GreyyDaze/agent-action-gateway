@@ -84,6 +84,9 @@ for line in sys.stdin:
         elif name == "create_item":
             log({"tool": name, "args": args})
             reply(rid, text(f"created {args.get('name')} id=42 owner=ann@example.com"))
+        elif name == "run_sql":
+            log({"tool": name, "args": args})
+            reply(rid, text(f"ran: {args.get('sql')}"))
         elif name == "fail_tool":
             reply(rid, text("boom", error=True))
         elif name == "hang_tool":

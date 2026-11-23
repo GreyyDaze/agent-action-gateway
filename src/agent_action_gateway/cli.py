@@ -345,6 +345,8 @@ def run_mcp_proxy(args: argparse.Namespace) -> int:
         print(f"  {name:<40} HELD        ({reason})", file=sys.stderr)
     print(
         "Tools marked 'default' need an approval. Add rules to change that. "
+        "Tools marked 'sql' or 'pattern' are decided per call: reads run, anything else "
+        "needs an approval. "
         "The config file is watched: edits apply without a restart.",
         file=sys.stderr,
         flush=True,

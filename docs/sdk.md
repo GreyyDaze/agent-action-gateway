@@ -288,7 +288,8 @@ Cursor use works as it is:
                  "headers": { "Authorization": "Bearer ${TICKETS_TOKEN}" } }
   },
   "rules": [
-    { "match": "db__list_*", "risk": "read" }
+    { "match": "db__list_*", "risk": "read" },
+    { "match": "db__run_sql", "argument": "sql", "check": "sql" }
   ],
   "require": [
     { "match": "db__run_*", "arguments": ["target_database"] }
@@ -344,6 +345,39 @@ Cursor use works as it is:
   tool is `read` only if its server marks it `readOnlyHint` and the server has
   `trust_hints` on (the default). Everything else is destructive and needs an
   approval.
+- **Risk decided per call.** Many servers have one tool that does anything:
+  `execute_sql` in a database server, `run_command` in a shell server. A fixed
+  risk is wrong for it either way: `read` lets a `DROP` through, and
+  `destructive` makes every harmless read wait for a person. A rule with
+  `argument` instead of `risk` looks at that argument on each call. A call is
+  `read` only if the value passes the rule's check; everything else, or anything
+  that is not a string, needs an approval for those exact arguments. Reads are
+  recorded as `<tool>:read`. Give exactly one of:
+
+  - `"check": "sql"`, the built-in SQL checker:
+
+    ```json
+    { "match": "db__execute_sql", "argument": "sql", "check": "sql" }
+    ```
+
+    A call is a read only when every statement starts with `SELECT`, `WITH`,
+    `SHOW`, `EXPLAIN`, `VALUES` or `TABLE`, and nothing in it writes, locks rows
+    or calls a known server function that acts. Comments and strings are ignored,
+    and text it cannot read for sure (an unclosed quote) is not a read. It cannot
+    see inside your own functions: `SELECT my_cleanup()` counts as a read. If that
+    matters, give the database server a user that cannot write. It reads SQL the
+    PostgreSQL way.
+  - `"read_if"`, your own patterns (Python regular expressions). The **whole**
+    value must match one of them:
+
+    ```json
+    { "match": "shell__run", "argument": "command", "read_if": ["ls( [\\w./-]+)*"] }
+    ```
+
+    The pattern is your responsibility. `ls.*` would also let `ls; rm -rf /`
+    through. Allow only the characters you need, and never `;`, `&`, `|`,
+    backticks, `$` or new lines.
+
 - **Pinned definitions.** A server's hint is its own claim, and the MCP
   specification says clients should not trust annotations from servers they do
   not trust. So the first time the proxy sees a server, it pins each tool's full
