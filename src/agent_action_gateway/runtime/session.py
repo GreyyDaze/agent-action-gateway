@@ -363,10 +363,12 @@ class SafetySession:
                 return decision.as_dict()
 
             # The intent key is the idempotency token the receipt was written
-            # under. A wrapped tool must be able to hand it to its provider, or
-            # a crash-recovery replay cannot be recognised as the same action.
+            # under. A tool that accepts it can hand it to its provider, so a
+            # crash-recovery replay is recognised as the same action. A tool
+            # that does not accept it still cannot run twice: the effect claim
+            # blocks the second call either way.
             call_kwargs = dict(kwargs)
-            if decision.intent_key is not None:
+            if decision.intent_key is not None and _accepts_keyword(fn, "intent_key"):
                 call_kwargs.setdefault("intent_key", decision.intent_key)
             if decision.deduplicated:
                 # The effect already landed in an earlier run. The recorded
@@ -536,6 +538,25 @@ def _arguments_from(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, 
     if args:
         payload.setdefault("_args", list(args))
     return payload
+
+
+def _accepts_keyword(fn: Callable[..., Any], name: str) -> bool:
+    """Whether `fn` can be called with `name=` as a keyword argument.
+
+    A callable whose signature cannot be read is assumed to accept it, which
+    keeps the earlier behaviour for builtins and C extensions.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        p.kind is inspect.Parameter.VAR_KEYWORD
+        or (p.name == name and p.kind is not inspect.Parameter.POSITIONAL_ONLY)
+        for p in parameters
+    )
 
 
 def _invoke(fn: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:

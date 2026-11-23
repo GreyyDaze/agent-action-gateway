@@ -181,7 +181,7 @@ agent-gateway gate check --lane push --candidate-version v2 --candidate-file ans
 Deterministic checks run first. An LLM judge is optional, and the gate can
 measure how reliable that judge is before you trust it. A case marked
 `catastrophic` fails the release on its own, whatever the average score is.
-Exit codes: `0` pass, `1` fail, `2` uncertain.
+Exit codes: `0` pass, `1` fail, `3` uncertain (`2` is a usage error).
 
 ## Storage
 
