@@ -286,7 +286,7 @@ class TraceStore(SqliteStore):
             ).fetchone()
 
     def load_clarification_state(self, run_id: str) -> dict[str, Any] | None:
-        """Load persisted Phase 4 clarification state for a run."""
+        """Load persisted clarification state for a run."""
         with self.connection() as connection:
             row = connection.execute(
                 "SELECT attempts, max_attempts, asked_this_turn "
@@ -302,7 +302,7 @@ class TraceStore(SqliteStore):
         }
 
     def save_clarification_state(self, run_id: str, state: Any) -> None:
-        """Persist Phase 4 clarification state atomically for a run."""
+        """Persist clarification state atomically for a run."""
         with self.connection() as connection:
             connection.execute(
                 """
@@ -324,11 +324,11 @@ class TraceStore(SqliteStore):
 
     def append_receipt(self, run_id: str, line: str) -> None:
         """Append a legacy audit receipt without reusing a unique intent key."""
-        intent_key = f"phase0:{run_id}:{uuid4()}"
+        intent_key = f"audit:{run_id}:{uuid4()}"
         with self.connection() as connection:
             connection.execute(
                 "INSERT INTO receipts(run_id, step_id, intent_key, action, arguments_json, state) VALUES (?, ?, ?, ?, ?, 'done')",
-                (run_id, "phase0", intent_key, "legacy", json.dumps({"line": line})),
+                (run_id, "run-audit", intent_key, "legacy", json.dumps({"line": line})),
             )
 
     def create_receipt(self, run_id: str, step_id: str, action: str, arguments: dict[str, Any]) -> Receipt:

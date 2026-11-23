@@ -5,7 +5,7 @@ from agent_action_gateway.guards.capture import suspicious_flags
 
 
 class FailureWallProofTests(unittest.TestCase):
-    """Deterministic acceptance proof for Phase 6 silent-wrong and clustering."""
+    """Deterministic acceptance proof for silent-wrong and clustering."""
 
     def test_all_planted_silent_wrong_cases_are_flagged(self) -> None:
         cases = (

@@ -1,4 +1,4 @@
-"""Phase 3: the MCP surface must not be a second, weaker policy path.
+"""The MCP surface must not be a second, weaker policy path.
 
 The whole point of routing MCP calls through `SafetyGateway.handle` is that
 arriving over MCP instead of HTTP buys the caller nothing. These tests assert

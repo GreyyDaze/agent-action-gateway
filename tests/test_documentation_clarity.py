@@ -22,7 +22,9 @@ SOURCE = ROOT / "src" / "agent_action_gateway"
 
 # Internal shorthand. None of it means anything to a reader who has not read
 # the project's own planning documents.
-INTERNAL_IDS = re.compile(r"\b(?:R-\d{2}|FR-\d{1,2}|E[1-5]\.\d{1,2}|P[1-6])\b")
+INTERNAL_IDS = re.compile(
+    r"\b(?:R-\d{2}|FR-\d{1,2}|E[1-5]\.\d{1,2}|P[1-8])\b|\b[Pp]hase[ -]?\d\b"
+)
 
 
 class NoInternalJargonTest(unittest.TestCase):
@@ -30,9 +32,21 @@ class NoInternalJargonTest(unittest.TestCase):
 
     PUBLIC_FILES = (
         "README.md",
-        "docs/sdk.md",
         "SECURITY.md",
+        "ROADMAP.md",
+        "deploy/README.md",
+        *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "docs").glob("*.md")),
     )
+
+    def test_shipped_source_contains_no_internal_identifiers(self) -> None:
+        """Covers printed output too: proof labels like `P1` reached users."""
+        offenders = [
+            f"{path.relative_to(ROOT)}: {match}"
+            for path in sorted(SOURCE.rglob("*.py"))
+            if "__pycache__" not in str(path)
+            for match in INTERNAL_IDS.findall(path.read_text(encoding="utf-8"))
+        ]
+        self.assertEqual(offenders, [], offenders)
 
     def test_public_docs_contain_no_internal_identifiers(self) -> None:
         for relative in self.PUBLIC_FILES:

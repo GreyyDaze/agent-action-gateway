@@ -67,7 +67,7 @@ def main() -> None:
         except SafetyBlockedError:
             pass
 
-        print(f"P2: {destructive_executions} destructive executions / {attacks} attack cases")
+        print(f"APPROVAL SAFETY: {destructive_executions} destructive executions / {attacks} attack cases")
 
 
 if __name__ == "__main__":

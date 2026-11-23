@@ -1,6 +1,6 @@
 """Guarded-path durability.
 
-The Phase 1 chaos proof exercises `dispatch_external_action` directly. This
+The crash-safety proof exercises `dispatch_external_action` directly. This
 file proves the adopter-facing path - a guarded tool obtained from a session -
 survives the same crashes without duplicating a side effect.
 
@@ -66,7 +66,7 @@ class GuardedReceiptTest(unittest.TestCase):
         self.assertEqual(len(self.provider.refunds), 0)
 
     def test_crash_before_write_after_does_not_duplicate(self) -> None:
-        """The Phase 1 invariant, proven on the adoption path."""
+        """The crash-safety invariant, proven on the adoption path."""
         with session(store=self.store) as ctx:
             approval = ctx.request_approval("refund", {"order_id": "ORD-100"})
             ctx.approve(approval.approval_id, "operator")

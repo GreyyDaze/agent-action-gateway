@@ -61,7 +61,7 @@ Deliberately coarse, because precision here would be false confidence:
 ## The safety rule that overrides everything
 
 **A blocked destructive action is never retried.** Not by the scorer, not by
-the phase-5 self-correction loop, not by configuration.
+the self-correction loop, not by configuration.
 
 Any signal that would reward retrying a blocked action is wrong by
 construction. That is why it is written here rather than left to the

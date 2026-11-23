@@ -1,4 +1,4 @@
-"""Phase 4: online eval is report-only unless someone explicitly promotes it.
+"""Online eval is report-only unless someone explicitly promotes it.
 
 The failure this guards against is specific and common: an online judge starts
 failing CI on noise, the team switches it off, and the signal is gone. So the

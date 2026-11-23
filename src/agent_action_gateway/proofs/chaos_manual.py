@@ -49,7 +49,7 @@ def main() -> None:
         try:
             url = f"http://127.0.0.1:{server.server_port}"
             store = TraceStore(receipt_db)
-            run_id = "manual-phase1"
+            run_id = "manual-crash-drill"
             step_id = "step-1"
             receipt = store.create_receipt(run_id, step_id, "external_action", {"order_id": "ORD-100"})
             print(f"before: state={receipt.state} intent_key={receipt.intent_key}")

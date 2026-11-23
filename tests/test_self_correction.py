@@ -1,4 +1,4 @@
-"""Phase 5: self-correction that cannot become a way around the guard.
+"""Self-correction that cannot become a way around the guard.
 
 Retrying is the highest-leverage thing an agent can do, and the easiest way to
 turn a safety limit into a suggestion. A loop that retries will eventually get

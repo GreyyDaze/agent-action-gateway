@@ -74,7 +74,7 @@ class ResultDecision:
 
 @dataclass(frozen=True)
 class StopPolicy:
-    """Phase 4 deterministic policy.
+    """Deterministic stop-and-ask policy.
 
     Batch/headless work is fail-closed on unresolved ambiguity because there is
     no human available to answer a clarification question.

@@ -1,4 +1,4 @@
-"""Phase 2: a path score, and whether it survives a mutation.
+"""A path score, and whether it survives a mutation.
 
 `docs/trajectory-signals.md` defines what counts and — just as important — what
 does not. These tests hold that line, including the signals that must *not*

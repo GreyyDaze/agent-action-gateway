@@ -87,7 +87,7 @@ def run_proof() -> None:
         raise AssertionError("a bad case was hidden by the average score")
 
     print(
-        f"P3 foundation: injected {drop_points:.1f}-pt drop caught | "
+        f"REGRESSION GATE: injected {drop_points:.1f}-pt drop caught | "
         f"0 false FAIL / 10 unchanged runs | "
         f"catastrophic case caught | "
         f"cost={degraded.estimated_cost_usd:.4f} USD + "

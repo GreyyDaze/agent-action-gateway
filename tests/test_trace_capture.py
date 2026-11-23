@@ -1,4 +1,4 @@
-"""Phase 1: the model exchange is recorded, redacted, and readable back.
+"""The model exchange is recorded, redacted, and readable back.
 
 `input_json` records the task and `output_json` the tool result. Neither
 records what was actually sent to the model or what came back, so an audit

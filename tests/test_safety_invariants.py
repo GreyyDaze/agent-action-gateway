@@ -30,7 +30,7 @@ from agent_action_gateway.storage.traces import TraceStore
 
 
 class ReceiptRecoveryTargetTest(unittest.TestCase):
-    """R-11: an uncertain side effect must be resolvable, never a KeyError.
+    """An uncertain side effect must be resolvable, never a KeyError.
 
     The resolver previously read `arguments["order_id"]`, so any approved
     payload that did not literally carry an order_id crashed crash recovery.
@@ -326,7 +326,7 @@ if __name__ == "__main__":
 
 
 class PaymentRedactionTest(unittest.TestCase):
-    """FR-9: payment and identity data must not persist in the clear.
+    """Payment and identity data must not persist in the clear.
 
     The original finding was that key-based PII redaction worked but payment
     fields were stored in plaintext, which contradicted our own spec.

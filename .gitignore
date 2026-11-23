@@ -36,8 +36,7 @@ htmlcov/
 .idea/
 .vscode/
 
-# Manual verification output
-data/phase1-manual/
+# Local deployment secrets
 deploy/secrets/
 
 # mutmut mutation-testing artifacts (generated, not source)

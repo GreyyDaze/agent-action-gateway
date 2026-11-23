@@ -102,7 +102,7 @@ class AdoptionContractTest(unittest.TestCase):
     # -- 2. payload tamper -------------------------------------------------
 
     def test_2_approved_payload_cannot_be_changed(self) -> None:
-        """Approving $400 must not authorize $500 (R-09)."""
+        """Approving $400 must not authorize $500."""
         with session(store=self.store) as ctx:
             approval = ctx.request_approval("refund", {"order_id": "ORD-1", "amount": 400})
             ctx.approve(approval.approval_id, "operator")
@@ -157,7 +157,7 @@ class AdoptionContractTest(unittest.TestCase):
     # -- 4. ambiguity ------------------------------------------------------
 
     def test_4_missing_required_input_asks_instead_of_guessing(self) -> None:
-        """Missing required input must not be silently defaulted (R-02)."""
+        """Missing required input must not be silently defaulted."""
         with session(store=self.store) as ctx:
             refund = ctx.tool(
                 lambda **kw: {"ok": True},
@@ -177,7 +177,7 @@ class AdoptionContractTest(unittest.TestCase):
     # -- 5. cross-environment ---------------------------------------------
 
     def test_5_cross_environment_action_is_blocked(self) -> None:
-        """A staging session must not reach a production tool (R-04)."""
+        """A staging session must not reach a production tool."""
         with session(store=self.store, environment="staging") as ctx:
             refund = ctx.tool(
                 lambda **kw: {"ok": True},
@@ -217,7 +217,7 @@ class AdoptionContractTest(unittest.TestCase):
     # -- 7. no plaintext payment data at rest -----------------------------
 
     def test_7_no_plaintext_card_number_reaches_storage(self) -> None:
-        """FR-9: payment data must not persist in the clear."""
+        """Payment data must not persist in the clear."""
         pan = "4111111111111111"  # Luhn-valid test PAN
         with session(store=self.store) as ctx:
             refund = ctx.tool(
@@ -283,7 +283,7 @@ class SessionApiTest(unittest.TestCase):
                 self.assertEqual(ctx.environment, "dev")
 
     def test_unknown_action_defaults_to_destructive(self) -> None:
-        """E3.4: an unregistered action is never silently safe."""
+        """An unregistered action is never silently safe."""
         with tempfile.TemporaryDirectory() as directory:
             with session(store=TraceStore(Path(directory) / "r.db")) as ctx:
                 ctx.registry.register("mystery", "destructive")

@@ -276,7 +276,7 @@ def main() -> None:
     actions, unknown = run_proof(args.jobs)
     if actions != args.jobs or unknown != 0:
         raise SystemExit(
-            f"P1 FAILED: provider_actions={actions} expected={args.jobs} unknown={unknown}"
+            f"CRASH SAFETY FAILED: provider_actions={actions} expected={args.jobs} unknown={unknown}"
         )
     print(f"CRASH SAFETY: 0 dupes / {args.jobs} crash jobs")
 
