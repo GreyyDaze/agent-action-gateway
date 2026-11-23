@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ..evidence.redaction import redact
-from ..runtime.records import GateVerdict, Receipt, TraceEvent
-from .base import SqliteStore
+from safety_layer.guards.redaction import redact
+from safety_layer.runtime.records import GateVerdict, Receipt, TraceEvent
+from safety_layer.storage.base import SqliteStore
 
 _TRACE_EVENTS = """
 CREATE TABLE IF NOT EXISTS trace_events (
@@ -180,6 +180,30 @@ class TraceStore(SqliteStore):
                 )
             yield 6, missing
 
+        # v7: the identity of an *effect*, as distinct from the identity of an
+        # attempt.
+        #
+        # `intent_key` is `{run_id}:{step_id}`, so it is unique per attempt and
+        # can never detect a duplicate: a retry after a crash, a second worker,
+        # and the same action issued twice each produce a different key and
+        # never collide. `effect_key` is a hash of what the action is, so the
+        # same effect claims the same key on any host in any run, and a unique
+        # constraint on it is sufficient to make the effect happen once.
+        #
+        # NULL for every existing row. The unique index is partial so those rows
+        # are excluded rather than forced to collide on backfill: a backfill
+        # would have to guess an effect identity for history it never saw, and a
+        # wrong guess silently suppresses a real action.
+        seen_receipts = self._columns("receipts")
+        if not seen_receipts:
+            yield 7, []
+        else:
+            yield 7, [
+                "ALTER TABLE receipts ADD COLUMN effect_key TEXT",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_receipts_effect "
+                "ON receipts(effect_key) WHERE effect_key IS NOT NULL",
+            ] if "effect_key" not in seen_receipts else []
+
     def append_trace(self, event: TraceEvent, *, enforcement: str | None = None) -> int:
         """Persist a trace event after deterministic redaction.
 
@@ -321,36 +345,97 @@ class TraceStore(SqliteStore):
             raise RuntimeError(f"receipt row missing after upsert: {intent_key}")
         return self._receipt(row)
 
+    def claim_receipt(
+        self,
+        effect_key: str,
+        run_id: str,
+        step_id: str,
+        action: str,
+        arguments: dict[str, Any],
+    ) -> tuple[Receipt, bool]:
+        """Claim an effect, or report that someone already claimed it.
+
+        Returns `(receipt, is_new)`. `is_new` is true only when this call
+        created the row, which is the signal that this caller owns the effect
+        and may execute it. A false value means the effect already exists and
+        must not be executed again.
+
+        The insert is atomic and the partial unique index on `effect_key`
+        resolves the race, so two workers claiming the same effect at the same
+        moment produce exactly one winner -- the loser reads back the winner's
+        row rather than creating a second one.
+
+        A retry of the *same step* arrives with an `intent_key` that already
+        exists. That is not a conflicting effect, it is the same caller asking
+        again, so the existing row is returned and `is_new` stays true. Which
+        constraint fired is decided by inspecting the row rather than by
+        guessing: an effect claimed by a different step is a genuine conflict
+        and must report `is_new=False`.
+        """
+        intent_key = f"{run_id}:{step_id}"
+        with self.connection() as connection:
+            connection.execute(
+                "INSERT INTO receipts(run_id, step_id, intent_key, action, arguments_json,"
+                " state, effect_key) VALUES (?, ?, ?, ?, ?, 'pending', ?)"
+                " ON CONFLICT DO NOTHING",
+                (run_id, step_id, intent_key, action, json.dumps(arguments, sort_keys=True), effect_key),
+            )
+            row = connection.execute(
+                "SELECT * FROM receipts WHERE effect_key = ?", (effect_key,)
+            ).fetchone()
+            if row is None:
+                row = connection.execute(
+                    "SELECT * FROM receipts WHERE intent_key = ?", (intent_key,)
+                ).fetchone()
+        if row is None:
+            raise RuntimeError(f"receipt row missing after claim: {effect_key}")
+        # The row belongs to this caller only when its step is this step. A row
+        # another step created means another worker owns this effect.
+        owned = str(row["intent_key"]) == intent_key
+        return self._receipt(row), owned
+
     def mark_done(self, intent_key: str, provider_ref: str | None) -> None:
         with self.connection() as connection:
             connection.execute(
-                "UPDATE receipts SET state='done', provider_ref=?, updated_at=CURRENT_TIMESTAMP WHERE intent_key=? AND state='unknown'",
+                "UPDATE receipts SET state='done', provider_ref=?, updated_at=CURRENT_TIMESTAMP "
+                "WHERE intent_key=? AND state IN ('unknown', 'pending')",
                 (provider_ref, intent_key),
             )
 
     def mark_failed(self, intent_key: str) -> None:
         with self.connection() as connection:
             connection.execute(
-                "UPDATE receipts SET state='failed', updated_at=CURRENT_TIMESTAMP WHERE intent_key=? AND state='unknown'",
+                "UPDATE receipts SET state='failed', updated_at=CURRENT_TIMESTAMP "
+                "WHERE intent_key=? AND state IN ('unknown', 'pending')",
                 (intent_key,),
             )
 
     def mark_resolved(self, intent_key: str, provider_ref: str | None) -> None:
         with self.connection() as connection:
             connection.execute(
-                "UPDATE receipts SET state='resolved', provider_ref=?, updated_at=CURRENT_TIMESTAMP WHERE intent_key=? AND state='unknown'",
+                "UPDATE receipts SET state='resolved', provider_ref=?, updated_at=CURRENT_TIMESTAMP "
+                "WHERE intent_key=? AND state IN ('unknown', 'pending')",
                 (provider_ref, intent_key),
             )
 
     def unknown_receipts(self) -> list[Receipt]:
         with self.connection() as connection:
-            rows = connection.execute("SELECT * FROM receipts WHERE state='unknown' ORDER BY id").fetchall()
+            rows = connection.execute(
+                "SELECT * FROM receipts WHERE state IN ('unknown', 'pending') ORDER BY id"
+            ).fetchall()
         return [self._receipt(row) for row in rows]
 
     def snapshot(self) -> dict[str, Any]:
         with self.connection() as connection:
             trace_rows = connection.execute("SELECT * FROM trace_events ORDER BY id").fetchall()
-            receipts = [dict(row) for row in connection.execute("SELECT * FROM receipts ORDER BY id")]
+            receipts = []
+            for row in connection.execute("SELECT * FROM receipts ORDER BY id"):
+                receipt = dict(row)
+                # Decoded like traces are. Left raw, the dashboard's arguments
+                # column renders the JSON text as a string rather than a
+                # structure, and a reader cannot compare two receipts by eye.
+                receipt["arguments"] = json.loads(receipt.pop("arguments_json"))
+                receipts.append(receipt)
             gates = [dict(row) for row in connection.execute("SELECT * FROM gate_verdicts ORDER BY id")]
 
         traces = []

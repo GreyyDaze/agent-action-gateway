@@ -89,6 +89,7 @@ def run_proofs(jobs: int, *, root: Path | None = None) -> None:
     )
     print("SCOPE: this library itself — no adopter's agent or data is tested.\n")
     print(f"CRASH SAFETY: PASS | 0 dupes / {jobs} crash jobs")
+    print(f"DUPLICATE SUPPRESSION: PASS | 1 side effect / {jobs} crashed retries")
     for guarantee, paths, statement in PROOFS:
         _run([sys.executable, "-m", "pytest", "-q", *paths], repo_root)
         print(f"{guarantee}: PASS | {statement}")

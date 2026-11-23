@@ -1,12 +1,12 @@
 import unittest
 from dataclasses import replace
 
-from safety_layer.evaluation.calibration import load_calibration_set, run_calibration
-from safety_layer.evaluation.evaluator import evaluate_cases
-from safety_layer.evaluation.golden import load_golden_set, seed_golden_cases
-from safety_layer.evaluation.judge import JudgeDecision, UnavailableRubricJudge, is_deterministic
-from safety_layer.evaluation.models import CALIBRATION_MIN_AGREEMENT, CalibrationResult, GoldenCase
-from safety_layer.evaluation.verdict import decide
+from safety_layer.eval.calibration import load_calibration_set, run_calibration
+from safety_layer.eval.evaluator import evaluate_cases
+from safety_layer.eval.golden import load_golden_set, seed_golden_cases
+from safety_layer.eval.judge import JudgeDecision, UnavailableRubricJudge, is_deterministic
+from safety_layer.eval.models import CALIBRATION_MIN_AGREEMENT, CalibrationResult, GoldenCase
+from safety_layer.eval.verdict import decide
 
 
 def deterministic_cases() -> tuple[GoldenCase, ...]:

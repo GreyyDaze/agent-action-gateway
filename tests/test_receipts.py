@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.core.receipts import execute_side_effect, resolve_unknown
-from safety_layer.providers.mock import MockPaymentProvider
+from safety_layer.audit.receipts import execute_side_effect, resolve_unknown
+from safety_layer.integrations.adapters.mock import MockPaymentProvider
 from safety_layer.storage.traces import TraceStore
 
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..evaluation.models import Baseline, EvaluationSummary, GateResult
-from .base import SqliteStore
+from safety_layer.eval.models import Baseline, EvaluationSummary, GateResult
+from safety_layer.storage.base import SqliteStore
 
 
 class EvaluationStore(SqliteStore):

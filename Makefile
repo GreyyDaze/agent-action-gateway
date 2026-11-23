@@ -14,14 +14,20 @@
 PYTHON ?= python
 JOBS   ?= 1000
 
-.PHONY: help proof chaos verify test lint typecheck quickstart wheel clean \
+.PHONY: help proof chaos verify test test-unit test-integration test-evals \
+        mutation verify-full lint typecheck quickstart wheel clean \
         verify-boundary doctor
 
 help:
 	@echo "verify      ruff, mypy and the full test suite"
+	@echo "verify-full verify + mutation + proof + chaos"
 	@echo "proof       run every guarantee suite (about this library)"
 	@echo "chaos       crash-injection suite (about this library)"
-	@echo "test        the test suite on its own"
+	@echo "mutation    mutmut: full mutation score on safety code (nightly)"
+	@echo "test        the full test suite"
+	@echo "test-unit   pure, fast tests only"
+	@echo "test-integration  database/socket/server tests"
+	@echo "test-evals  quality/evaluation suites"
 	@echo "lint        ruff"
 	@echo "typecheck   mypy"
 	@echo "quickstart  run the documented example"
@@ -32,6 +38,25 @@ help:
 	@echo "  doctor          check this host's gateway configuration"
 
 verify: lint typecheck test
+
+# Test lanes by speed (markers assigned in tests/conftest.py).
+test-unit:
+	$(PYTHON) -m pytest -q -m unit
+
+test-integration:
+	$(PYTHON) -m pytest -q -m integration
+
+test-evals:
+	$(PYTHON) -m pytest -q -m evals
+
+# Mutation testing: full automatic check that tests detect changed behavior.
+# mutmut covers all safety code and reports survivors. Nightly, not per commit.
+mutation:
+	$(PYTHON) -m mutmut run
+	$(PYTHON) -m mutmut export-cicd-stats
+
+# Full verification including the slower mutation gate.
+verify-full: verify mutation proof chaos
 
 # Verifies the DEPLOYMENT, not the library: it attaches an ephemeral container
 # to the same network your agent occupies and tries to reach a provider, read

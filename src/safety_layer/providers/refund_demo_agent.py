@@ -1,17 +1,9 @@
-"""A scripted agent used to demonstrate the quickstart."""
-from .mock import MockProvider
+"""Compatibility shim. Canonical module: safety_layer.integrations.adapters.refund_demo_agent."""
+import importlib as _importlib  # noqa: E402
 
+from safety_layer.integrations.adapters.refund_demo_agent import *  # noqa: F401,F403,E402
 
-def make_refund_agent(provider: MockProvider):
-    def agent(task: str) -> dict[str, object]:
-        customer = task.split("for ", 1)[-1].strip("?. ") if "for " in task else "Ava"
-        order = provider.lookup_order(customer)
-        if order is None:
-            return {"status": "not_found", "customer": customer}
-        return {
-            "status": "refunded",
-            "order_id": order.order_id,
-            "result": provider.refund(order.order_id),
-        }
+_canonical = _importlib.import_module("safety_layer.integrations.adapters.refund_demo_agent")  # noqa: E402
 
-    return agent
+def __getattr__(name):  # noqa: E402
+    return getattr(_canonical, name)

@@ -17,12 +17,12 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from safety_layer.interface.gateway import (
+from safety_layer.integrations.gateway import (
     GatewayPolicy,
     Route,
     SafetyGateway,
 )
-from safety_layer.interface.mcp import (
+from safety_layer.integrations.mcp import (
     MCPToolBridge,
     route_path_for,
     tool_definitions,
@@ -220,7 +220,7 @@ class TransportIndependenceTest(BridgeTestBase):
         A dependency on an MCP SDK would make this package non-stdlib and would
         tie the enforcement path to someone else's release schedule.
         """
-        import safety_layer.interface.mcp as module
+        import safety_layer.integrations.mcp as module
 
         self.assertNotIn("mcp", {name for name in dir(module) if name.startswith("_mcp")})
 

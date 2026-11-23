@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
-from safety_layer.interface.gateway import (
+from safety_layer.integrations.gateway import (
     GatewayPolicy,
     Route,
     SafetyGateway,
@@ -101,7 +101,7 @@ class GatewayTest(unittest.TestCase):
         """Record through the real handler so custody is genuinely exercised."""
         request_line = f"POST {upstream} HTTP/1.1"
         del request_line
-        from safety_layer.interface.gateway import _forward
+        from safety_layer.integrations.gateway import _forward
 
         return _forward(upstream, payload, headers)
 

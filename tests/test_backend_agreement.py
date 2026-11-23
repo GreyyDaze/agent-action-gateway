@@ -25,7 +25,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from safety_layer.core.locks import ApprovalStore
+from safety_layer.policy.fingerprint import fingerprint
+from safety_layer.policy.locks import ApprovalStore
 from safety_layer.runtime.records import GateVerdict, TraceEvent
 from safety_layer.storage.traces import TraceStore
 
@@ -179,6 +180,44 @@ class BackendAgreementTest(unittest.TestCase):
 
         self._run_on_both(body)
 
+    def test_claiming_an_effect_agrees(self) -> None:
+        """The dedup guarantee must be identical on both backends.
+
+        It rests on a partial unique index and an `ON CONFLICT` upsert, neither
+        of which is guaranteed to behave the same through a SQL translation
+        layer. If only one backend deduplicates, the guarantee is a property of
+        the deployment rather than of the library.
+        """
+
+        def body(target: str) -> Any:
+            store = TraceStore(target)
+            effect_key = fingerprint("patch", {"app": "shop-api"})
+            args = {"app": "shop-api"}
+            first, first_owned = store.claim_receipt(effect_key, "run-A", "s1", "patch", args)
+            second, second_owned = store.claim_receipt(effect_key, "run-B", "s1", "patch", args)
+            store.mark_done(first.intent_key, "patch-1")
+            third, third_owned = store.claim_receipt(effect_key, "run-C", "s1", "patch", args)
+            rows = store.snapshot()["receipts"]
+            return (
+                first_owned, second_owned, third_owned,
+                third.state, third.provider_ref,
+                len(rows),
+                store.applied_migrations(),
+            )
+
+        self._run_on_both(body)
+
+    def test_two_effects_stay_distinct_on_both_backends(self) -> None:
+        def body(target: str) -> Any:
+            store = TraceStore(target)
+            one = fingerprint("patch", {"app": "shop-api", "memory": "768Mi"})
+            two = fingerprint("patch", {"app": "shop-api", "memory": "1Gi"})
+            store.claim_receipt(one, "run-A", "s1", "patch", {"memory": "768Mi"})
+            store.claim_receipt(two, "run-A", "s2", "patch", {"memory": "1Gi"})
+            return len(store.snapshot()["receipts"])
+
+        self._run_on_both(body)
+
     # -- approvals --------------------------------------------------------
 
     def test_approval_lifecycle_agrees(self) -> None:
@@ -219,7 +258,7 @@ class BackendAgreementTest(unittest.TestCase):
     # -- other tables -----------------------------------------------------
 
     def test_gate_verdicts_and_budgets_agree(self) -> None:
-        from safety_layer.core.fuses import FuseSnapshot
+        from safety_layer.policy.fuses import FuseSnapshot
 
         def body(target: str) -> Any:
             store = TraceStore(target)

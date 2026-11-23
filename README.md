@@ -6,6 +6,92 @@ Prevention-first safety and evaluation layer for AI agents.
 
 **Core rule:** AI proposes. Deterministic code verifies and enforces. Humans approve high-impact actions.
 
+## The problem
+
+An AI agent can change production. It needs a credential to do that.
+
+The credential lives in the agent's process. So the agent holds standing
+access, all the time, with nothing between it and production.
+
+Every policy layer shipped today runs **inside the same process as the agent
+it is meant to restrain**. Microsoft's own architecture documentation says so
+and lists it as a known limitation:
+
+> "The policy engine and the agents it governs run in the same Python process…
+> Provides application-level governance, not OS kernel-level isolation."
+
+If the agent is compromised, the policy is compromised with it.
+
+## What this does
+
+Put the credential somewhere the agent cannot reach:
+
+~~~text
+BEFORE     agent ──────────────────────────────►  production
+                                                 [credential]
+
+AFTER      agent ───►  safety layer ───►  production
+                     [holds the credential,
+                      grants one scoped job]
+~~~
+
+The agent still does its work. But if it is confused, wrong, or manipulated,
+the most it can do is the one job it was given — and every attempt is
+recorded.
+
+## Who this is for
+
+**The on-call engineer whose AI agent is allowed to change production.**
+
+Not "enterprises." One person. They get paged, they own the risk, and they are
+the last line of defence between a confused agent and an outage.
+
+Their problem, stated plainly: they have to trust an agent they cannot verify,
+using a credential they cannot control, with no record they can defend.
+
+| They cannot… | Because… | So this provides |
+|---|---|---|
+| verify the reasoning | the model is a black box | judge + calibration |
+| verify the exact change | they see "an action happened" | payload-bound approvals, dashboard |
+| control what it does | the agent holds the credential | gateway, virtual keys |
+| know it happened once | a crash loses that fact | receipts, effect claims |
+| stop it at 3am | nobody is watching | fuses, failure wall |
+| defend it afterwards | "I think it was fine" | traces, receipts, retention |
+| trust it tomorrow | a PR can remove the wall | bypass detection, proofs |
+
+## What you can measure
+
+~~~text
+Before:  unknown
+After:   0 destructive actions executed without approval
+         1 side effect across 1,000 crashed retries
+         100% of attempts recorded, redacted, and defensible
+~~~
+
+Both numbers are reproducible:
+
+~~~bash
+make proof
+# CRASH SAFETY: 0 dupes / 1000 crash jobs
+# DUPLICATE SUPPRESSION: 1 side effect / 1000 crashed retries
+~~~
+
+The second number is the one that is usually claimed and not measured. One
+effect, claimed a thousand times from a thousand different runs, with a crash
+injected at a random point each time, must produce exactly one side effect.
+
+## What this does not do
+
+Stated up front because the difference matters:
+
+- it does **not** decide whether the agent's diagnosis is *correct*
+- it does **not** replace human approval for high-impact actions
+- it does **not** prevent hallucination
+- it is **not** an observability platform or a general MCP transport
+
+It is a control layer for agent actions. Judging whether the action was a good
+idea stays your engineer's job.
+
 ## Install
 
 Python 3.11+:
@@ -47,11 +133,63 @@ On by default, with no configuration:
 - destructive actions need a **fresh approval bound to the exact payload**
 - runs are bounded by **step, time and spend** limits
 - **cross-environment** calls are refused
-- side effects get a **durable receipt**, so a crash cannot double-charge
+- the same side effect **cannot happen twice**, across runs, restarts or workers
+- side effects get a **durable receipt**, so a crash cannot double-apply
 
-Run `python docs/examples/quickstart.py` to watch an unapproved refund get
-refused, then permitted once approved. That same file is executed by CI, so it
-cannot drift from this page.
+### The same effect cannot happen twice
+
+The guarantee is keyed on *what an action is*, not on which run attempted it.
+A retry after a crash, a second worker, and the same request issued twice all
+claim the same effect, and only the first claimant executes:
+
+~~~python
+patch = ctx.tool(
+    patch_deployment,
+    action="patch.deployment",
+    risk="destructive",              # omit and it defaults to this anyway
+    target="shop-api",
+    target_environment="prod",
+    required_fields=("namespace", "app", "memory_limit"),
+)
+~~~
+
+Two knobs exist because identical arguments do not always mean an identical
+effect:
+
+~~~python
+# Two tenants must not suppress each other.
+ctx.tool(write, action="write.config", effect_scope="tenant-a")
+
+# A body that may be edited between retries is not a new effect.
+ctx.tool(issue, action="create_issue", identity_fields=("owner", "title"))
+~~~
+
+No per-API code is required. This used to be true — you needed a provider class
+for every irreversible action, which is why most adopters had no duplicate
+protection at all.
+
+### See it run
+
+~~~bash
+python docs/examples/sre_agent.py
+~~~
+
+A Kubernetes incident agent reads a cluster, tries to patch production with no
+approval, is refused, gets approved by a human, applies the patch — and then a
+**restart** retries the same patch and does not apply it twice.
+
+~~~text
+agent said:     refused: destructive action requires approval
+run status:     blocked
+enforcement:    enforced
+after approval: allowed
+after restart:  allowed (DEDUPLICATED)
+
+blocked evidence rows: 2
+receipts: 2 for 2 distinct patches
+~~~
+
+Both example files are executed by CI, so they cannot drift from this page.
 
 Full SDK boundary, limitations, and gate exit semantics: `docs/sdk.md`.
 
@@ -107,8 +245,8 @@ PostgreSQL needs the `psycopg` package: `pip install 'agent-safety-eval-layer[po
 
 ## Keeping the store small
 
-Recording prompts makes `trace_events` grow quickly. `safety prune` discards the
-payloads on your say-so and keeps the rows:
+Recording prompts makes `trace_events` grow quickly. `safety prune`
+discards the payloads on your say-so and keeps the rows:
 
 ~~~bash
 safety prune --db data/runtime.db --older-than 30 --dry-run
@@ -184,13 +322,22 @@ python -m safety_layer.interface.dashboard --db data/runtime.db --host 127.0.0.1
 
 ## What the system enforces
 
+**Stops bad actions** — every one of these can refuse or bound a call:
+
 - **Stop-and-ask:** missing or ambiguous required state can block before action.
 - **Approval locks:** destructive actions require fresh approval bound to the exact payload.
 - **Fuses:** step, time, spend, and loop limits stop unsafe continuation.
+- **Effect claims:** the same side effect cannot execute twice, across runs, restarts, or workers.
 - **Receipts:** side effects have durable lifecycle state and provider-aware idempotency handling.
 - **Trace evidence:** important actions, approvals, failures, and suspicious results are retained with redaction.
 - **Failure Wall:** failures are grouped deterministically by error type, failing step, and configuration fingerprint.
+
+**Proves it worked:**
+
 - **Evaluation gate:** deterministic checks run first; semantic judging is optional and returns PASS, FAIL, or UNCERTAIN.
+- **Trajectory scoring:** reports whether a run reached its answer by a path it should not have taken. Reports, never gates.
+- **Bypass detection:** `safety check --app` and `--db` find code and recorded runs that never crossed the layer.
+- **Judge calibration:** tests whether your judge is any good, rather than trusting it.
 
 The external agent and its model provider are not owned by this project.
 
@@ -229,8 +376,11 @@ The current SDK is a lightweight wrapper around the existing runtime, not a univ
 
 ## Gateway: holding a credential your agent must not have
 
-For upstreams you cannot wrap in-process — payments, internal services — the
-gateway is a separate service that holds the upstream key and forwards the call.
+For upstreams you cannot wrap in-process — internal services, cluster APIs,
+anything behind a login — the gateway is a separate service that holds the
+upstream key and forwards the call. This is the part that survives a
+compromised agent, and it is the reason the rest of the pipeline is worth
+having.
 
 ~~~bash
 safety gateway --config routes.json --db gateway.db
@@ -277,17 +427,29 @@ Deferred work is tracked in `ROADMAP.md`. The PRD and build plan remain the sour
 
 ## Dashboard
 
-Start the self-hosted dashboard against the same SQLite runtime database:
+Start the self-hosted dashboard against the same runtime database:
 
 ~~~bash
 python -m safety_layer.interface.dashboard --db data/runtime.db --host 127.0.0.1 --port 8000
 ~~~
 
-The dashboard currently exposes:
-- persisted trace events and evidence per run;
-- pending approval queue with approve/deny actions;
-- gate verdict history;
-- persisted fuse counters when a run supplies a fuse.
+It shows one run top to bottom, in the order the operator needs it:
+
+- **Header** — run id, status, and whether the run was *enforced* or merely
+  *observed*. Those are different claims and the page does not blur them.
+- **Timeline** — every step with its status, cost, latency, tokens, and the
+  full input/output on expand.
+- **Side-effect receipts** — one row per effect, with its state. A receipt
+  left `pending` means the outcome is genuinely unknown, and the page says so
+  at the top rather than burying it.
+- **Approvals waiting** — the queue, with approve/deny.
+- **Budget** — steps, spend, elapsed, fuse state.
+- **Gate history** — verdict, score, threshold.
+
+It is server-rendered HTML and CSS with **no JavaScript**. The
+Content-Security-Policy sets `default-src 'none'` with no `script-src`, so
+nothing can execute here. That is a deliberate security property, and it is
+why every panel uses native `<details>` rather than a client-side filter.
 
 The JSON state is also available at `/api/state`.
 
@@ -320,6 +482,7 @@ The final human acceptance step is a cold README walkthrough in a clean machine 
 |---|---|
 | **Adoption contract** | guarded tools are the only path; unapproved actions never execute |
 | **Crash safety** | `0 dupes / 1,000 crash jobs` |
+| **Duplicate suppression** | `1 side effect / 1,000 crashed retries` — one effect claimed by 1,000 different runs, crash injected at a random point each time, derived from the effect key rather than from a test double |
 | **Approval safety** | `0 destructive executions without valid fresh approval` |
 | **Regression gate** | calibration `6/6 = 100%`; good candidate `PASS, score=1.0000`; catastrophic candidate `FAIL, score=0.9667`; unchanged proof `10/10, false-fails=0`; cost `$0.0004` / `0.8840 min` |
 | **Stop rules** | defined ambiguity traps caught, zero false stops on the legitimate suite |
@@ -344,11 +507,14 @@ SAFETY LAYER
     |-- stop rules
     |-- fuses / budgets
     |-- risk + approval locks
-    |-- idempotency / receipts
+    |-- effect claim  ─── same action, same key, anywhere
     |
-    +---- BLOCK / ASK
+    +---- BLOCK / ASK / DEDUPLICATED
     |
     +---- ALLOW
+            |
+            v
+   GATEWAY  ──── holds the credential the agent must not have
             |
             v
        TOOL / PROVIDER
@@ -357,12 +523,19 @@ SAFETY LAYER
        RECEIPT + TRACE
             |
             v
+       DASHBOARD
+            |
+            v
       EVALUATION / GATE
             |
        PASS / FAIL / UNCERTAIN
-            |
-            v
-       REGRESSION CASE
 ~~~
 
-Deterministic enforcement stays in the runtime. The optional LLM judge is confined to evaluation where deterministic checks cannot grade open-ended meaning.
+The effect claim is the load-bearing step. It is what makes the rest mean
+something: a refusal is only worth having if the agent could not have gone
+around it, and a retry is only safe if the system can tell it apart from the
+first attempt.
+
+Deterministic enforcement stays in the runtime. The optional LLM judge is
+confined to evaluation where deterministic checks cannot grade open-ended
+meaning.

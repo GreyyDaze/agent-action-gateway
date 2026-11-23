@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ..evaluation.evaluator import evaluate_cases
-from ..evaluation.golden import seed_golden_cases
-from ..evaluation.judge import JudgeDecision
-from ..evaluation.models import GoldenCase
-from ..evaluation.verdict import decide
+from safety_layer.eval.evaluator import evaluate_cases
+from safety_layer.eval.golden import seed_golden_cases
+from safety_layer.eval.judge import JudgeDecision
+from safety_layer.eval.models import GoldenCase
+from safety_layer.eval.verdict import decide
 
 
 class ProofRubricJudge:

@@ -188,8 +188,8 @@ class ErrorMessageClarityTest(unittest.TestCase):
         import json
         import tempfile
 
-        from safety_layer.evaluation.golden import load_golden_set
-        from safety_layer.evaluation.models import GOLDEN_SET_VERSION
+        from safety_layer.eval.golden import load_golden_set
+        from safety_layer.eval.models import GOLDEN_SET_VERSION
 
         def case(index: int = 1, *, catastrophic: bool = False) -> dict[str, object]:
             return {

@@ -11,10 +11,10 @@ import tempfile
 import threading
 from pathlib import Path
 
-from ..core.receipts import resolve_unknown
-from ..providers.base import HttpExternalActionProvider
-from ..storage.traces import TraceStore
-from .chaos import ProviderHandler, initialize_provider_db
+from safety_layer.audit.receipts import resolve_unknown
+from safety_layer.integrations.adapters.base import HttpExternalActionProvider
+from safety_layer.proofs.chaos import ProviderHandler, initialize_provider_db
+from safety_layer.storage.traces import TraceStore
 
 
 def crash_worker(provider_url: str, db_path: str, intent_key: str) -> None:

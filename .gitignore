@@ -39,3 +39,7 @@ htmlcov/
 # Manual verification output
 data/phase1-manual/
 deploy/secrets/
+
+# mutmut mutation-testing artifacts (generated, not source)
+mutants/
+.mutmut-cache

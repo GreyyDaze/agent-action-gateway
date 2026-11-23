@@ -19,7 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.interface.wiring import (
+from safety_layer.observability.wiring import (
     Status,
     audit_database,
     run_check,

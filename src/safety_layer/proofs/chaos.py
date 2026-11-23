@@ -13,9 +13,9 @@ import threading
 import time
 from pathlib import Path
 
-from ..core.receipts import resolve_unknown
-from ..providers.base import HttpExternalActionProvider
-from ..storage.traces import TraceStore
+from safety_layer.audit.receipts import resolve_unknown
+from safety_layer.integrations.adapters.base import HttpExternalActionProvider
+from safety_layer.storage.traces import TraceStore
 
 
 class ProviderHandler(http.server.BaseHTTPRequestHandler):
@@ -164,6 +164,110 @@ def run_proof(jobs: int) -> tuple[int, int]:
             thread.join(timeout=2)
 
 
+# -- duplicate suppression ------------------------------------------------
+
+
+def dedupe_worker(
+    provider_url: str, db_path: str, run_id: str, step_id: str, kill_point: int
+) -> None:
+    """Claim one effect, then die at a chosen point.
+
+    Every worker claims the *same* effect from a different run, which is what a
+    retry after a crash looks like from the store's side. The effect key is
+    derived from the action and its arguments, so all of them collide.
+    """
+    from safety_layer.audit.receipts import claim_effect
+
+    store = TraceStore(db_path)
+    arguments = {"target": "ORD-100"}
+    receipt, owned = claim_effect(
+        store, run_id, step_id, "external_action", arguments
+    )
+    if not owned:
+        # Someone else holds the claim, or it already landed. Either way this
+        # worker must not call the provider -- that is the whole guarantee.
+        if receipt.state == "done":
+            return
+        # The claim is `pending`: a previous attempt crashed and the outcome is
+        # unknown. Reconcile it the way recovery is meant to -- ask the provider
+        # whether it landed. If it did, record that. If it did not, leave it
+        # pending: a retry must not re-execute an effect whose fate is unknown.
+        if receipt.state == "pending":
+            found = HttpExternalActionProvider(provider_url).find(
+                receipt.intent_key, receipt.arguments.get("target")
+            )
+            if found is not None:
+                store.mark_resolved(receipt.intent_key, found)
+        return
+    if kill_point == 0:
+        os.kill(os.getpid(), signal.SIGKILL)
+    provider_ref = HttpExternalActionProvider(provider_url).execute(
+        "ORD-100", receipt.intent_key
+    )
+    if kill_point == 1:
+        os.kill(os.getpid(), signal.SIGKILL)
+    store.mark_done(receipt.intent_key, provider_ref)
+    if kill_point == 2:
+        os.kill(os.getpid(), signal.SIGKILL)
+
+
+def run_dedupe_proof(jobs: int) -> tuple[int, int]:
+    """Claim one effect from `jobs` different runs, crashing at random points.
+
+    The result is the number of provider actions taken. One effect claimed a
+    thousand times must produce exactly one action, whatever the crash
+    distribution and whatever the per-attempt key would have been -- and
+    per-attempt keys are all different here, which is the point.
+    """
+    context = multiprocessing.get_context("spawn")
+
+    with tempfile.TemporaryDirectory(prefix="dedupe-proof-") as tmp:
+        root = Path(tmp)
+        receipt_db = root / "runtime.db"
+        provider_db = root / "provider.db"
+        initialize_provider_db(provider_db)
+
+        ProviderHandler.db_path = str(provider_db)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ProviderHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider_url = f"http://127.0.0.1:{server.server_port}"
+
+            import random
+            rng = random.Random(1)
+
+            for index in range(jobs):
+                # The first attempt always runs to completion. Without one
+                # successful execution there is nothing to deduplicate, and a
+                # proof that only ever crashes proves nothing about repeats.
+                kill_point = 9 if index == 0 else rng.randrange(3)
+                process = context.Process(
+                    target=dedupe_worker,
+                    args=(
+                        provider_url,
+                        str(receipt_db),
+                        f"retry-{index}",
+                        "step-1",
+                        kill_point,
+                    ),
+                )
+                process.start()
+                process.join()
+                if process.exitcode not in (0, -signal.SIGKILL):
+                    raise RuntimeError(
+                        f"dedupe worker failed: job={index} exitcode={process.exitcode}"
+                    )
+
+            actions = count_provider_actions(str(provider_db))
+            receipts = len(TraceStore(receipt_db).snapshot()["receipts"])
+            return actions, receipts
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--jobs", type=int, default=1000)
@@ -175,6 +279,19 @@ def main() -> None:
             f"P1 FAILED: provider_actions={actions} expected={args.jobs} unknown={unknown}"
         )
     print(f"CRASH SAFETY: 0 dupes / {args.jobs} crash jobs")
+
+    dedupe_actions, receipts = run_dedupe_proof(args.jobs)
+    # One effect, claimed once, no matter how many runs tried. Anything above
+    # one is a duplicate side effect, and more than one receipt row would mean
+    # the claim itself is not holding.
+    if dedupe_actions != 1 or receipts != 1:
+        raise SystemExit(
+            f"DEDUPLICATION FAILED: one effect claimed by {args.jobs} runs produced "
+            f"{dedupe_actions} provider actions across {receipts} receipts"
+        )
+    print(
+        f"DUPLICATE SUPPRESSION: 1 side effect / {args.jobs} crashed retries"
+    )
 
 
 if __name__ == "__main__":

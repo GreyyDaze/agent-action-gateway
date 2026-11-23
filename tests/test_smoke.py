@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.providers.mock import MockProvider
-from safety_layer.providers.refund_demo_agent import make_refund_agent
+from safety_layer.integrations.adapters.mock import MockProvider
+from safety_layer.integrations.adapters.refund_demo_agent import make_refund_agent
 from safety_layer.runtime.orchestrator import run
 from safety_layer.storage.traces import TraceStore
 

@@ -152,7 +152,7 @@ class MigrationTest(unittest.TestCase):
                 )
 
             reopened = TraceStore(path)
-            self.assertEqual(reopened.applied_migrations(), (1, 2, 3, 4, 5, 6))
+            self.assertEqual(reopened.applied_migrations(), (1, 2, 3, 4, 5, 6, 7))
             reopened.append_trace(
                 TraceEvent("run-new", 1, "agent", {"a": 1}, {"b": 2}, "completed", prompt="hi")
             )

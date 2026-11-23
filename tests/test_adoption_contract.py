@@ -27,7 +27,7 @@ from typing import Any
 from unittest import mock
 
 from safety_layer import session
-from safety_layer.core.fuses import FuseLimits
+from safety_layer.policy.fuses import FuseLimits
 from safety_layer.storage.traces import TraceStore
 
 

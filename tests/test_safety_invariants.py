@@ -17,15 +17,15 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from safety_layer.core.locks import ApprovalStore
-from safety_layer.core.receipts import (
+from safety_layer.audit.receipts import (
     UnresolvableReceiptError,
     execute_side_effect,
     resolve_unknown,
 )
-from safety_layer.evidence.redaction import redact
-from safety_layer.interface.dashboard import build_server
-from safety_layer.providers.mock import MockPaymentProvider
+from safety_layer.guards.redaction import redact
+from safety_layer.integrations.adapters.mock import MockPaymentProvider
+from safety_layer.observability.dashboard import build_server
+from safety_layer.policy.locks import ApprovalStore
 from safety_layer.storage.traces import TraceStore
 
 
@@ -283,7 +283,7 @@ class GateExitContractTest(unittest.TestCase):
     """
 
     def test_exit_codes_are_distinct_and_do_not_collide_with_argparse(self) -> None:
-        from safety_layer.interface.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_UNCERTAIN
+        from safety_layer.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_UNCERTAIN
 
         self.assertEqual(EXIT_PASS, 0)
         self.assertEqual(EXIT_FAIL, 1)
@@ -316,7 +316,7 @@ class DeadCodeTest(unittest.TestCase):
     """
 
     def test_duplicated_decider_is_gone(self) -> None:
-        import safety_layer.core.stop_rules as stop_rules
+        import safety_layer.policy.stop_rules as stop_rules
 
         self.assertFalse(hasattr(stop_rules, "decide_tool_result"))
 
@@ -381,7 +381,7 @@ class PaymentRedactionTest(unittest.TestCase):
         self.assertEqual(redact("order-0000000001234567890"), "order-0000000001234567890")
 
     def test_luhn_validation(self) -> None:
-        from safety_layer.evidence.redaction import luhn_valid
+        from safety_layer.guards.redaction import luhn_valid
 
         self.assertTrue(luhn_valid("4111111111111111"))
         self.assertFalse(luhn_valid("4111111111111112"))

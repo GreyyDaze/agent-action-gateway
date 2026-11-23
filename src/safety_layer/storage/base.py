@@ -73,7 +73,7 @@ class Store:
             import psycopg
             from psycopg.rows import dict_row
 
-            from .postgres import PostgresConnection
+            from safety_layer.storage.postgres import PostgresConnection
 
             return PostgresConnection(
                 psycopg.connect(self.path, row_factory=dict_row, autocommit=False)

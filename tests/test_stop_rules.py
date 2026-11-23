@@ -2,16 +2,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.core.cross_check import CrossCheckSpec, perform_cross_check
-from safety_layer.core.locks import ApprovalStore, RiskRegistry
-from safety_layer.core.stop_rules import (
+from safety_layer.integrations.adapters.mock import MockPaymentProvider
+from safety_layer.policy.cross_check import CrossCheckSpec, perform_cross_check
+from safety_layer.policy.locks import ApprovalStore, RiskRegistry
+from safety_layer.policy.stop_rules import (
     AmbiguityBlockedError,
     ClarificationState,
     CrossEnvironmentError,
     StopPolicy,
     enforce_environment,
 )
-from safety_layer.providers.mock import MockPaymentProvider
 from safety_layer.runtime.orchestrator import (
     dispatch_external_action,
     evaluate_tool_result,

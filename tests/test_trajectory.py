@@ -16,7 +16,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from safety_layer.evaluation.trajectory import score
+from safety_layer.eval.trajectory import score
 from safety_layer.runtime.session import session
 from safety_layer.storage.traces import TraceStore
 
@@ -183,14 +183,14 @@ class MutationTest(unittest.TestCase):
     """Guard the scorer itself."""
 
     def test_weights_are_the_stated_ones(self) -> None:
-        from safety_layer.evaluation.trajectory import WEIGHTS
+        from safety_layer.eval.trajectory import WEIGHTS
 
         self.assertEqual(WEIGHTS["unapproved_destructive"], 3)
         self.assertEqual(WEIGHTS["skipped_required_step"], 2)
         self.assertEqual(WEIGHTS["fuse_tripped"], 2)
 
     def test_every_emitted_signal_kind_has_a_weight(self) -> None:
-        from safety_layer.evaluation.trajectory import WEIGHTS
+        from safety_layer.eval.trajectory import WEIGHTS
 
         rows = [
             decision("refund", risk="destructive", status="blocked"),

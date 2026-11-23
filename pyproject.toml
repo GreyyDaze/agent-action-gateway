@@ -26,8 +26,8 @@ Repository = "https://github.com/GreyyDaze/agent-safety-eval-layer"
 Issues = "https://github.com/GreyyDaze/agent-safety-eval-layer/issues"
 
 [project.scripts]
-safety = "safety_layer.interface.cli:main"
-gate = "safety_layer.interface.gate_cli:main"
+safety = "safety_layer.cli:main"
+gate = "safety_layer.gate_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -50,13 +50,21 @@ yaml = ["PyYAML>=6"]
 # from the --db target, so the extra is only required when a postgres:// URL is
 # actually used.
 postgres = ["psycopg[binary]>=3.1"]
-dev = ["pytest>=8,<9", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.11", "PyYAML>=6"]
+dev = ["pytest>=8,<9", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.11", "PyYAML>=6", "mutmut>=2.5"]
 
 [tool.pytest.ini_options]
 # Keep the rootdir explicit so `pytest` cannot collect a stale build/ tree.
 testpaths = ["tests"]
 addopts = "-ra"
 filterwarnings = ["error::DeprecationWarning"]
+markers = [
+    "unit: pure, fast tests with no I/O",
+    "integration: tests using a database, sockets, or servers",
+    "evals: quality/evaluation suites",
+    "live: requires an external service (env-gated)",
+]
+# Tests that need outside services skip unless explicitly enabled.
+# A test that cannot run exits inconclusive, never a silent pass.
 
 [tool.ruff]
 target-version = "py311"
@@ -86,11 +94,13 @@ ignore = [
 # provider/protocol methods take `order_id` they do not need in order to
 # satisfy the shared interface.
 "tests/*" = ["ARG001", "ARG002", "ARG005", "SIM117"]
-"src/safety_layer/providers/base.py" = ["ARG002"]
-"src/safety_layer/providers/mock.py" = ["ARG002"]
-"src/safety_layer/evaluation/judge.py" = ["ARG002"]
-"src/safety_layer/core/stop_rules.py" = ["ARG002"]
-"src/safety_layer/interface/gateway.py" = ["ARG002"]
+"src/safety_layer/integrations/adapters/base.py" = ["ARG002"]
+"src/safety_layer/integrations/adapters/mock.py" = ["ARG002"]
+"src/safety_layer/eval/judge.py" = ["ARG002"]
+"src/safety_layer/policy/stop_rules.py" = ["ARG002"]
+"src/safety_layer/integrations/gateway.py" = ["ARG002"]
+"src/safety_layer/credential/egress_proxy.py" = ["ARG002"]
+"src/safety_layer/credential/tls.py" = ["ARG002"]
 # Deliberate re-exports kept reachable for backwards compatibility; only the
 # names in __all__ are advertised.
 "src/safety_layer/__init__.py" = ["F401"]
@@ -134,4 +144,29 @@ exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.:",
     "raise NotImplementedError",
+]
+
+[tool.mutmut]
+# Mutation testing checks whether tests would NOTICE a bug, not just execute a
+# line. Dev-only tool; the running product stays stdlib-only. Scoped to the
+# safety-critical code where a missed fault is expensive.
+source_paths = ["src/safety_layer/"]
+only_mutate = [
+    "src/safety_layer/policy/*",
+    "src/safety_layer/engine/*",
+    "src/safety_layer/audit/*",
+    "src/safety_layer/credential/*",
+    "src/safety_layer/guards/*",
+]
+pytest_add_cli_args_test_selection = ["tests/"]
+# Repo files that tests read by relative path; mutmut copies only source+tests.
+also_copy = [
+    "docs/",
+    "deploy/",
+    "README.md",
+    "ROADMAP.md",
+    "SECURITY.md",
+    "LICENSE",
+    "Makefile",
+    "pyproject.toml",
 ]

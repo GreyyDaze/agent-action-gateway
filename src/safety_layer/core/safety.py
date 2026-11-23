@@ -1,31 +1,9 @@
-"""Shared safety state carried through a run."""
-from datetime import datetime
-from typing import Any
+"""Compatibility shim. Canonical module: safety_layer.policy.safety."""
+import importlib as _importlib  # noqa: E402
 
-from .locks import ApprovalError, ApprovalStore, RiskRegistry, SafetyBlockedError, authorize
+from safety_layer.policy.safety import *  # noqa: F401,F403,E402
 
-__all__ = ["SafetyBlockedError", "check_action", "authorize", "ApprovalStore", "RiskRegistry", "ApprovalError"]
+_canonical = _importlib.import_module("safety_layer.policy.safety")  # noqa: E402
 
-
-def check_action(
-    approval_store: ApprovalStore,
-    registry: RiskRegistry,
-    action: str,
-    arguments: dict[str, Any],
-    *,
-    approval_id: str | None = None,
-    current_state: Any | None = None,
-    now: datetime | None = None,
-) -> str:
-    try:
-        return authorize(
-            approval_store,
-            registry,
-            action,
-            arguments,
-            approval_id=approval_id,
-            current_state=current_state,
-            now=now,
-        )
-    except Exception as exc:
-        raise SafetyBlockedError(str(exc)) from exc
+def __getattr__(name):  # noqa: E402
+    return getattr(_canonical, name)

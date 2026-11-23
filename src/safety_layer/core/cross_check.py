@@ -1,47 +1,9 @@
-"""Deterministic two-source verification for suspicious tool results."""
+"""Compatibility shim. Canonical module: safety_layer.policy.cross_check."""
+import importlib as _importlib  # noqa: E402
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from typing import Any
+from safety_layer.policy.cross_check import *  # noqa: F401,F403,E402
 
+_canonical = _importlib.import_module("safety_layer.policy.cross_check")  # noqa: E402
 
-@dataclass(frozen=True)
-class CrossCheckSpec:
-    """Defines exactly how a result is independently verified."""
-
-    first_source: str
-    second_source: str
-    invariant_name: str
-    second_source_fn: Callable[[], Mapping[str, Any]]
-    invariant: Callable[[Mapping[str, Any], Mapping[str, Any]], bool]
-
-
-@dataclass(frozen=True)
-class CrossCheckResult:
-    first_source: str
-    second_source: str
-    invariant_name: str
-    second_result: Mapping[str, Any]
-    agrees: bool
-
-    @property
-    def flags(self) -> tuple[str, ...]:
-        if self.agrees:
-            return ("cross-check-agreement",)
-        return ("cross-check-disagreement",)
-
-
-def perform_cross_check(
-    first_result: Mapping[str, Any],
-    spec: CrossCheckSpec,
-) -> CrossCheckResult:
-    """Run the independent source once and evaluate the explicit invariant."""
-    second_result = spec.second_source_fn()
-    agrees = spec.invariant(first_result, second_result)
-    return CrossCheckResult(
-        first_source=spec.first_source,
-        second_source=spec.second_source,
-        invariant_name=spec.invariant_name,
-        second_result=second_result,
-        agrees=agrees,
-    )
+def __getattr__(name):  # noqa: E402
+    return getattr(_canonical, name)

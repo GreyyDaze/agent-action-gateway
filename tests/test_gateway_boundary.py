@@ -20,8 +20,8 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from safety_layer.interface.cli import load_route_policy
-from safety_layer.interface.gateway import (
+from safety_layer.cli import load_route_policy
+from safety_layer.integrations.gateway import (
     GatewayError,
     GatewayPolicy,
     Route,
@@ -210,7 +210,7 @@ class EmbeddedLaunchRefusalTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "embed_gateway.py"
             script.write_text(
-                "from safety_layer.interface.gateway import build_gateway_server, "
+                "from safety_layer.integrations.gateway import build_gateway_server, "
                 "GatewayPolicy\n"
                 "from safety_layer.storage.traces import TraceStore\n"
                 f"build_gateway_server(TraceStore({str(Path(directory) / 'r.db')!r}), "
@@ -273,7 +273,7 @@ class DoctorScopeTest(unittest.TestCase):
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, "-m", "safety_layer.interface.cli", "gateway", "doctor", *args],
+            [sys.executable, "-m", "safety_layer.cli", "gateway", "doctor", *args],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -379,7 +379,7 @@ class PeerCredRefusalShapeTest(unittest.TestCase):
     """
 
     def test_the_server_exposes_a_refusal_writer(self) -> None:
-        from safety_layer.interface.gateway import _UnixSocketServer
+        from safety_layer.integrations.gateway import _UnixSocketServer
 
         self.assertTrue(callable(getattr(_UnixSocketServer, "_refuse", None)))
 
@@ -392,7 +392,7 @@ class PeerCredRefusalShapeTest(unittest.TestCase):
         """
         import inspect
 
-        from safety_layer.interface.gateway import _UnixSocketServer
+        from safety_layer.integrations.gateway import _UnixSocketServer
 
         source = inspect.getsource(_UnixSocketServer.get_request)
         self.assertNotIn("raise GatewayError", source)

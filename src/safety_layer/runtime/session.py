@@ -26,15 +26,15 @@ from datetime import UTC
 from typing import Any
 from uuid import uuid4
 
-from ..core import enforcement
-from ..core.cross_check import CrossCheckSpec
-from ..core.enforcement import Decision, EnforcementContext
-from ..core.fuses import FuseBudget, FuseController, FuseLimits
-from ..core.locks import Approval, ApprovalStore, RiskRegistry
-from ..core.stop_rules import ClarificationState
-from ..providers.base import ExternalActionProvider
-from ..runtime.records import TraceEvent
-from ..storage.traces import TraceStore
+from safety_layer.core import enforcement
+from safety_layer.engine.enforcement import Decision, EnforcementContext
+from safety_layer.integrations.adapters.base import ExternalActionProvider
+from safety_layer.policy.cross_check import CrossCheckSpec
+from safety_layer.policy.fuses import FuseBudget, FuseController, FuseLimits
+from safety_layer.policy.locks import Approval, ApprovalStore, RiskRegistry
+from safety_layer.policy.stop_rules import ClarificationState
+from safety_layer.runtime.records import TraceEvent
+from safety_layer.storage.traces import TraceStore
 
 #: Session defaults. Deliberately finite: an unbounded run is an incident.
 DEFAULT_FUSE_LIMITS = FuseLimits(
@@ -291,11 +291,24 @@ class SafetySession:
         cross_check: CrossCheckSpec | None = None,
         estimated_cost_usd: float = 0.0,
         requires_approval: bool | None = None,
+        effect_scope: str = "",
+        identity_fields: tuple[str, ...] = (),
     ) -> Callable[..., dict[str, Any]]:
         """Return a guarded callable that routes every call through `enforce`.
 
         `risk` defaults to destructive: a tool nobody classified is never
         treated as safe.
+
+        `effect_scope` separates otherwise-identical effects across tenants or
+        principals. Leaving it empty puts every caller in one namespace, so a
+        shared deployment silently suppresses the second of two tenants issuing
+        the same action. Any multi-tenant adopter must set it.
+
+        `identity_fields` names the arguments that define the effect. It is the
+        escape hatch for the tools where identical arguments do not mean an
+        identical effect -- a body that may be edited between retries, a
+        timestamp that marks the attempt rather than the intent. Everything not
+        named is excluded from the key.
         """
         resolved_risk = risk or "destructive"
         self.registry.register(action, resolved_risk)
@@ -341,6 +354,8 @@ class SafetySession:
                     batch=self.batch,
                     cross_check=cross_check,
                     task=action,
+                    effect_scope=effect_scope,
+                    identity_fields=identity_fields,
                 )
             )
             self.decisions.append(decision)
@@ -353,7 +368,32 @@ class SafetySession:
             call_kwargs = dict(kwargs)
             if decision.intent_key is not None:
                 call_kwargs.setdefault("intent_key", decision.intent_key)
-            payload = _invoke(fn, args, call_kwargs)
+            if decision.deduplicated:
+                # The effect already landed in an earlier run. The recorded
+                # outcome is the answer; calling the function again is the
+                # duplicate this whole path exists to prevent.
+                return {
+                    "status": "allowed",
+                    "decision": "DEDUPLICATED",
+                    "result": decision.result,
+                    "risk": decision.risk,
+                    "flags": decision.flags,
+                    "evidence_status": decision.evidence_status,
+                }
+            try:
+                payload = _invoke(fn, args, call_kwargs)
+            except BaseException:
+                # The effect is known not to have landed, so the claim is
+                # released and a later attempt is allowed to try again. Left
+                # pending it would block every future attempt as in-flight.
+                if decision.intent_key is not None:
+                    self.store.mark_failed(decision.intent_key)
+                raise
+            if decision.intent_key is not None:
+                # The call returned, so the effect landed. Without this the
+                # receipt stays `pending` and every later identical call is
+                # refused as in-flight -- which is the opposite of intended.
+                self.store.mark_done(decision.intent_key, None)
             if isinstance(payload, Mapping) and (required_fields or high_stakes or cross_check):
                 validation = enforcement.validate_result(
                     self.store,

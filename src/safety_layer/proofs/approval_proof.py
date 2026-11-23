@@ -3,11 +3,11 @@ import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from ..core.locks import ApprovalStore, RiskRegistry
-from ..core.safety import SafetyBlockedError
-from ..providers.mock import MockPaymentProvider
-from ..runtime.orchestrator import dispatch_external_action
-from ..storage.traces import TraceStore
+from safety_layer.integrations.adapters.mock import MockPaymentProvider
+from safety_layer.policy.locks import ApprovalStore, RiskRegistry
+from safety_layer.policy.safety import SafetyBlockedError
+from safety_layer.runtime.orchestrator import dispatch_external_action
+from safety_layer.storage.traces import TraceStore
 
 
 def main() -> None:

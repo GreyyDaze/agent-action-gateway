@@ -14,8 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from safety_layer.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_USAGE
 from safety_layer.interface import cli
-from safety_layer.interface.gate_cli import EXIT_FAIL, EXIT_PASS, EXIT_USAGE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -111,7 +111,7 @@ class DelegationTest(unittest.TestCase):
     def test_delegate_resolves_a_full_module_path(self) -> None:
         import importlib
 
-        for module in ("safety_layer.interface.gate_cli",):
+        for module in ("safety_layer.gate_cli",):
             with self.subTest(module=module):
                 self.assertTrue(hasattr(importlib.import_module(module), "main"))
 

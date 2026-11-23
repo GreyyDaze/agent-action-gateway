@@ -4,30 +4,33 @@ The public surface is intentionally small. A user wraps their own agent and
 receives recorded evidence and enforced policy; the safety layer does not own
 the agent loop or the agent's model calls.
 
-Layout:
+Layout (old package names remain as compatibility shims):
 
-    core/        enforcement: fuses, approval locks, stop rules, receipts
-    evidence/    redaction, capture policy, honest status, failure grouping
-    storage/     durable SQLite persistence
-    evaluation/  golden set, judges, verdict engine, regression gate
-    providers/   external action adapters (HTTP, Stripe, test doubles)
-    runtime/     run orchestration
-    interface/   CLI and dashboard
-    proofs/      verification scripts, not shipped in the wheel
+    policy/        pure decisions: risk, approval, budgets, stop rules, hashes
+    engine/        the one enforcement pipeline
+    guards/        redaction, capture policy, honest status
+    runtime/       run orchestration
+    credential/    key custody, egress policy, proxy, TLS
+    integrations/  gateway, MCP, in-process adapters
+    audit/         receipts, failure grouping, lifecycle stores
+    eval/          golden set, judges, verdict engine, regression gate
+    storage/       durable SQLite/Postgres persistence (leaf layer)
+    observability/ dashboard and wiring check
+    proofs/        verification scripts, not shipped in the wheel
 
 Import from here rather than from submodules; the submodule layout is an
 implementation detail.
 """
 
-from .core.fuses import (
+from safety_layer.policy.fuses import (
     FuseBudget,
     FuseController,
     FuseLimits,
     FuseTrippedError,
     FuseUnavailableError,
 )
-from .runtime.orchestrator import run
-from .runtime.session import DEFAULT_FUSE_LIMITS, SafetySession, session
+from safety_layer.runtime.orchestrator import run
+from safety_layer.runtime.session import DEFAULT_FUSE_LIMITS, SafetySession, session
 
 # The names below are what a consumer needs. The remaining imports stay
 # reachable so that existing `from safety_layer import X` calls keep working,

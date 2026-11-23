@@ -15,9 +15,9 @@ import unittest
 from pathlib import Path
 
 from safety_layer import session
-from safety_layer.core.fuses import FuseLimits
-from safety_layer.core.receipts import UnresolvableReceiptError, resolve_unknown
-from safety_layer.providers.mock import MockPaymentProvider
+from safety_layer.audit.receipts import UnresolvableReceiptError, resolve_unknown
+from safety_layer.integrations.adapters.mock import MockPaymentProvider
+from safety_layer.policy.fuses import FuseLimits
 from safety_layer.storage.traces import TraceStore
 
 

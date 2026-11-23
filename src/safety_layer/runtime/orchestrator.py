@@ -5,24 +5,24 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from ..core.cross_check import CrossCheckSpec, perform_cross_check
-from ..core.enforcement import EnforcementContext, enforce
-from ..core.fuses import FuseController, FuseTrippedError
-from ..core.locks import ApprovalStore, RiskRegistry
-from ..core.safety import SafetyBlockedError
-from ..core.stop_rules import (
+from safety_layer.engine.enforcement import EnforcementContext, enforce
+from safety_layer.eval.gate import record_run_status
+from safety_layer.guards.capture import suspicious_flags
+from safety_layer.guards.status import honest_status
+from safety_layer.integrations.adapters.base import ExternalActionProvider
+from safety_layer.policy.cross_check import CrossCheckSpec, perform_cross_check
+from safety_layer.policy.fuses import FuseController, FuseTrippedError
+from safety_layer.policy.locks import ApprovalStore, RiskRegistry
+from safety_layer.policy.safety import SafetyBlockedError
+from safety_layer.policy.stop_rules import (
     AmbiguityBlockedError,
     ClarificationState,
     ResultDecision,
     StopPolicy,
     validate_required_input,
 )
-from ..evaluation.gate import record_run_status
-from ..evidence.capture import suspicious_flags
-from ..evidence.status import honest_status
-from ..providers.base import ExternalActionProvider
-from ..storage.traces import TraceStore
-from .records import TraceEvent
+from safety_layer.runtime.records import TraceEvent
+from safety_layer.storage.traces import TraceStore
 
 
 def _persist_fuse(trace_store: TraceStore, run_id: str, fuse: FuseController | None) -> None:

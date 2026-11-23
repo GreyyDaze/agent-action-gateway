@@ -27,18 +27,20 @@ from pathlib import Path
 from unittest import mock
 from urllib.parse import parse_qs
 
-from safety_layer.core.locks import ApprovalStore, RiskRegistry
-from safety_layer.core.receipts import (
+from safety_layer.audit.receipts import (
     UnresolvableReceiptError,
     execute_side_effect,
     resolve_unknown,
 )
-from safety_layer.providers.base import ExternalActionProvider as ExternalActionProviderProtocol
-from safety_layer.providers.stripe import (
+from safety_layer.integrations.adapters.base import (
+    ExternalActionProvider as ExternalActionProviderProtocol,
+)
+from safety_layer.integrations.adapters.stripe import (
     METADATA_KEY,
     StripeProviderError,
     StripeRefundProvider,
 )
+from safety_layer.policy.locks import ApprovalStore, RiskRegistry
 from safety_layer.runtime.orchestrator import dispatch_external_action
 from safety_layer.storage.traces import TraceStore
 
@@ -352,7 +354,7 @@ class ProviderIsDomainNeutralTest(unittest.TestCase):
     """
 
     def test_protocol_and_http_adapter_use_generic_names(self) -> None:
-        from safety_layer.providers.base import (
+        from safety_layer.integrations.adapters.base import (
             ExternalActionProvider,
             HttpExternalActionProvider,
         )
@@ -368,11 +370,11 @@ class ProviderIsDomainNeutralTest(unittest.TestCase):
         An adopter wiring a file delete should not have to write a method
         called `refund`. This is the whole reason the interface was renamed.
         """
-        from safety_layer.providers.base import (
+        from safety_layer.integrations.adapters.base import (
             ExternalActionProvider,
             HttpExternalActionProvider,
         )
-        from safety_layer.providers.mock import MockProvider
+        from safety_layer.integrations.adapters.mock import MockProvider
 
         for holder in (ExternalActionProvider, HttpExternalActionProvider):
             methods = {n for n in dir(holder) if not n.startswith("_")}
@@ -406,10 +408,10 @@ class ProviderIsDomainNeutralTest(unittest.TestCase):
         If refunds ever leak back into fuses/locks/stop-rules, the product has
         quietly become domain-locked even though the adapter layer is generic.
         """
-        import safety_layer.core.fuses as fuses
-        import safety_layer.core.locks as locks
-        import safety_layer.core.stop_rules as stop_rules
-        import safety_layer.evidence.failure_wall as failure_wall
+        import safety_layer.audit.failure_wall as failure_wall
+        import safety_layer.policy.fuses as fuses
+        import safety_layer.policy.locks as locks
+        import safety_layer.policy.stop_rules as stop_rules
         import safety_layer.storage.traces as store
 
         for module in (fuses, locks, stop_rules, failure_wall, store):

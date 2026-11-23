@@ -3,9 +3,9 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from safety_layer.core.locks import ApprovalStore, RiskRegistry
-from safety_layer.core.safety import SafetyBlockedError, check_action
-from safety_layer.providers.mock import MockPaymentProvider
+from safety_layer.integrations.adapters.mock import MockPaymentProvider
+from safety_layer.policy.locks import ApprovalStore, RiskRegistry
+from safety_layer.policy.safety import SafetyBlockedError, check_action
 from safety_layer.runtime.orchestrator import dispatch_external_action
 from safety_layer.storage.traces import TraceStore
 
