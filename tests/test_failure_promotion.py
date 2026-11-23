@@ -66,8 +66,8 @@ class FailurePromotionTests(unittest.TestCase):
                     promotions,
                     group.group_id,
                     case_id="failure-001",
-                    task={"request": "refund order 123"},
-                    expected={"status": "refunded"},
+                    task={"request": "roll back deployment 123"},
+                    expected={"status": "rolled_back"},
                     check_type="field-equality",
                 )
 
@@ -85,14 +85,14 @@ class FailurePromotionTests(unittest.TestCase):
                 promotions,
                 group.group_id,
                 case_id="failure-001",
-                task={"request": "refund order 123"},
-                expected={"status": "refunded"},
+                task={"request": "roll back deployment 123"},
+                expected={"status": "rolled_back"},
                 check_type="field-equality",
             )
 
             self.assertEqual(promotion.case.case_id, "failure-001")
-            self.assertEqual(promotion.case.task, {"request": "refund order 123"})
-            self.assertEqual(promotion.case.expected, {"status": "refunded"})
+            self.assertEqual(promotion.case.task, {"request": "roll back deployment 123"})
+            self.assertEqual(promotion.case.expected, {"status": "rolled_back"})
             self.assertEqual(promotion.case.check_type, "field-equality")
             self.assertEqual(
                 promotion.case.source,
@@ -114,8 +114,8 @@ class FailurePromotionTests(unittest.TestCase):
                 promotions,
                 group.group_id,
                 case_id="failure-002",
-                task="refund order 456",
-                expected={"status": "refunded"},
+                task="roll back deployment 456",
+                expected={"status": "rolled_back"},
                 check_type="exact",
             )
 
@@ -125,7 +125,7 @@ class FailurePromotionTests(unittest.TestCase):
             assert reopened is not None
             self.assertEqual(reopened.failure_group_id, group.group_id)
             self.assertEqual(reopened.source_trace_ids, (501, 502))
-            self.assertEqual(reopened.case.expected, {"status": "refunded"})
+            self.assertEqual(reopened.case.expected, {"status": "rolled_back"})
 
     def test_same_group_cannot_be_promoted_twice(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -137,8 +137,8 @@ class FailurePromotionTests(unittest.TestCase):
             )
             kwargs = {
                 "case_id": "failure-003",
-                "task": "refund order 789",
-                "expected": {"status": "refunded"},
+                "task": "roll back deployment 789",
+                "expected": {"status": "rolled_back"},
                 "check_type": "exact",
             }
 
@@ -150,8 +150,8 @@ class FailurePromotionTests(unittest.TestCase):
                     promotions,
                     group.group_id,
                     case_id="failure-004",
-                    task="refund order 789",
-                    expected={"status": "refunded"},
+                    task="roll back deployment 789",
+                    expected={"status": "rolled_back"},
                     check_type="exact",
                 )
 
@@ -169,8 +169,8 @@ class FailurePromotionTests(unittest.TestCase):
                 promotion_store,
                 group.group_id,
                 case_id="failure-005",
-                task={"request": "refund order 999"},
-                expected={"status": "refunded"},
+                task={"request": "roll back deployment 999"},
+                expected={"status": "rolled_back"},
                 check_type="field-equality",
             )
 

@@ -27,25 +27,25 @@ class ProviderHandler(http.server.BaseHTTPRequestHandler):
         return connection
 
     def do_POST(self):
-        if self.path != "/refunds":
+        if self.path != "/effects":
             self.send_error(404)
             return
         payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         key = payload["intent_key"]
-        order_id = payload["order_id"]
+        target = payload["target"]
         db = self._connect()
         try:
             existing = db.execute(
-                "SELECT provider_ref FROM refunds WHERE intent_key=?",
+                "SELECT provider_ref FROM effects WHERE intent_key=?",
                 (key,),
             ).fetchone()
             if existing is not None:
                 self._json({"provider_ref": existing["provider_ref"]})
                 return
-            provider_ref = f"refund-{time.time_ns()}"
+            provider_ref = f"effect-{time.time_ns()}"
             db.execute(
-                "INSERT INTO refunds(intent_key, order_id, provider_ref) VALUES (?, ?, ?)",
-                (key, order_id, provider_ref),
+                "INSERT INTO effects(intent_key, target, provider_ref) VALUES (?, ?, ?)",
+                (key, target, provider_ref),
             )
             db.commit()
         finally:
@@ -53,7 +53,7 @@ class ProviderHandler(http.server.BaseHTTPRequestHandler):
         self._json({"provider_ref": provider_ref})
 
     def do_GET(self):
-        prefix = "/refunds/"
+        prefix = "/effects/"
         if not self.path.startswith(prefix):
             self.send_error(404)
             return
@@ -61,7 +61,7 @@ class ProviderHandler(http.server.BaseHTTPRequestHandler):
         db = self._connect()
         try:
             row = db.execute(
-                "SELECT provider_ref FROM refunds WHERE intent_key=?",
+                "SELECT provider_ref FROM effects WHERE intent_key=?",
                 (key,),
             ).fetchone()
         finally:
@@ -88,10 +88,10 @@ def initialize_provider_db(path: str | Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as db:
         db.execute(
-            """CREATE TABLE IF NOT EXISTS refunds (
+            """CREATE TABLE IF NOT EXISTS effects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 intent_key TEXT NOT NULL UNIQUE,
-                order_id TEXT NOT NULL,
+                target TEXT NOT NULL,
                 provider_ref TEXT NOT NULL
             )"""
         )
@@ -100,10 +100,10 @@ def initialize_provider_db(path: str | Path) -> None:
 def worker(provider_url: str, db_path: str, run_id: str, step_id: str, kill_point: int) -> None:
     store = TraceStore(db_path)
     provider = HttpExternalActionProvider(provider_url)
-    receipt = store.create_receipt(run_id, step_id, "external_action", {"target": "ORD-100"})
+    receipt = store.create_receipt(run_id, step_id, "external_action", {"target": "DEP-100"})
     if kill_point == 0:
         os.kill(os.getpid(), signal.SIGKILL)
-    provider_ref = provider.execute("ORD-100", receipt.intent_key)
+    provider_ref = provider.execute("DEP-100", receipt.intent_key)
     if kill_point == 1:
         os.kill(os.getpid(), signal.SIGKILL)
     store.mark_done(receipt.intent_key, provider_ref)
@@ -113,7 +113,7 @@ def worker(provider_url: str, db_path: str, run_id: str, step_id: str, kill_poin
 
 def count_provider_actions(path: str) -> int:
     with sqlite3.connect(path) as db:
-        return db.execute("SELECT COUNT(*) FROM refunds").fetchone()[0]
+        return db.execute("SELECT COUNT(*) FROM effects").fetchone()[0]
 
 
 def run_proof(jobs: int) -> tuple[int, int]:
@@ -179,7 +179,7 @@ def dedupe_worker(
     from agent_action_gateway.audit.receipts import claim_effect
 
     store = TraceStore(db_path)
-    arguments = {"target": "ORD-100"}
+    arguments = {"target": "DEP-100"}
     receipt, owned = claim_effect(
         store, run_id, step_id, "external_action", arguments
     )
@@ -202,7 +202,7 @@ def dedupe_worker(
     if kill_point == 0:
         os.kill(os.getpid(), signal.SIGKILL)
     provider_ref = HttpExternalActionProvider(provider_url).execute(
-        "ORD-100", receipt.intent_key
+        "DEP-100", receipt.intent_key
     )
     if kill_point == 1:
         os.kill(os.getpid(), signal.SIGKILL)

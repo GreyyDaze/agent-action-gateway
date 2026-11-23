@@ -3,7 +3,7 @@
 #     docker compose -f docker-compose.yml -f docker-compose.egress.yml up -d
 #
 # Use this when your agent legitimately needs egress -- almost always, because an
-# agent that calls a payment API also calls a model API, and a model API is on
+# agent that calls a deployment API also calls a model API, and a model API is on
 # the internet.
 #
 # WHAT THIS GIVES UP
@@ -17,7 +17,7 @@
 # That is not a small loss, so do not treat this file as a convenience. Pick it
 # only when you have replaced Boundary B with something real:
 #
-#   * an egress policy that allows the model API and denies the payment API
+#   * an egress policy that allows the model API and denies the deployment API
 #     (Cilium, or your cloud's DNS-based egress control), or
 #   * a gateway that holds a *scoped, short-lived* credential, so a leaked one
 #     expires in minutes and is limited to one route, or

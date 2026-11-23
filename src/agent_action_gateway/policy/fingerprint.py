@@ -34,9 +34,9 @@ _KEY_LENGTH = 32
 #: Floats are rounded before hashing because the same logical value does not
 #: always round-trip identically: a JSON body that has been through a decimal
 #: parse and re-serialise can differ in the last place, and two workers
-#: computing "the same" amount can disagree. Twelve significant digits is far
+#: computing "the same" value can disagree. Twelve significant digits is far
 #: beyond any precision a real action depends on, so it removes the drift
-#: without merging two genuinely different amounts.
+#: without merging two genuinely different values.
 _FLOAT_PRECISION = 12
 
 

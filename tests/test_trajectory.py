@@ -45,7 +45,7 @@ class RefusedActionTest(unittest.TestCase):
     """The signal that matters most, and the one we must never reward retrying."""
 
     def test_a_held_destructive_action_is_flagged(self) -> None:
-        result = score([decision("refund", risk="destructive", status="blocked")])
+        result = score([decision("rollback", risk="destructive", status="blocked")])
         self.assertIn("unapproved_destructive", result.kinds())
         self.assertEqual(result.penalty, 3)
 
@@ -54,7 +54,7 @@ class RefusedActionTest(unittest.TestCase):
         self.assertTrue(score([decision("lookup", risk="read", status="blocked")]).clean)
 
     def test_a_gateway_refusal_is_flagged(self) -> None:
-        result = score([step("gateway.denied", status="blocked", result={"action": "charge"})])
+        result = score([step("gateway.denied", status="blocked", result={"action": "deploy"})])
         self.assertIn("unapproved_destructive", result.kinds())
 
     def test_an_allowed_action_is_clean(self) -> None:
@@ -63,7 +63,7 @@ class RefusedActionTest(unittest.TestCase):
     def test_a_refused_action_is_reported_once_not_once_per_trace_row(self) -> None:
         """One refused action is written to several rows. Counting each would
         inflate the penalty and make the score look like a tally."""
-        rows = [decision("refund", risk="destructive", status="blocked") for _ in range(4)]
+        rows = [decision("rollback", risk="destructive", status="blocked") for _ in range(4)]
         result = score(rows)
         refused = [s for s in result.signals if s.kind == "unapproved_destructive"]
         self.assertEqual(len(refused), 1)
@@ -71,15 +71,15 @@ class RefusedActionTest(unittest.TestCase):
 
 class LoopTest(unittest.TestCase):
     def test_repeating_one_call_with_the_same_arguments_is_a_loop(self) -> None:
-        rows = [decision("lookup", step_no=i, args={"order_id": "ORD-1"}) for i in range(4)]
+        rows = [decision("lookup", step_no=i, args={"deployment_id": "DEP-1"}) for i in range(4)]
         self.assertIn("no_progress_loop", score(rows).kinds())
 
     def test_two_identical_calls_are_not_yet_a_loop(self) -> None:
-        rows = [decision("lookup", step_no=i, args={"order_id": "ORD-1"}) for i in range(2)]
+        rows = [decision("lookup", step_no=i, args={"deployment_id": "DEP-1"}) for i in range(2)]
         self.assertTrue(score(rows).clean)
 
     def test_different_arguments_are_not_a_loop(self) -> None:
-        rows = [decision("lookup", step_no=i, args={"order_id": f"ORD-{i}"}) for i in range(6)]
+        rows = [decision("lookup", step_no=i, args={"deployment_id": f"DEP-{i}"}) for i in range(6)]
         self.assertNotIn("no_progress_loop", score(rows).kinds())
 
     def test_different_actions_are_not_a_loop(self) -> None:
@@ -99,7 +99,7 @@ class BudgetTest(unittest.TestCase):
         """A tripped loop budget and a held destructive action are different
         failures. Conflating them overstates what happened."""
         result = score(
-            [step("enforcement.fuse", status="blocked", payload="refund", result="loop detected")]
+            [step("enforcement.fuse", status="blocked", payload="rollback", result="loop detected")]
         )
         self.assertIn("fuse_tripped", result.kinds())
         self.assertNotIn("unapproved_destructive", result.kinds())
@@ -116,7 +116,7 @@ class BudgetTest(unittest.TestCase):
 
 class RequiredStepTest(unittest.TestCase):
     def test_a_skipped_declared_action_is_flagged(self) -> None:
-        result = score([decision("lookup")], expected_actions=["charge"])
+        result = score([decision("lookup")], expected_actions=["deploy"])
         self.assertIn("skipped_required_step", result.kinds())
 
     def test_without_declaration_nothing_is_claimed(self) -> None:
@@ -136,8 +136,8 @@ class NotPenalisedTest(unittest.TestCase):
         """A careful agent re-attempts. The refusal is still reported; the loop
         signal must not fire purely because a blocked call was retried."""
         rows = [
-            decision("refund", risk="destructive", status="blocked", step_no=1, args={"n": 1}),
-            decision("refund", risk="destructive", status="blocked", step_no=2, args={"n": 1}),
+            decision("rollback", risk="destructive", status="blocked", step_no=1, args={"n": 1}),
+            decision("rollback", risk="destructive", status="blocked", step_no=2, args={"n": 1}),
         ]
         kinds = score(rows).kinds()
         self.assertIn("unapproved_destructive", kinds)
@@ -162,8 +162,8 @@ class RealSessionRunTest(unittest.TestCase):
     def test_a_real_run_with_a_held_destructive_action_is_not_clean(self) -> None:
         traces = self._run(
             lambda ctx: ctx.tool(
-                lambda **k: {"status": "ok"}, action="refund", risk="destructive"
-            )(amount=100)
+                lambda **k: {"status": "ok"}, action="rollback", risk="destructive"
+            )(revision=100)
         )
         result = score(traces)
         self.assertFalse(result.clean, result.as_dict())
@@ -172,8 +172,8 @@ class RealSessionRunTest(unittest.TestCase):
     def test_a_real_clean_run_scores_clean(self) -> None:
         traces = self._run(
             lambda ctx: ctx.tool(
-                lambda order_id=None, **k: {"status": "ok"}, action="lookup", risk="read"
-            )(order_id="ORD-1")
+                lambda deployment_id=None, **k: {"status": "ok"}, action="lookup", risk="read"
+            )(deployment_id="DEP-1")
         )
         result = score(traces)
         self.assertTrue(result.clean, result.as_dict())
@@ -193,11 +193,11 @@ class MutationTest(unittest.TestCase):
         from agent_action_gateway.eval.trajectory import WEIGHTS
 
         rows = [
-            decision("refund", risk="destructive", status="blocked"),
+            decision("rollback", risk="destructive", status="blocked"),
             step("enforcement.fuse", status="blocked", result="limit"),
             decision("lookup", step_no=2, args={"n": 1}),
         ]
-        for signal in score(rows, expected_actions=["charge"]).signals:
+        for signal in score(rows, expected_actions=["deploy"]).signals:
             self.assertIn(signal.kind, WEIGHTS)
             self.assertGreater(signal.weight, 0)
 

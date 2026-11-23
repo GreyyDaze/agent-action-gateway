@@ -61,8 +61,8 @@ class FailurePromotionDrillTests(unittest.TestCase):
                 promotions,
                 group.group_id,
                 case_id="failure-drill-001",
-                task="Refund order ORD-601",
-                expected={"order_id": "ORD-601", "status": "refunded"},
+                task="Roll back deployment DEP-601",
+                expected={"deployment_id": "DEP-601", "status": "rolled_back"},
                 check_type="field-equality",
             )
 

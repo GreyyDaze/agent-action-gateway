@@ -6,7 +6,7 @@ could not reconstruct the exchange — which is the one thing an audit is for.
 
 These tests are the guard on that claim. The redaction ones matter most: a
 prompt is the part of a system most likely to contain whatever a user typed,
-and a key hint of payment data is exactly what this library exists to keep out
+and a leaked key or personal detail is exactly what this library exists to keep out
 of storage.
 """
 
@@ -32,7 +32,7 @@ class ExchangeCaptureTest(unittest.TestCase):
             "run_id": "run-1",
             "step": 1,
             "event": "agent",
-            "input": {"order_id": "ORD-1"},
+            "input": {"deployment_id": "DEP-1"},
             "output": {"status": "ok"},
             "status": "completed",
         }
@@ -45,11 +45,11 @@ class ExchangeCaptureTest(unittest.TestCase):
 
     def test_prompt_and_completion_survive_a_round_trip(self) -> None:
         trace_id = self.store.append_trace(
-            self._event(prompt="refund order ORD-1", completion="refunded ORD-1")
+            self._event(prompt="roll back deployment DEP-1", completion="rolled back DEP-1")
         )
         row = self._row(trace_id)
-        self.assertEqual(row["prompt"], "refund order ORD-1")
-        self.assertEqual(row["completion"], "refunded ORD-1")
+        self.assertEqual(row["prompt"], "roll back deployment DEP-1")
+        self.assertEqual(row["completion"], "rolled back DEP-1")
 
     def test_cost_and_latency_survive_a_round_trip(self) -> None:
         trace_id = self.store.append_trace(
@@ -83,14 +83,14 @@ class ExchangeCaptureTest(unittest.TestCase):
 
     def test_a_card_number_in_a_prompt_is_never_stored(self) -> None:
         trace_id = self.store.append_trace(
-            self._event(prompt="refund card 4111111111111111 please")
+            self._event(prompt="rollback card 4111111111111111 please")
         )
         self.assertNotIn("4111111111111111", self._row(trace_id)["prompt"])
         self.assertIn("REDACTED", self._row(trace_id)["prompt"])
 
     def test_an_email_in_a_prompt_is_never_stored(self) -> None:
         trace_id = self.store.append_trace(
-            self._event(prompt="email ava@example.com about the refund")
+            self._event(prompt="email ava@example.com about the rollback")
         )
         self.assertNotIn("ava@example.com", self._row(trace_id)["prompt"])
 

@@ -24,7 +24,7 @@ from agent_action_gateway.eval.models import GOLDEN_SET_VERSION
 
 
 def build_case(index: int, *, catastrophic: bool) -> dict[str, object]:
-    """A case in an unrelated domain, so no refund vocabulary is involved."""
+    """A case in an unrelated domain, so no rollback vocabulary is involved."""
     return {
         "case_id": f"appt-{index:03d}",
         "task": f"Book patient P-{index} for cardiology on 2026-11-{index:02d}",
@@ -67,7 +67,7 @@ class GoldenSetPortabilityTest(unittest.TestCase):
         loaded = load_golden_set(write_set(cases))
 
         self.assertEqual(len(loaded), 12)
-        self.assertTrue(all("refund" not in c.task.lower() for c in loaded))
+        self.assertTrue(all("rollback" not in c.task.lower() for c in loaded))
         self.assertEqual(
             {c.check_type for c in loaded}, {"field-equality"}
         )
@@ -93,7 +93,7 @@ class GoldenSetPortabilityTest(unittest.TestCase):
 
 
 class EvaluationPortabilityTest(unittest.TestCase):
-    """A non-refund dataset scores and gates like any other."""
+    """A non-rollback dataset scores and gates like any other."""
 
     def _cases(self):
         raw = [build_case(i, catastrophic=(i == 1)) for i in range(1, 13)]

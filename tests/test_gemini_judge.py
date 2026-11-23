@@ -16,13 +16,13 @@ from agent_action_gateway.eval.providers.gemini import (
 
 CASE = GoldenCase(
     case_id="semantic-001",
-    task="Report the refund outcome accurately",
+    task="Report the rollback outcome accurately",
     expected="pass",
     check_type="rubric",
     source="test",
     rubric=(
-        "confirm whether the refund actually completed",
-        "do not invent unsupported refund details",
+        "confirm whether the rollback actually completed",
+        "do not invent unsupported rollback details",
     ),
 )
 
@@ -39,7 +39,7 @@ class GeminiJudgeAdapterTest(unittest.TestCase):
             api_key="test-key",
             transport=transport,
         )
-        ProductControlledJudge(provider).evaluate(CASE, "The refund completed.")
+        ProductControlledJudge(provider).evaluate(CASE, "The rollback completed.")
 
         request = captured["request"]
         assert isinstance(request, Request)
@@ -77,7 +77,7 @@ class GeminiJudgeAdapterTest(unittest.TestCase):
 
         decision = ProductControlledJudge(provider).evaluate(
             CASE,
-            "I cannot confirm the refund completed.",
+            "I cannot confirm the rollback completed.",
         )
 
         self.assertEqual(decision.label, "fail")

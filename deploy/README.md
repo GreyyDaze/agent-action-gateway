@@ -27,7 +27,7 @@ client = SafetyClient(base_url="http://gateway:8080", key=VIRTUAL_KEY)
 ## Try it
 
 ```bash
-printf 'sk_live_replace_me' > secrets/stripe_key && chmod 600 secrets/stripe_key
+printf 'replace_me' > secrets/github_token && chmod 600 secrets/github_token
 export AGENT_GATEWAY_MASTER_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
 
 docker compose up -d gateway
@@ -50,7 +50,7 @@ export AGENT_GATEWAY_MASTER_KEY=...            # must match the running gateway'
 KEY=$(docker compose exec -T -e AGENT_GATEWAY_MASTER_KEY gateway \
         agent-gateway gateway --config /etc/agent-action-gateway/routes.json \
         --db /var/lib/agent-action-gateway/gateway.db \
-        issue-key --name billing-agent --ttl 1h --routes /charge)
+        issue-key --name deploy-agent --ttl 1h --routes /deploy)
 
 AGENT_GATEWAY_PROBE_KEY=$KEY make verify-boundary
 ```
@@ -77,7 +77,7 @@ use — which is correct, and is the point.
 
 ## Secrets
 
-`routes.example.json` uses `secret_env: "file:/run/secrets/stripe_key"` rather
+`routes.example.json` uses `secret_env: "file:/run/secrets/github_token"` rather
 than a bare variable name, because a file can have an owner and a mode. The
 gateway refuses to start if that file is group- or world-readable, or owned by
 anyone but the gateway's user.

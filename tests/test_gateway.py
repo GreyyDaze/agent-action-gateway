@@ -33,7 +33,7 @@ UPSTREAM_KEY = "sk_upstream_secret_value_for_custody_test"
 
 
 class RecordingUpstream(BaseHTTPRequestHandler):
-    """Stand-in for a real payment API. Records what actually arrived."""
+    """Stand-in for a real upstream API. Records what actually arrived."""
 
     received: list[dict] = []
 
@@ -64,7 +64,7 @@ class GatewayTest(unittest.TestCase):
         RecordingUpstream.received = []
         cls.upstream = ThreadingHTTPServer(("127.0.0.1", 0), RecordingUpstream)
         threading.Thread(target=cls.upstream.serve_forever, daemon=True).start()
-        cls.upstream_url = f"http://127.0.0.1:{cls.upstream.server_address[1]}/charge"
+        cls.upstream_url = f"http://127.0.0.1:{cls.upstream.server_address[1]}/deploy"
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -87,9 +87,9 @@ class GatewayTest(unittest.TestCase):
         policy = GatewayPolicy(session_environment="prod")
         policy.register(
             Route(
-                path="/charge",
+                path="/deploy",
                 upstream=self.upstream_url,
-                action="charge",
+                action="deploy",
                 risk="destructive",
                 secret_env=UPSTREAM_KEY,
                 environment="prod",
@@ -113,9 +113,9 @@ class GatewayTest(unittest.TestCase):
         """
         from datetime import datetime, timedelta
 
-        payload = {"amount": 100, **overrides}
+        payload = {"revision": 100, **overrides}
         approval = gateway.approvals.request(
-            "charge",
+            "deploy",
             {**payload, "_idempotency_key": key},
             datetime.now(UTC) + timedelta(minutes=5),
         )
@@ -126,13 +126,13 @@ class GatewayTest(unittest.TestCase):
 
     def test_unregistered_route_is_refused(self) -> None:
         gateway = self._gateway()
-        result = gateway.handle("POST", "/not-registered", {"amount": 1})
+        result = gateway.handle("POST", "/not-registered", {"revision": 1})
         self.assertEqual(result.status, 403)
         self.assertEqual(RecordingUpstream.received, [])
 
     def test_wrong_method_is_refused(self) -> None:
         gateway = self._gateway()
-        result = gateway.handle("GET", "/charge", {})
+        result = gateway.handle("GET", "/deploy", {})
         self.assertEqual(result.status, 403)
         self.assertEqual(RecordingUpstream.received, [])
 
@@ -142,7 +142,7 @@ class GatewayTest(unittest.TestCase):
         gateway = self._gateway()
         approval, payload = self._approve(gateway)
         gateway.handle(
-            "POST", "/charge", payload,
+            "POST", "/deploy", payload,
             approval_id=approval.approval_id, idempotency_key="key-1",
         )
 
@@ -166,7 +166,7 @@ class GatewayTest(unittest.TestCase):
         approval, payload = self._approve(gateway)
         with mock.patch.dict(os.environ, {}, clear=True):
             result = gateway.handle(
-                "POST", "/charge", payload,
+                "POST", "/deploy", payload,
                 approval_id=approval.approval_id, idempotency_key="key-1",
             )
         self.assertEqual(result.status, 503)
@@ -178,7 +178,7 @@ class GatewayTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(Exception) as raised:
                 Route(
-                    path="/charge", upstream="u", action="charge",
+                    path="/deploy", upstream="u", action="deploy",
                     secret_env="DEFINITELY_NOT_SET_ANYWHERE",
                 ).credential()
         self.assertIn("credential", str(raised.exception).lower())
@@ -187,7 +187,7 @@ class GatewayTest(unittest.TestCase):
 
     def test_destructive_route_without_approval_is_held(self) -> None:
         gateway = self._gateway()
-        result = gateway.handle("POST", "/charge", {"amount": 100})
+        result = gateway.handle("POST", "/deploy", {"revision": 100})
         # 403, not 401: the caller proved who it is and lacks authorisation.
         # Reusing 401 made "awaiting approval" look like "invalid key".
         self.assertEqual(result.status, 403)
@@ -198,7 +198,7 @@ class GatewayTest(unittest.TestCase):
         gateway = self._gateway()
         approval, payload = self._approve(gateway)
         result = gateway.handle(
-            "POST", "/charge", payload,
+            "POST", "/deploy", payload,
             approval_id=approval.approval_id, idempotency_key="key-1",
         )
         self.assertEqual(result.status, 200)
@@ -208,21 +208,21 @@ class GatewayTest(unittest.TestCase):
         gateway = self._gateway()
         approval, payload = self._approve(gateway)
         gateway.handle(
-            "POST", "/charge", payload,
+            "POST", "/deploy", payload,
             approval_id=approval.approval_id, idempotency_key="key-1",
         )
         second = gateway.handle(
-            "POST", "/charge", payload,
+            "POST", "/deploy", payload,
             approval_id=approval.approval_id, idempotency_key="key-1",
         )
         self.assertEqual(second.status, 403)  # awaiting approval, not a bad token
-        self.assertEqual(len(RecordingUpstream.received), 1, "replayed approval caused a second charge")
+        self.assertEqual(len(RecordingUpstream.received), 1, "replayed approval caused a second deploy")
 
     def test_idempotency_key_is_forwarded(self) -> None:
         gateway = self._gateway()
         approval, payload = self._approve(gateway)
         gateway.handle(
-            "POST", "/charge", payload,
+            "POST", "/deploy", payload,
             approval_id=approval.approval_id, idempotency_key="key-1",
         )
         self.assertEqual(RecordingUpstream.received[0]["idempotency_key"], "key-1")
@@ -232,11 +232,11 @@ class GatewayTest(unittest.TestCase):
     def test_cross_environment_route_is_refused(self) -> None:
         policy = GatewayPolicy(session_environment="staging")
         policy.register(
-            Route(path="/charge", upstream=self.upstream_url, action="charge",
+            Route(path="/deploy", upstream=self.upstream_url, action="deploy",
                   risk="destructive", environment="prod")
         )
         gateway = SafetyGateway(self.store, policy)
-        result = gateway.handle("POST", "/charge", {"amount": 1})
+        result = gateway.handle("POST", "/deploy", {"revision": 1})
         self.assertEqual(result.status, 403)
         self.assertEqual(RecordingUpstream.received, [])
 
@@ -254,7 +254,7 @@ class GatewayTest(unittest.TestCase):
             base = f"http://127.0.0.1:{server.server_address[1]}"
             try:
                 request = urllib.request.Request(
-                    base + "/charge", data=b"{}", method="POST"
+                    base + "/deploy", data=b"{}", method="POST"
                 )
                 with self.assertRaises(urllib.error.HTTPError) as raised:
                     urllib.request.urlopen(request, timeout=5)
@@ -288,7 +288,7 @@ class CallerAuthTest(unittest.TestCase):
 
     def _policy(self) -> GatewayPolicy:
         policy = GatewayPolicy(session_environment="prod", master_key_env="TEST_MASTER_KEY")
-        for path, action in (("/charge", "charge"), ("/refund", "refund")):
+        for path, action in (("/deploy", "deploy"), ("/rollback", "rollback")):
             policy.register(
                 Route(path=path, upstream="http://127.0.0.1:1" + path, action=action, risk="read")
             )
@@ -311,17 +311,17 @@ class CallerAuthTest(unittest.TestCase):
             server.server_close()
 
     def test_missing_token_is_refused(self) -> None:
-        self.assertEqual(self._call(self._policy(), "/charge", None)[0], 401)
+        self.assertEqual(self._call(self._policy(), "/deploy", None)[0], 401)
 
     def test_unknown_token_is_refused(self) -> None:
-        self.assertEqual(self._call(self._policy(), "/charge", "not-a-key")[0], 401)
+        self.assertEqual(self._call(self._policy(), "/deploy", "not-a-key")[0], 401)
 
     def test_virtual_key_may_not_use_a_route_it_was_not_issued_for(self) -> None:
         policy = self._policy()
         policy.virtual_keys["k"] = VirtualKey(
-            key="k", name="limited", routes=frozenset({"/charge"})
+            key="k", name="limited", routes=frozenset({"/deploy"})
         )
-        code, body = self._call(policy, "/refund", "k")
+        code, body = self._call(policy, "/rollback", "k")
         self.assertEqual(code, 403)
         self.assertIn("not authorized for route", body)
 
@@ -330,7 +330,7 @@ class CallerAuthTest(unittest.TestCase):
         key cannot use, or the gateway becomes a route-existence oracle."""
         policy = self._policy()
         policy.virtual_keys["k"] = VirtualKey(
-            key="k", name="limited", routes=frozenset({"/charge"})
+            key="k", name="limited", routes=frozenset({"/deploy"})
         )
         code, body = self._call(policy, "/admin", "k")
         self.assertEqual(code, 403)
@@ -339,30 +339,30 @@ class CallerAuthTest(unittest.TestCase):
     def test_revoked_key_is_refused(self) -> None:
         policy = self._policy()
         policy.virtual_keys["k"] = VirtualKey(
-            key="k", name="gone", routes=frozenset({"/charge"}), revoked=True
+            key="k", name="gone", routes=frozenset({"/deploy"}), revoked=True
         )
-        self.assertEqual(self._call(policy, "/charge", "k")[0], 401)
+        self.assertEqual(self._call(policy, "/deploy", "k")[0], 401)
 
     def test_expired_key_is_refused(self) -> None:
         policy = self._policy()
         policy.virtual_keys["k"] = VirtualKey(
-            key="k", name="stale", routes=frozenset({"/charge"}), expires_at=time.time() - 1
+            key="k", name="stale", routes=frozenset({"/deploy"}), expires_at=time.time() - 1
         )
-        self.assertEqual(self._call(policy, "/charge", "k")[0], 401)
+        self.assertEqual(self._call(policy, "/deploy", "k")[0], 401)
 
     def test_master_key_reaches_a_route_a_limited_key_cannot(self) -> None:
         policy = self._policy()
         policy.virtual_keys["k"] = VirtualKey(
-            key="k", name="limited", routes=frozenset({"/charge"})
+            key="k", name="limited", routes=frozenset({"/deploy"})
         )
         # The upstream is closed, so a 502 proves the request was authorized and
         # forwarded rather than refused at the gateway.
-        self.assertEqual(self._call(policy, "/refund", "master-value")[0], 502)
+        self.assertEqual(self._call(policy, "/rollback", "master-value")[0], 502)
 
     def test_unreachable_upstream_answers_instead_of_dropping(self) -> None:
         """A dead upstream must not read as a dropped connection: the caller
         cannot tell an unread action from a completed one."""
-        code, body = self._call(self._policy(), "/charge", "master-value")
+        code, body = self._call(self._policy(), "/deploy", "master-value")
         self.assertEqual(code, 502)
         self.assertIn("upstream unreachable", body)
 
@@ -390,9 +390,9 @@ class LiveKeyIssuanceTest(unittest.TestCase):
         policy = GatewayPolicy(session_environment="prod", master_key_env="TEST_MASTER_KEY")
         policy.register(
             Route(
-                path="/charge",
-                upstream="http://127.0.0.1:1/charge",
-                action="charge",
+                path="/deploy",
+                upstream="http://127.0.0.1:1/deploy",
+                action="deploy",
                 risk="read",
             )
         )
@@ -403,7 +403,7 @@ class LiveKeyIssuanceTest(unittest.TestCase):
 
     def _post(self, token: str) -> tuple[int, str]:
         request = urllib.request.Request(
-            self.base + "/charge", data=b"{}", method="POST"
+            self.base + "/deploy", data=b"{}", method="POST"
         )
         request.add_header("Authorization", f"Bearer {token}")
         with self.assertRaises(urllib.error.HTTPError) as raised:
@@ -411,14 +411,14 @@ class LiveKeyIssuanceTest(unittest.TestCase):
         return int(raised.exception.code), raised.exception.read().decode()
 
     def test_a_key_issued_after_startup_is_accepted(self) -> None:
-        self.store.save_virtual_key("late-key", "late", ["/charge"], expires_at=None)
+        self.store.save_virtual_key("late-key", "late", ["/deploy"], expires_at=None)
         status, body = self._post("late-key")
         # 502 means it reached the (deliberately dead) upstream: authenticated
         # and authorised. A 401 would mean the key was never picked up.
         self.assertEqual(status, 502, body)
 
     def test_a_revoked_key_stops_working_on_a_running_gateway(self) -> None:
-        self.store.save_virtual_key("doomed", "doomed", ["/charge"], expires_at=None)
+        self.store.save_virtual_key("doomed", "doomed", ["/deploy"], expires_at=None)
         self.assertEqual(self._post("doomed")[0], 502)
 
         self.assertTrue(self.store.revoke_virtual_key("doomed"))

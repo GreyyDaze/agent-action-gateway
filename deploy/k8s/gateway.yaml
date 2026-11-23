@@ -5,7 +5,7 @@
 #
 #   1. default-deny ingress   -> only pods labelled role: agent may reach the gateway
 #   2. agent egress allowlist -> an agent pod may reach the gateway and DNS, and
-#                                nothing else. It cannot reach api.stripe.com,
+#                                nothing else. It cannot reach api.github.com,
 #                                so a stolen upstream key is still useless from
 #                                that position.
 #
@@ -41,7 +41,7 @@ stringData:
   # gateway's ServiceAccount exchange its identity for a short-lived credential
   # at request time.
   AGENT_GATEWAY_MASTER_KEY: "replace-me-with-a-32-byte-random-value"
-  stripe_key: "sk_live_replace_me"
+  github_token: "replace_me"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -131,12 +131,12 @@ data:
     master_key_env: AGENT_GATEWAY_MASTER_KEY
     session_environment: prod
     routes:
-      - path: /charge
-        upstream: https://api.stripe.com/v1/payment_intents
-        action: charge
+      - path: /deploy
+        upstream: https://api.github.com/repos/acme/shop-api/deployments
+        action: deploy
         risk: destructive
         method: POST
-        secret_env: "file:/run/secrets/stripe_key"
+        secret_env: "file:/run/secrets/github_token"
         environment: prod
 ---
 apiVersion: v1
@@ -194,7 +194,7 @@ spec:
       ports:
         - {protocol: UDP, port: 53}
         - {protocol: TCP, port: 53}
-    # Deliberately absent: any rule permitting api.stripe.com. Adding one
+    # Deliberately absent: any rule permitting api.github.com. Adding one
     # removes Boundary B, which is what makes a leaked key harmless.
 ---
 apiVersion: networking.k8s.io/v1

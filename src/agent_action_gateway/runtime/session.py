@@ -7,9 +7,9 @@ boundary.
 
 The contract is deliberately small:
 
-    with safety.session() as ctx:
-        refund = ctx.tool(refund_fn, action="refund", risk="destructive")
-        result  = ctx.run(agent, task, tools={"refund": refund})
+    with session() as ctx:
+        drop = ctx.tool(drop_table, action="db.drop_table", risk="destructive")
+        result = ctx.run(agent, task, tools={"drop_table": drop})
 
 Everything is on by default. A caller who passes nothing still gets budgets,
 approval on destructive actions, receipts and cross-environment blocking. Opting

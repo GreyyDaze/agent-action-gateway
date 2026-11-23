@@ -26,9 +26,9 @@ class GatewayModeTest(unittest.TestCase):
         policy = GatewayPolicy(session_environment="prod")
         policy.register(
             Route(
-                path="/charge",
-                upstream="https://api.github.com/charge",
-                action="charge",
+                path="/deploy",
+                upstream="https://api.github.com/deploy",
+                action="deploy",
                 risk="destructive",
                 host="api.github.com",
             )
@@ -46,7 +46,7 @@ class GatewayModeTest(unittest.TestCase):
         )
         self.assertFalse(policy.enforcement_enabled)
         gateway = SafetyGateway(self.store, policy, transport=self._transport)
-        result = gateway.handle("POST", "/charge", {"amount": 100})
+        result = gateway.handle("POST", "/deploy", {"revision": 100})
         self.assertEqual(result.status, 200)
         self.assertEqual(len(self.sent), 1)
         self.assertEqual(self.sent[0]["headers"]["Authorization"], "Bearer real-secret")
@@ -57,7 +57,7 @@ class GatewayModeTest(unittest.TestCase):
         policy = self._policy()  # enforcement_enabled defaults True
         self.assertTrue(policy.enforcement_enabled)
         gateway = SafetyGateway(self.store, policy, transport=self._transport)
-        result = gateway.handle("POST", "/charge", {"amount": 100})
+        result = gateway.handle("POST", "/deploy", {"revision": 100})
         self.assertEqual(result.status, 403)
         self.assertTrue(result.body.get("needs_approval"))
         self.assertEqual(self.sent, [])

@@ -39,29 +39,29 @@ class BlockedIsNeverRetriedTest(RetryHarness):
 
         with self._session() as ctx:
             raw = ctx.tool(
-                lambda **k: (calls.append(1), {"status": "refunded"})[1],
-                action="refund",
+                lambda **k: (calls.append(1), {"status": "rolled_back"})[1],
+                action="rollback",
                 risk="destructive",
             )
-            ctx.retrying(raw, attempts=5)(amount=100)
+            ctx.retrying(raw, attempts=5)(revision=100)
 
         self.assertEqual(len(calls), 0, "a held action must never reach the tool")
 
     def test_the_refusal_is_returned_to_the_caller(self) -> None:
         with self._session() as ctx:
             raw = ctx.tool(
-                lambda **k: {"status": "ok"}, action="refund", risk="destructive"
+                lambda **k: {"status": "ok"}, action="rollback", risk="destructive"
             )
-            result = ctx.retrying(raw, attempts=4)(amount=100)
+            result = ctx.retrying(raw, attempts=4)(revision=100)
         self.assertTrue(result.get("blocked") or result.get("needs_approval"), result)
 
     def test_the_refusal_to_retry_is_recorded(self) -> None:
         """An operator must be able to see that an agent tried again."""
         with self._session() as ctx:
             raw = ctx.tool(
-                lambda **k: {"status": "ok"}, action="refund", risk="destructive"
+                lambda **k: {"status": "ok"}, action="rollback", risk="destructive"
             )
-            ctx.retrying(raw, attempts=3)(amount=100)
+            ctx.retrying(raw, attempts=3)(revision=100)
 
         events = [t["event"] for t in self.store.snapshot()["traces"]]
         self.assertIn("self_correction.refused", events)
@@ -70,9 +70,9 @@ class BlockedIsNeverRetriedTest(RetryHarness):
         """Six blocked attempts must cost one step, not six."""
         with self._session() as ctx:
             raw = ctx.tool(
-                lambda **k: {"status": "ok"}, action="refund", risk="destructive"
+                lambda **k: {"status": "ok"}, action="rollback", risk="destructive"
             )
-            ctx.retrying(raw, attempts=6)(amount=100)
+            ctx.retrying(raw, attempts=6)(revision=100)
             # Counted by prefix, not by a specific event name: a held action is
             # recorded as enforcement.approval rather than
             # enforcement.decision, and the point is that exactly one policy

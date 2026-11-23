@@ -150,7 +150,7 @@ class SelectionTest(PruneTest):
         with self.store.connection() as connection:
             connection.execute(
                 "INSERT INTO receipts(run_id, step_id, intent_key, action,"
-                " arguments_json, state) VALUES ('r', '1', 'k', 'charge', '{}', 'done')"
+                " arguments_json, state) VALUES ('r', '1', 'k', 'deploy', '{}', 'done')"
             )
         self._seed("r", 2)
         self.store.prune_exchanges(keep_latest_per_run=0)

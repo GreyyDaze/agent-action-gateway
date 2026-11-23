@@ -72,13 +72,13 @@ class AdoptionContractTest(unittest.TestCase):
     def test_1_unapproved_destructive_action_is_blocked_before_dispatch(self) -> None:
         """A destructive tool with no approval must not reach the provider."""
         with session(store=self.store) as ctx:
-            refund = ctx.tool(
-                lambda **kw: self.provider.execute(kw["order_id"], kw.get("intent_key", "x")),
-                action="refund",
+            rollback = ctx.tool(
+                lambda **kw: self.provider.execute(kw["deployment_id"], kw.get("intent_key", "x")),
+                action="rollback",
                 risk="destructive",
                 provider=self.provider,
             )
-            outcome = refund(order_id="ORD-100", amount=400)
+            outcome = rollback(deployment_id="DEP-100", revision=400)
 
         self.assertEqual(outcome["status"], "blocked")
         self.assertEqual(outcome["decision"], "APPROVAL")
@@ -87,13 +87,13 @@ class AdoptionContractTest(unittest.TestCase):
     def test_1b_refused_action_is_recorded_as_evidence(self) -> None:
         """A blocked attempt must leave a trace, not silence."""
         with session(store=self.store) as ctx:
-            refund = ctx.tool(
+            rollback = ctx.tool(
                 lambda **kw: {"ok": True},
-                action="refund",
+                action="rollback",
                 risk="destructive",
                 provider=self.provider,
             )
-            refund(order_id="ORD-100", amount=400)
+            rollback(deployment_id="DEP-100", revision=400)
 
         statuses = [t["status"] for t in self.store.snapshot()["traces"]]
         self.assertIn("blocked", statuses)
@@ -102,19 +102,19 @@ class AdoptionContractTest(unittest.TestCase):
     # -- 2. payload tamper -------------------------------------------------
 
     def test_2_approved_payload_cannot_be_changed(self) -> None:
-        """Approving $400 must not authorize $500."""
+        """Approving revision 400 must not authorize revision 500."""
         with session(store=self.store) as ctx:
-            approval = ctx.request_approval("refund", {"order_id": "ORD-1", "amount": 400})
+            approval = ctx.request_approval("rollback", {"deployment_id": "DEP-1", "revision": 400})
             ctx.approve(approval.approval_id, "operator")
-            refund = ctx.tool(
-                lambda **kw: self.provider.execute(kw["order_id"], "k"),
-                action="refund",
+            rollback = ctx.tool(
+                lambda **kw: self.provider.execute(kw["deployment_id"], "k"),
+                action="rollback",
                 risk="destructive",
                 provider=self.provider,
             )
-            outcome = refund(
-                order_id="ORD-1",
-                amount=500,
+            outcome = rollback(
+                deployment_id="DEP-1",
+                revision=500,
                 approval_id=approval.approval_id,
             )
 
@@ -125,15 +125,15 @@ class AdoptionContractTest(unittest.TestCase):
     def test_2b_unused_approval_is_not_consumed_by_a_refused_call(self) -> None:
         """A tampered attempt must not burn the approval the operator issued."""
         with session(store=self.store) as ctx:
-            approval = ctx.request_approval("refund", {"order_id": "ORD-1", "amount": 400})
+            approval = ctx.request_approval("rollback", {"deployment_id": "DEP-1", "revision": 400})
             ctx.approve(approval.approval_id, "operator")
-            refund = ctx.tool(
-                lambda **kw: self.provider.execute(kw["order_id"], "k"),
-                action="refund",
+            rollback = ctx.tool(
+                lambda **kw: self.provider.execute(kw["deployment_id"], "k"),
+                action="rollback",
                 risk="destructive",
                 provider=self.provider,
             )
-            refund(order_id="ORD-1", amount=500, approval_id=approval.approval_id)
+            rollback(deployment_id="DEP-1", revision=500, approval_id=approval.approval_id)
             self.assertIsNone(ctx.approvals.get(approval.approval_id).consumed_at)
 
     # -- 3. budgets are on by default -------------------------------------
@@ -159,34 +159,34 @@ class AdoptionContractTest(unittest.TestCase):
     def test_4_missing_required_input_asks_instead_of_guessing(self) -> None:
         """Missing required input must not be silently defaulted."""
         with session(store=self.store) as ctx:
-            refund = ctx.tool(
+            rollback = ctx.tool(
                 lambda **kw: {"ok": True},
-                action="refund",
+                action="rollback",
                 risk="destructive",
                 provider=self.provider,
-                required_fields=("order_id",),
+                required_fields=("deployment_id",),
             )
-            approval = ctx.request_approval("refund", {"amount": 400})
+            approval = ctx.request_approval("rollback", {"revision": 400})
             ctx.approve(approval.approval_id, "operator")
             # Approved, but the result is missing a required field.
-            outcome = refund(amount=400, approval_id=approval.approval_id)
+            outcome = rollback(revision=400, approval_id=approval.approval_id)
 
         self.assertNotEqual(outcome["status"], "allowed")
-        self.assertIn("order_id", str(outcome.get("missing", "")))
+        self.assertIn("deployment_id", str(outcome.get("missing", "")))
 
     # -- 5. cross-environment ---------------------------------------------
 
     def test_5_cross_environment_action_is_blocked(self) -> None:
         """A staging session must not reach a production tool."""
         with session(store=self.store, environment="staging") as ctx:
-            refund = ctx.tool(
+            rollback = ctx.tool(
                 lambda **kw: {"ok": True},
                 action="deploy",
                 risk="destructive",
                 provider=self.provider,
                 target_environment="prod",
             )
-            outcome = refund(component="api")
+            outcome = rollback(component="api")
 
         self.assertEqual(outcome["status"], "blocked")
         self.assertEqual(outcome["decision"], "ENVIRONMENT")
@@ -198,17 +198,17 @@ class AdoptionContractTest(unittest.TestCase):
         """The agent saying 'done' must not override a blocked step."""
 
         def agent(task: str, tools: dict[str, Any]) -> str:
-            tools["refund"](order_id="ORD-100", amount=400)
-            return "All done, refunds issued."
+            tools["rollback"](deployment_id="DEP-100", revision=400)
+            return "All done, rollbacks issued."
 
         with session(store=self.store) as ctx:
-            refund = ctx.tool(
-                lambda **kw: self.provider.execute(kw["order_id"], "k"),
-                action="refund",
+            rollback = ctx.tool(
+                lambda **kw: self.provider.execute(kw["deployment_id"], "k"),
+                action="rollback",
                 risk="destructive",
                 provider=self.provider,
             )
-            result = ctx.run(agent, "refund everything", tools={"refund": refund})
+            result = ctx.run(agent, "rollback everything", tools={"rollback": rollback})
 
         self.assertNotEqual(result["status"], "completed")
         self.assertIn(result["status"], {"blocked", "degraded"})
@@ -220,13 +220,13 @@ class AdoptionContractTest(unittest.TestCase):
         """Payment data must not persist in the clear."""
         pan = "4111111111111111"  # Luhn-valid test PAN
         with session(store=self.store) as ctx:
-            refund = ctx.tool(
-                lambda **kw: {"status": "charged", "card": kw.get("card")},
-                action="charge",
+            rollback = ctx.tool(
+                lambda **kw: {"status": "deployed", "card": kw.get("card")},
+                action="deploy",
                 risk="destructive",
                 provider=self.provider,
             )
-            refund(card=pan, amount=100)
+            rollback(card=pan, revision=100)
 
         raw = self._raw_db_text()
         self.assertNotIn(pan, raw, "PAN persisted in plaintext")
@@ -294,7 +294,7 @@ class SessionApiTest(unittest.TestCase):
             with session(store=TraceStore(Path(directory) / "r.db")) as ctx:
                 with self.assertRaisesRegex(Exception, "expiry"):
                     ctx.request_approval(
-                        "refund", {"order_id": "O"}, expires_in_seconds=-1
+                        "rollback", {"deployment_id": "O"}, expires_in_seconds=-1
                     )
 
 

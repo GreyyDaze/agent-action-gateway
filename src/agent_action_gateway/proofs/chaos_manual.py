@@ -21,7 +21,7 @@ def crash_worker(provider_url: str, db_path: str, intent_key: str) -> None:
     # `db_path` is accepted for signature parity with the harness callers; this
     # worker kills the process before it could use it.
     del db_path
-    provider_ref = HttpExternalActionProvider(provider_url).execute("ORD-100", intent_key)
+    provider_ref = HttpExternalActionProvider(provider_url).execute("DEP-100", intent_key)
     del provider_ref
     os.kill(os.getpid(), signal.SIGKILL)
 
@@ -51,7 +51,7 @@ def main() -> None:
             store = TraceStore(receipt_db)
             run_id = "manual-crash-drill"
             step_id = "step-1"
-            receipt = store.create_receipt(run_id, step_id, "external_action", {"order_id": "ORD-100"})
+            receipt = store.create_receipt(run_id, step_id, "external_action", {"deployment_id": "DEP-100"})
             print(f"before: state={receipt.state} intent_key={receipt.intent_key}")
 
             process = context.Process(
@@ -67,7 +67,7 @@ def main() -> None:
             row = store.snapshot()["receipts"][0]
             with sqlite3.connect(provider_db) as db:
                 actions = db.execute(
-                    "SELECT COUNT(*) FROM refunds WHERE intent_key=?",
+                    "SELECT COUNT(*) FROM effects WHERE intent_key=?",
                     (receipt.intent_key,),
                 ).fetchone()[0]
             print(f"after recovery: state={row['state']} provider_ref={row['provider_ref']}")

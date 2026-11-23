@@ -17,7 +17,7 @@ from pathlib import Path
 from agent_action_gateway import session
 from agent_action_gateway.audit.receipts import UnresolvableReceiptError, resolve_unknown
 from agent_action_gateway.policy.fuses import FuseLimits
-from agent_action_gateway.proofs.fakes import MockPaymentProvider
+from agent_action_gateway.proofs.fakes import MockEffectProvider
 from agent_action_gateway.storage.traces import TraceStore
 
 
@@ -26,27 +26,27 @@ class GuardedReceiptTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.db = Path(self._tmp.name) / "runtime.db"
         self.store = TraceStore(self.db)
-        self.provider = MockPaymentProvider(dedupe=True)
+        self.provider = MockEffectProvider(dedupe=True)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _guarded_refund(self, ctx):
+    def _guarded_rollback(self, ctx):
         return ctx.tool(
-            lambda order_id, intent_key: self.provider.execute(order_id, intent_key),
-            action="refund",
+            lambda deployment_id, intent_key: self.provider.execute(deployment_id, intent_key),
+            action="rollback",
             risk="destructive",
             provider=self.provider,
-            target="ORD-100",
+            target="DEP-100",
         )
 
     def test_approved_guarded_action_writes_a_real_receipt(self) -> None:
         """Not a string line: a row with a lifecycle state and an intent key."""
         with session(store=self.store) as ctx:
-            approval = ctx.request_approval("refund", {"order_id": "ORD-100"})
+            approval = ctx.request_approval("rollback", {"deployment_id": "DEP-100"})
             ctx.approve(approval.approval_id, "operator")
-            refund = self._guarded_refund(ctx)
-            outcome = refund(order_id="ORD-100", approval_id=approval.approval_id)
+            rollback = self._guarded_rollback(ctx)
+            outcome = rollback(deployment_id="DEP-100", approval_id=approval.approval_id)
 
         self.assertEqual(outcome["status"], "allowed")
         receipts = self.store.snapshot()["receipts"]
@@ -59,19 +59,19 @@ class GuardedReceiptTest(unittest.TestCase):
     def test_refused_action_writes_no_receipt(self) -> None:
         """A blocked call must not look like a completed one."""
         with session(store=self.store) as ctx:
-            refund = self._guarded_refund(ctx)
-            refund(order_id="ORD-100")
+            rollback = self._guarded_rollback(ctx)
+            rollback(deployment_id="DEP-100")
 
         self.assertEqual(self.store.snapshot()["receipts"], [])
-        self.assertEqual(len(self.provider.refunds), 0)
+        self.assertEqual(len(self.provider.rollbacks), 0)
 
     def test_crash_before_write_after_does_not_duplicate(self) -> None:
         """The crash-safety invariant, proven on the adoption path."""
         with session(store=self.store) as ctx:
-            approval = ctx.request_approval("refund", {"order_id": "ORD-100"})
+            approval = ctx.request_approval("rollback", {"deployment_id": "DEP-100"})
             ctx.approve(approval.approval_id, "operator")
-            refund = self._guarded_refund(ctx)
-            refund(order_id="ORD-100", approval_id=approval.approval_id)
+            rollback = self._guarded_rollback(ctx)
+            rollback(deployment_id="DEP-100", approval_id=approval.approval_id)
 
         # Simulate the crash window: dispatched, but the local record never
         # advanced past `unknown`.
@@ -83,7 +83,7 @@ class GuardedReceiptTest(unittest.TestCase):
         resolved = resolve_unknown(self.store, self.provider)
         self.assertEqual(resolved, 1)
         self.assertEqual(self.store.unknown_receipts(), [])
-        self.assertEqual(len(self.provider.refunds), 1, "side effect duplicated")
+        self.assertEqual(len(self.provider.rollbacks), 1, "side effect duplicated")
 
     def test_guarded_chaos_harness_reports_no_duplicates(self) -> None:
         """Crash injection against guarded tools, not the internal path.
@@ -100,7 +100,7 @@ class GuardedReceiptTest(unittest.TestCase):
 
     def test_receipt_without_a_target_is_manual_not_a_blind_retry(self) -> None:
         self.store.create_receipt(
-            "run-x", "step-1", "external_action", {"amount": 400}
+            "run-x", "step-1", "external_action", {"revision": 400}
         )
         with self.assertRaises(UnresolvableReceiptError):
             resolve_unknown(self.store, self.provider)
@@ -112,19 +112,19 @@ class ApprovalSingleUseTest(unittest.TestCase):
     def test_approval_cannot_be_replayed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TraceStore(Path(directory) / "r.db")
-            provider = MockPaymentProvider(dedupe=True)
+            provider = MockEffectProvider(dedupe=True)
             with session(store=store) as ctx:
-                approval = ctx.request_approval("refund", {"order_id": "ORD-1"})
+                approval = ctx.request_approval("rollback", {"deployment_id": "DEP-1"})
                 ctx.approve(approval.approval_id, "operator")
-                refund = ctx.tool(
-                    lambda order_id, intent_key: provider.execute(order_id, intent_key),
-                    action="refund",
+                rollback = ctx.tool(
+                    lambda deployment_id, intent_key: provider.execute(deployment_id, intent_key),
+                    action="rollback",
                     risk="destructive",
                     provider=provider,
-                    target="ORD-1",
+                    target="DEP-1",
                 )
-                first = refund(order_id="ORD-1", approval_id=approval.approval_id)
-                second = refund(order_id="ORD-1", approval_id=approval.approval_id)
+                first = rollback(deployment_id="DEP-1", approval_id=approval.approval_id)
+                second = rollback(deployment_id="DEP-1", approval_id=approval.approval_id)
 
             self.assertEqual(first["status"], "allowed")
             self.assertEqual(second["status"], "blocked")

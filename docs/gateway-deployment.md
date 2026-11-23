@@ -76,7 +76,7 @@ correctly, not that your agent is protected.
 
 #### Does your agent need internet?
 
-Almost always yes — a payment agent also calls a model API, and that is on the
+Almost always yes — a deployment agent also calls a model API, and that is on the
 internet. Plain Compose cannot allow one host and block the rest; it is all or
 nothing. So there are two files and neither hides the trade:
 
@@ -98,7 +98,7 @@ COMPOSE_FILES="-f docker-compose.yml -f docker-compose.egress.yml" make verify-b
 ```
 
 Carry it with scoped short-lived credentials, an egress policy that allows the
-model API and denies the payment API (Cilium or your cloud's DNS-based
+model API and denies the deployment API (Cilium or your cloud's DNS-based
 control), or provider-side key restrictions.
 
 ### Tier 3 — separate host, egress control, workload identity (production)
@@ -109,7 +109,7 @@ deploy/k8s/gateway.yaml
 
 Two NetworkPolicies. One restricts ingress to the gateway. The other restricts
 agent egress to the gateway and DNS — **notably absent is any rule permitting
-`api.stripe.com`**, which is what makes a leaked key harmless.
+`api.github.com`**, which is what makes a leaked key harmless.
 
 Bind the gateway's ServiceAccount to your provider's workload identity so it
 holds no static credential at all.
@@ -126,10 +126,10 @@ Issue the key with the routes that agent is allowed to use:
 
 ```bash
 agent-gateway gateway --config routes.json --db gateway.db \
-    issue-key --name billing-agent --ttl 1h --routes /charge
+    issue-key --name deploy-agent --ttl 1h --routes /deploy
 ```
 
-An agent with a key for `/charge` receives `403` on `/refund`. An unregistered
+An agent with a key for `/deploy` receives `403` on `/rollback`. An unregistered
 path is refused identically, so the gateway does not become a route-existence
 oracle.
 
@@ -179,7 +179,7 @@ It exits **2 when it cannot run**, never 0. "Could not check" is not "passed".
 
 ```
 BOUNDARY NOT HELD: 1 check(s) failed: A  no route to a provider
-  REACHABLE api.stripe.com:443 from the agent's network. A bypass would
+  REACHABLE api.github.com:443 from the agent's network. A bypass would
   succeed here, so no credential boundary exists.
 ```
 

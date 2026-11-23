@@ -16,7 +16,7 @@
 # but because there is nowhere to go.
 #
 # Bring it up:
-#     printf 'sk_live_replace_me' > secrets/stripe_key && chmod 600 secrets/stripe_key
+#     printf 'replace_me' > secrets/github_token && chmod 600 secrets/github_token
 #     export AGENT_GATEWAY_MASTER_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(32))')"
 #     docker compose up -d gateway
 #
@@ -96,7 +96,7 @@ services:
       - --gateway
       - http://gateway:8080
       - --secret-path
-      - /run/secrets/stripe_key
+      - /run/secrets/github_token
     networks:
       - agent_net
 

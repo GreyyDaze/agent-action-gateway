@@ -4,7 +4,7 @@
 #
 #   master_key_env  the variable holding the key that may issue and revoke
 #                   virtual keys. Agents never receive it.
-#   secret_env      "file:/run/secrets/stripe_key" rather than a bare variable
+#   secret_env      "file:/run/secrets/github_token" rather than a bare variable
 #                   name, because a file can have an owner and a mode. The
 #                   gateway refuses to start if that file is group- or
 #                   world-readable, or owned by anyone else.
@@ -16,16 +16,16 @@ master_key_env: AGENT_GATEWAY_MASTER_KEY
 session_environment: prod
 
 routes:
-  - path: /charge
-    upstream: https://api.stripe.com/v1/payment_intents
-    action: charge
+  - path: /deploy
+    upstream: https://api.github.com/repos/acme/shop-api/deployments
+    action: deploy
     risk: destructive
     method: POST
-    secret_env: "file:/run/secrets/stripe_key"
+    secret_env: "file:/run/secrets/github_token"
     environment: prod
 
   - path: /lookup
-    upstream: https://api.stripe.com/v1/charges
+    upstream: https://api.github.com/graphql
     action: lookup
     risk: read
     method: POST

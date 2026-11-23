@@ -9,11 +9,9 @@ from urllib.request import Request, urlopen
 class ExternalActionProvider(Protocol):
     """Adapter for whatever external system a proposed action targets.
 
-    Named generically on purpose. The safety layer guards any irreversible
-    side effect, not only refunds, so nothing in this contract assumes a
-    payment domain. `order_id` is this package's generic name for the action's
-    target: a PaymentIntent on Stripe, a file path for a delete tool, a row id
-    for a database write.
+    Named generically on purpose: the safety layer guards any irreversible
+    side effect. `target` is whatever the action acts on: a deployment, a file
+    path for a delete tool, a row id for a database write.
     """
 
     def execute(self, target: str, intent_key: str) -> str: ...
@@ -21,7 +19,7 @@ class ExternalActionProvider(Protocol):
     def find(self, intent_key: str, target: str | None = None) -> str | None:
         """Report whether the effect already happened for this intent key.
 
-        `order_id` is the target the receipt persisted, passed so providers
+        `target` is the target the receipt persisted, passed so providers
         whose reconciliation needs it (for example one that replays an
         idempotent request) can be queried without a lookup-by-key endpoint.
         Providers that reconcile by key alone may ignore it.
@@ -31,9 +29,10 @@ class ExternalActionProvider(Protocol):
 class HttpExternalActionProvider:
     """Generic HTTP boundary to an external tool.
 
-    Expects a provider that exposes a lookup-by-key endpoint, for example
-    `GET /refunds/{intent_key}`. Providers without one (Stripe among them)
-    reconcile differently; see docs/receipt-guarantees.md.
+    Expects a service that accepts `POST /effects` with a JSON body
+    `{"target": ..., "intent_key": ...}` and exposes a lookup-by-key endpoint,
+    `GET /effects/{intent_key}`. Services without a lookup endpoint reconcile
+    differently; see docs/receipt-guarantees.md.
     """
 
     def __init__(self, base_url: str, timeout: float = 5.0) -> None:
@@ -41,9 +40,9 @@ class HttpExternalActionProvider:
         self.timeout = timeout
 
     def execute(self, target: str, intent_key: str) -> str:
-        payload = json.dumps({"order_id": target, "intent_key": intent_key}).encode()
+        payload = json.dumps({"target": target, "intent_key": intent_key}).encode()
         request = Request(
-            f"{self.base_url}/refunds",
+            f"{self.base_url}/effects",
             data=payload,
             headers={"Content-Type": "application/json", "Idempotency-Key": intent_key},
             method="POST",
@@ -52,7 +51,7 @@ class HttpExternalActionProvider:
             return json.loads(response.read())["provider_ref"]
 
     def find(self, intent_key: str, target: str | None = None) -> str | None:
-        request = Request(f"{self.base_url}/refunds/{intent_key}", method="GET")
+        request = Request(f"{self.base_url}/effects/{intent_key}", method="GET")
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read())["provider_ref"]

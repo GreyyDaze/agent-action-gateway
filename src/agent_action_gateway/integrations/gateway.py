@@ -1,6 +1,6 @@
 """HTTP gateway with credential custody.
 
-For tools we cannot wrap in-process - payment APIs, internal services - the
+For tools we cannot wrap in-process - cloud APIs, internal services - the
 agent talks HTTP to us and we talk HTTP to the real service holding the key.
 
 That ordering is the whole security property. The agent never receives an
@@ -337,7 +337,7 @@ class SafetyGateway:
                 #
                 # Traced before returning. This branch used to return silently,
                 # so an action held here left no evidence at all -- an operator
-                # asking "did anything try to charge?" got an empty answer, which
+                # asking "did anything try to deploy?" got an empty answer, which
                 # is the exact failure this project exists to prevent.
                 self._trace(
                     "gateway.held",

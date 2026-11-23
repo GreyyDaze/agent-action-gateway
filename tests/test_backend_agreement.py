@@ -112,7 +112,7 @@ class BackendAgreementTest(unittest.TestCase):
             store = TraceStore(target)
             store.append_trace(
                 TraceEvent(
-                    "run-1", 3, "agent", {"order_id": "ORD-1"}, {"status": "ok"},
+                    "run-1", 3, "agent", {"deployment_id": "DEP-1"}, {"status": "ok"},
                     "completed", flags=("a",), provider_metadata={"model": "m"},
                     provider_evidence={"e": 1}, prompt="p", completion="c",
                     tokens_in=10, tokens_out=4, cost_usd=0.25, latency_ms=12.5,
@@ -173,7 +173,7 @@ class BackendAgreementTest(unittest.TestCase):
                     connection.execute(
                         "INSERT INTO receipts(run_id, step_id, intent_key, action,"
                         " arguments_json, state) VALUES (?, ?, ?, ?, ?, ?)",
-                        ("r1", "1", f"k-{state}", "charge", '{"a":1}', state),
+                        ("r1", "1", f"k-{state}", "deploy", '{"a":1}', state),
                     )
             rows = store.snapshot()["receipts"]
             return [(r["intent_key"], r["state"], r["action"]) for r in rows]
@@ -225,7 +225,7 @@ class BackendAgreementTest(unittest.TestCase):
             store = TraceStore(target)
             approvals = ApprovalStore(store)
             requested = approvals.request(
-                "charge", {"amount": 100},
+                "deploy", {"revision": 100},
                 datetime.now(UTC) + timedelta(minutes=5),
             )
             pending_before = [a.approval_id for a in approvals.pending()]
@@ -242,7 +242,7 @@ class BackendAgreementTest(unittest.TestCase):
             store = TraceStore(target)
             approvals = ApprovalStore(store)
             requested = approvals.request(
-                "charge", {"amount": 100},
+                "deploy", {"revision": 100},
                 datetime.now(UTC) + timedelta(minutes=5),
             )
             approvals.approve(requested.approval_id, "operator")
@@ -277,8 +277,8 @@ class BackendAgreementTest(unittest.TestCase):
     def test_virtual_keys_agree(self) -> None:
         def body(target: str) -> Any:
             store = TraceStore(target)
-            store.save_virtual_key("k1", "agent", ["/charge"], expires_at=12345.0)
-            store.save_virtual_key("k2", "other", ["/refund"], expires_at=None)
+            store.save_virtual_key("k1", "agent", ["/deploy"], expires_at=12345.0)
+            store.save_virtual_key("k2", "other", ["/rollback"], expires_at=None)
             before = store.load_virtual_keys()
             revoked = store.revoke_virtual_key("k1")
             after = store.load_virtual_keys()

@@ -71,7 +71,7 @@ one that does not exist:
   `agent-gateway gateway doctor` checks this host, and `make verify-boundary` probes
   the topology from the agent's own position.
 - **Prompts and completions are persisted when a caller records them.** They go
-  through the same recursive redaction as every other field, so payment data,
+  through the same recursive redaction as every other field, so keys,
   bearer tokens and emails are replaced before write. Anything redaction does not
   recognise — names, free text, an internal identifier — is stored as given.
   There is no automatic pruning; the trace table grows faster once exchanges are

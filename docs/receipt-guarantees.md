@@ -1,98 +1,94 @@
 # Receipt Guarantees
 
-## Production path
+A receipt is the durable record that a side effect was attempted. It is what
+lets the gateway promise that the same effect happens once, even after a crash,
+a restart, or a second worker.
 
-Receipts are stored in SQLite (WAL mode) on a single host, or in PostgreSQL across hosts. The storage boundary is durable and transactional, and both backends keep the same receipt invariants.
+## Storage
 
-The external action boundary is HTTP. The provider receives the same intent key used by the receipt and exposes a verification query for recovery.
+Receipts are stored in SQLite (WAL mode) on a single host, or in PostgreSQL
+across hosts. Both backends keep the same invariants, and the claim below is a
+single transactional insert on either.
 
-## Receipt lifecycle
+## What "the same effect" means
+
+Each guarded destructive call is identified by an **effect key**: a fingerprint
+of the action name and its arguments, plus an optional `effect_scope`. It does
+not include the run, the process or the host. So these all produce the same
+key, and only the first one executes:
+
+- a retry after a crash
+- a second worker picking up the same job
+- the same request sent twice
+
+Argument order, float drift and similar accidents do not change the key. Two
+options change what counts as the same effect:
+
+| Option | Use |
+|---|---|
+| `effect_scope="tenant-a"` | keep two tenants' identical actions apart |
+| `identity_fields=("service", "title")` | only these arguments define the effect; others may change between retries |
+
+## Lifecycle
+
+The receipt is claimed **before** the action is sent:
 
 ```text
-unknown
+claim (insert receipt, state pending)
   |
-  +--> external action
-  |       |
-  |       +--> success -> done
-  |       +--> uncertain/crash -> unknown
+  +-- someone else already holds it
+  |     +-- their attempt finished  -> return their result (DEDUPLICATED)
+  |     +-- their attempt failed    -> the effect did not land; may try again
+  |     +-- still pending           -> outcome unknown; refuse (EffectInFlight)
   |
-  +--> recovery query
-          |
-          +--> found -> resolved
-          +--> not found -> retry same intent key -> done
+  +-- this caller owns it
+        +-- action succeeds        -> done, result recorded
+        +-- action raises          -> failed; a later attempt may retry
+        +-- process dies mid-call  -> stays pending; outcome unknown
 ```
 
-The receipt is written before dispatch. The intent key is `run_id:step_id`, so a retry represents the same intent rather than a new request.
+A receipt left `pending` is the honest state after a crash: nobody knows
+whether the action landed. Running it again risks a duplicate, and reporting
+success risks a lie, so the gateway refuses both until it is resolved.
 
-## Provider guarantees
+## Resolving an unknown outcome
+
+`resolve_unknown()` asks the provider whether the effect already happened,
+using the intent key it was sent with:
 
 | Provider capability | Guarantee |
 |---|---|
-| Idempotency + verification | Effectively-once for the supported intent-key path |
-| Verification without provider dedupe | At-most-once from our retry logic, with provider verification before retry |
-| No verification mechanism | Not supported for automatic retry; manual resolution is required |
+| Idempotency key and a lookup by key | effectively once: the provider settles it |
+| Lookup by key, no idempotency | at most once: checked before any retry |
+| Neither | no automatic retry; a person resolves it |
 
-We do not claim exactly-once execution when the external system cannot support or verify it.
+We do not claim exactly-once execution when the external system cannot support
+or verify it. A receipt with no persisted target cannot be replayed; the
+resolver raises `UnresolvableReceiptError` and asks for manual review rather
+than guessing.
 
-## Action-class compensation
+## Provider interface
 
-| Action class | Recovery policy |
-|---|---|
-| Send/refund with verification | Forward-fix by resolving the same intent |
-| Reversible action | Compensate if the provider confirms the original action |
-| Irreversible action | Manual resolution queue |
-
-Approval for destructive actions is a separate lock. Receipts only make the side-effect lifecycle durable and recoverable.
-
-## Replay honesty
-
-A replay is only considered comparable when the run records the model, prompt, and tool versions available to the evaluator. If the required version is unavailable, the result is `unprovable`, not a fabricated green result.
-
-## Provider adapters
-
-The external action boundary is a two-method protocol, `ExternalActionProvider`:
+For actions that need their own recovery logic, implement
+`ExternalActionProvider`:
 
 ```python
 execute(target, intent_key) -> provider_ref
 find(intent_key, target=None) -> provider_ref | None
 ```
 
-`target` is whatever the action acts on: a PaymentIntent on Stripe, a file
-path for a delete tool, a row id for a database write. Nothing in the safety layer assumes
-a payment domain, and unregistered actions are treated as destructive
-regardless of what they do.
+`target` is whatever the action acts on: a deployment, a file path, a row id.
+`find` answers whether an uncertain action already happened, and is the only
+part specific to your system.
 
-Adapters may ignore `order_id` when they can reconcile by key alone. The older
-The provider interface uses generic method names (`execute`, `find`); no refund-specific names remain.
+| Adapter | Reconciliation |
+|---|---|
+| `HttpExternalActionProvider` | `POST /effects` to act, `GET /effects/{intent_key}` to look up |
+| your own | whatever your system offers: a lookup by key, or replaying an idempotent request |
 
-| Adapter | Status | Reconciliation strategy |
-|---|---|---|
-| `HttpExternalActionProvider` | generic HTTP, requires a lookup-by-key endpoint | `GET /refunds/{intent_key}` |
-| `StripeRefundProvider` | Stripe test mode | replays the create request with the same `Idempotency-Key` |
-| `MockPaymentProvider` | test double only | in-memory lookup |
+### Which failures may be retried
 
-### Why the Stripe adapter replays instead of searching
-
-Stripe has no "look up the result of idempotency key K" endpoint. It does
-guarantee that re-sending a POST with the same `Idempotency-Key` returns the
-originally stored response instead of creating a second refund.
-
-So `StripeRefundProvider.find` replays the create call rather than
-searching. This is strictly safer than a search would be: the provider, not this
-client, decides whether the effect already happened.
-
-Two consequences are documented rather than papered over:
-
-- Stripe v1 retains idempotency records for **24 hours**. A crash resolved after
-  that window will re-execute. This is why the receipt persists its target: the
-  resolver can always reconstruct the replay.
-- A receipt with no persisted target cannot be reconciled or replayed. The
-  resolver raises `UnresolvableReceiptError` and requires manual review rather
-  than retrying an uncertain side effect.
-
-### Failure classification
-
-The distinction that matters is whether the request reached Stripe.
+The question is whether the request could have reached the provider.
 
 | Failure | Classification | Retry allowed |
 |---|---|---|
@@ -102,14 +98,32 @@ The distinction that matters is whether the request reached Stripe.
 | Timeout after sending | ambiguous | no, resolve first |
 | Connection dropped after sending | ambiguous | no, resolve first |
 
-Anything ambiguous leaves the receipt in `unknown` for `resolve_unknown`.
+Anything ambiguous leaves the receipt `pending` for `resolve_unknown`.
 
-### Test coverage
+## Recovery by action type
 
-`tests/test_stripe_provider.py` runs a local HTTP server implementing the real
-Stripe contract (auth, form-encoded bodies, `Idempotency-Key` replay, the error
-envelope), so the wire format and idempotency semantics are exercised against a
-server this project does not control, with no credentials and no network.
+| Action type | Recovery |
+|---|---|
+| Idempotent with lookup | finish by resolving the same intent |
+| Reversible | compensate once the provider confirms the original action |
+| Irreversible, no lookup | manual resolution |
 
-A live Stripe test-mode test is included and skipped unless `STRIPE_API_KEY` and
-`STRIPE_TEST_PAYMENT_INTENT` are set. Test mode moves no money.
+Approval for destructive actions is a separate lock. Receipts only make the
+side-effect lifecycle durable and recoverable.
+
+## How this is verified
+
+`make proof` runs the crash-safety suites against a local HTTP service:
+
+- **crash safety:** 1,000 jobs, each crashed at a random point; no effect is
+  applied twice
+- **duplicate suppression:** one effect claimed by 1,000 different runs, each
+  crashed at a random point; exactly one side effect lands
+
+CI runs them on every push, and at the full 1,000 jobs every night.
+
+## Replay honesty
+
+A replay is only comparable when the run recorded the model, prompt and tool
+versions. If a required version is unavailable, the result is `unprovable`, not
+a fabricated green result.

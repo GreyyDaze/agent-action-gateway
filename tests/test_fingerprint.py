@@ -24,12 +24,12 @@ def test_argument_order_does_not_change_the_key() -> None:
 
 def test_float_drift_does_not_change_the_key() -> None:
     """A value that has been through a decimal round-trip is still the same."""
-    assert fingerprint("charge", {"amount": 19.99}) == fingerprint("charge", {"amount": 19.990000000001})
+    assert fingerprint("scale", {"cpu": 19.99}) == fingerprint("scale", {"cpu": 19.990000000001})
 
 
 def test_genuinely_different_floats_do_not_share_a_key() -> None:
-    """Rounding must remove drift, not merge two real amounts."""
-    assert fingerprint("charge", {"amount": 19.99}) != fingerprint("charge", {"amount": 19.98})
+    """Rounding must remove drift, not merge two real values."""
+    assert fingerprint("scale", {"cpu": 19.99}) != fingerprint("scale", {"cpu": 19.98})
 
 
 def test_negative_zero_and_zero_agree() -> None:

@@ -53,7 +53,7 @@ def test_quick_start_outcomes_match_its_comments(tmp_path, monkeypatch) -> None:
     code = (
         quick_start
         + "    def agent(task, tools):\n"
-        + "        return tools['drop_table'](table='orders')\n"
+        + "        return tools['drop_table'](table='deployments')\n"
         + "    task = 'clean up old tables'\n"
         + indented_run
     )

@@ -29,7 +29,7 @@ import sys
 import urllib.error
 import urllib.request
 
-PROVIDER_HOST = "api.stripe.com"
+PROVIDER_HOST = "api.github.com"
 
 
 class Undetermined(Exception):
@@ -91,7 +91,7 @@ def check_egress_blocked() -> tuple[bool, str]:
 def check_gateway_requires_a_key(gateway: str) -> tuple[bool, str]:
     """The gateway must refuse an unauthenticated caller."""
     try:
-        status, _ = _post(f"{gateway}/charge", None)
+        status, _ = _post(f"{gateway}/deploy", None)
     except Undetermined as exc:
         raise Undetermined(f"cannot reach the gateway to test it: {exc}") from exc
     if status == 401:
@@ -109,7 +109,7 @@ def check_gateway_accepts_a_key(gateway: str, key: str) -> tuple[bool, str]:
     is exactly the ambiguity this check must not depend on.
     """
     try:
-        status, body = _post(f"{gateway}/charge", key, {"amount": 100})
+        status, body = _post(f"{gateway}/deploy", key, {"ref": "main"})
     except Undetermined as exc:
         raise Undetermined(f"cannot reach the gateway to test it: {exc}") from exc
 
@@ -150,7 +150,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--secret-path",
-        default="/run/secrets/stripe_key",
+        default="/run/secrets/github_token",
         help="where the upstream credential would be if it were wrongly mounted",
     )
     args = parser.parse_args()

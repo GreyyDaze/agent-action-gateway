@@ -38,7 +38,7 @@ class StubRubricJudge:
 
 def good(case: GoldenCase) -> object:
     if case.check_type == "regex":
-        return "refunded successfully"
+        return "rolled back successfully"
     return case.expected
 
 

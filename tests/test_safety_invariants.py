@@ -25,23 +25,23 @@ from agent_action_gateway.audit.receipts import (
 from agent_action_gateway.guards.redaction import redact
 from agent_action_gateway.observability.dashboard import build_server
 from agent_action_gateway.policy.locks import ApprovalStore
-from agent_action_gateway.proofs.fakes import MockPaymentProvider
+from agent_action_gateway.proofs.fakes import MockEffectProvider
 from agent_action_gateway.storage.traces import TraceStore
 
 
 class ReceiptRecoveryTargetTest(unittest.TestCase):
     """An uncertain side effect must be resolvable, never a KeyError.
 
-    The resolver previously read `arguments["order_id"]`, so any approved
-    payload that did not literally carry an order_id crashed crash recovery.
+    The resolver previously read `arguments["deployment_id"]`, so any approved
+    payload that did not literally carry an deployment_id crashed crash recovery.
     """
 
-    def test_recovery_works_for_payload_without_order_id(self) -> None:
+    def test_recovery_works_for_payload_without_a_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TraceStore(Path(directory) / "runtime.db")
-            provider = MockPaymentProvider(dedupe=True)
+            provider = MockEffectProvider(dedupe=True)
             execute_side_effect(
-                store, provider, "run-1", "step-1", {"amount": 400}, "ORD-100"
+                store, provider, "run-1", "step-1", {"revision": 400}, "DEP-100"
             )
             # Simulate the crash window: the effect happened but the local
             # record never advanced past `unknown`.
@@ -59,9 +59,9 @@ class ReceiptRecoveryTargetTest(unittest.TestCase):
             store = TraceStore(Path(directory) / "runtime.db")
             # A receipt with no replayable target at all must fail loudly; a
             # blind retry would be the exactly-once violation we exist to stop.
-            store.create_receipt("run-1", "step-1", "external_action", {"amount": 400})
+            store.create_receipt("run-1", "step-1", "external_action", {"revision": 400})
             with self.assertRaises(UnresolvableReceiptError):
-                resolve_unknown(store, MockPaymentProvider(dedupe=True))
+                resolve_unknown(store, MockEffectProvider(dedupe=True))
 
 
 class RedactionPreservesEvidenceTest(unittest.TestCase):
@@ -147,8 +147,8 @@ class DashboardApprovalBoundaryTest(unittest.TestCase):
         self.approvals = ApprovalStore(TraceStore(self.db))
         # Each test gets its own approval so one test cannot consume another's.
         self.approval = self.approvals.request(
-            "refund",
-            {"order_id": "ORD-100", "amount": 400},
+            "rollback",
+            {"deployment_id": "DEP-100", "revision": 400},
             datetime.now(UTC) + timedelta(hours=1),
         )
         self.server, handler = build_server(str(self.db), "127.0.0.1", 0)
@@ -365,12 +365,12 @@ class PaymentRedactionTest(unittest.TestCase):
         run_id = str(uuid.uuid4())
         intent_key = f"run-1:{uuid.uuid4()}"
         provider_ref = "mock-" + "a1b2c3" * 6
-        payment_intent = "pi_3ABCdefGHIjklmnop"
+        deployment_ref = "dep_3ABCdefGHIjklmnop"
         for payload in (
             {"run_id": run_id},
             {"intent_key": intent_key},
             {"provider_ref": provider_ref},
-            {"payment_intent": payment_intent},
+            {"deployment_ref": deployment_ref},
         ):
             for key, value in payload.items():
                 with self.subTest(key=key):

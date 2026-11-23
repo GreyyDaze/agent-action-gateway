@@ -33,19 +33,19 @@ class FailureWallProofTests(unittest.TestCase):
             self._trace(
                 1,
                 error="provider-timeout",
-                step="create_invoice",
+                step="create_release",
                 config={"timeout": 8, "retries": 2},
             ),
             self._trace(
                 2,
                 error="provider-timeout",
-                step="create_invoice",
+                step="create_release",
                 config={"retries": 2, "timeout": 8},
             ),
             self._trace(
                 3,
                 error="provider-timeout",
-                step="create_invoice",
+                step="create_release",
                 config={"timeout": 8, "retries": 2},
             ),
         ]
@@ -62,25 +62,25 @@ class FailureWallProofTests(unittest.TestCase):
         base = self._trace(
             10,
             error="provider-timeout",
-            step="create_invoice",
+            step="create_release",
             config={"timeout": 8, "retries": 2},
         )
         different_error = self._trace(
             11,
             error="validation-error",
-            step="create_invoice",
+            step="create_release",
             config={"timeout": 8, "retries": 2},
         )
         different_step = self._trace(
             12,
             error="provider-timeout",
-            step="send_invoice",
+            step="send_release_notes",
             config={"timeout": 8, "retries": 2},
         )
         different_config = self._trace(
             13,
             error="provider-timeout",
-            step="create_invoice",
+            step="create_release",
             config={"timeout": 30, "retries": 2},
         )
 
@@ -99,31 +99,31 @@ class FailureWallProofTests(unittest.TestCase):
             self._trace(
                 20,
                 error="provider-timeout",
-                step="create_invoice",
+                step="create_release",
                 config={"timeout": 8},
             ),
             self._trace(
                 21,
                 error="provider-timeout",
-                step="create_invoice",
+                step="create_release",
                 config={"timeout": 8},
             ),
             self._trace(
                 22,
                 error="validation-error",
-                step="create_invoice",
+                step="create_release",
                 config={"timeout": 8},
             ),
             self._trace(
                 23,
                 error="provider-timeout",
-                step="send_invoice",
+                step="send_release_notes",
                 config={"timeout": 8},
             ),
             self._trace(
                 24,
                 error="provider-timeout",
-                step="create_invoice",
+                step="create_release",
                 config={"timeout": 30},
             ),
             {

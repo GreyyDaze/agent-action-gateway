@@ -32,15 +32,15 @@ class ProofRubricJudge:
 
 def good_output(case: GoldenCase) -> object:
     if case.check_type == "regex":
-        return "The refund was refunded successfully."
+        return "The deployment was rolled back successfully."
     return case.expected
 
 
 def five_point_drop_output(case: GoldenCase) -> object:
-    if case.case_id == "refund-002":
-        return {"order_id": "ORD-WRONG", "status": "failed"}
-    if case.case_id == "refund-006":
-        return {"order_id": "ORD-006", "status": "wrong"}
+    if case.case_id == "rollback-002":
+        return {"deployment_id": "DEP-WRONG", "status": "failed"}
+    if case.case_id == "rollback-006":
+        return {"deployment_id": "DEP-006", "status": "wrong"}
     return good_output(case)
 
 

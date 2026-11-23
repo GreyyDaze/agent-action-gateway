@@ -44,7 +44,7 @@ class ShippedExamplesTest(unittest.TestCase):
         as the default meant the documented first run failed on a clean install.
         """
         policy = load_route_policy(str(DEPLOY / "routes.example.json"))
-        self.assertIn("/charge", policy.routes)
+        self.assertIn("/deploy", policy.routes)
         self.assertEqual(policy.master_key_env, "AGENT_GATEWAY_MASTER_KEY")
 
     def test_every_route_uses_a_post_body(self) -> None:
@@ -96,7 +96,7 @@ class ShippedExamplesTest(unittest.TestCase):
     def test_the_egress_override_states_what_it_gives_up(self) -> None:
         """An override that only relaxes a control is a trap if it is quiet.
 
-        Most real agents do need egress -- a payment agent also calls a model
+        Most real agents do need egress -- a deployment agent also calls a model
         API. So the override has to exist, and it has to say plainly that
         turning egress on means a leaked key becomes usable.
         """
@@ -112,20 +112,20 @@ class SecretFileRefusalTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.path = Path(self._tmp.name) / "stripe_key"
-        self.path.write_text("sk_live_example")
+        self.path = Path(self._tmp.name) / "github_token"
+        self.path.write_text("ghp_example")
 
     def _route(self) -> Route:
         return Route(
-            path="/charge",
+            path="/deploy",
             upstream="https://example.invalid",
-            action="charge",
+            action="deploy",
             secret_env=f"file:{self.path}",
         )
 
     def test_a_readable_file_is_accepted(self) -> None:
         self.path.chmod(0o600)
-        self.assertEqual(self._route().credential(), "sk_live_example")
+        self.assertEqual(self._route().credential(), "ghp_example")
 
     def test_a_group_readable_file_is_refused(self) -> None:
         self.path.chmod(0o640)
@@ -286,7 +286,7 @@ class DoctorScopeTest(unittest.TestCase):
     def test_a_missing_secret_file_is_reported_as_a_problem(self) -> None:
         result = self._run("--config", str(DEPLOY / "routes.example.json"))
         self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("/run/secrets/stripe_key", result.stdout)
+        self.assertIn("/run/secrets/github_token", result.stdout)
 
     def test_an_unreadable_config_is_reported_not_crashed(self) -> None:
         result = self._run("--config", "/nonexistent/routes.json")
@@ -305,9 +305,9 @@ class MethodGuardTest(unittest.TestCase):
                     {
                         "routes": [
                             {
-                                "path": "/charge",
+                                "path": "/deploy",
                                 "upstream": "https://example.invalid",
-                                "action": "charge",
+                                "action": "deploy",
                                 "method": "GET",
                             }
                         ]
@@ -335,9 +335,9 @@ class CredentialUnavailableTest(unittest.TestCase):
         policy = GatewayPolicy(session_environment="prod")
         policy.register(
             Route(
-                path="/charge",
+                path="/deploy",
                 upstream="https://example.invalid",
-                action="charge",
+                action="deploy",
                 risk="read",
                 secret_env="file:/definitely/not/here",
                 environment="prod",
@@ -348,7 +348,7 @@ class CredentialUnavailableTest(unittest.TestCase):
     def test_an_unreadable_secret_returns_a_refusal(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TraceStore(Path(directory) / "r.db")
-            result = self._gateway(store).handle("POST", "/charge", {})
+            result = self._gateway(store).handle("POST", "/deploy", {})
         self.assertEqual(result.status, 503)
         self.assertIn("credential unavailable", result.body["error"])
 
@@ -357,7 +357,7 @@ class CredentialUnavailableTest(unittest.TestCase):
         for whoever made the request."""
         with tempfile.TemporaryDirectory() as directory:
             store = TraceStore(Path(directory) / "r.db")
-            result = self._gateway(store).handle("POST", "/charge", {})
+            result = self._gateway(store).handle("POST", "/deploy", {})
         rendered = json.dumps(result.body)
         self.assertNotIn("/definitely/not/here", rendered)
         self.assertNotIn("uid", rendered)
@@ -365,7 +365,7 @@ class CredentialUnavailableTest(unittest.TestCase):
     def test_the_reason_is_traced_even_though_it_is_not_returned(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TraceStore(Path(directory) / "r.db")
-            self._gateway(store).handle("POST", "/charge", {})
+            self._gateway(store).handle("POST", "/deploy", {})
             events = [t["event"] for t in store.snapshot()["traces"]]
         self.assertIn("gateway.credential_unavailable", events)
 

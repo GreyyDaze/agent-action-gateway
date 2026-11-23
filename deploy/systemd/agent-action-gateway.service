@@ -39,10 +39,10 @@ EnvironmentFile=-/etc/agent-action-gateway/gateway.env
 
 # Upstream API credentials, one per route that needs one. Each is mounted
 # read-only at /run/credentials/<name>, mode 0400, owned by agent-action-gateway.
-# A route reads one with  secret_env: "file:/run/credentials/stripe_key"
-LoadCredential=stripe_key:/etc/agent-action-gateway/credentials/stripe_key
+# A route reads one with  secret_env: "file:/run/credentials/github_token"
+LoadCredential=github_token:/etc/agent-action-gateway/credentials/github_token
 
-StateDirectory=safety
+StateDirectory=agent-action-gateway
 WorkingDirectory=/var/lib/agent-action-gateway
 
 # The gateway needs a network to reach providers and a filesystem for its

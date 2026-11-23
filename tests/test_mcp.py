@@ -52,7 +52,7 @@ class BridgeTestBase(unittest.TestCase):
         self.upstream = UpstreamRecorder()
         self.policy = GatewayPolicy(session_environment="prod")
         for path, action, risk in (
-            ("/charge", "charge", "destructive"),
+            ("/deploy", "deploy", "destructive"),
             ("/lookup", "lookup", "read"),
         ):
             self.policy.register(
@@ -81,21 +81,21 @@ class BridgeTestBase(unittest.TestCase):
 
 class NamingTest(unittest.TestCase):
     def test_round_trip(self) -> None:
-        self.assertEqual(tool_name_for("/charge"), "charge")
-        self.assertEqual(route_path_for("charge"), "/charge")
-        self.assertEqual(route_path_for("/charge"), "/charge")
+        self.assertEqual(tool_name_for("/deploy"), "deploy")
+        self.assertEqual(route_path_for("deploy"), "/deploy")
+        self.assertEqual(route_path_for("/deploy"), "/deploy")
 
     def test_every_route_is_offered_as_a_tool(self) -> None:
         policy = GatewayPolicy()
-        policy.register(Route(path="/charge", upstream="u", action="charge"))
+        policy.register(Route(path="/deploy", upstream="u", action="deploy"))
         policy.register(Route(path="/lookup", upstream="u", action="lookup"))
         names = {tool["name"] for tool in tool_definitions(policy)}
-        self.assertEqual(names, {"charge", "lookup"})
+        self.assertEqual(names, {"deploy", "lookup"})
 
     def test_a_descriptor_is_usable_as_an_mcp_tool(self) -> None:
         policy = GatewayPolicy()
         policy.register(
-            Route(path="/charge", upstream="u", action="charge", risk="destructive")
+            Route(path="/deploy", upstream="u", action="deploy", risk="destructive")
         )
         tool = tool_definitions(policy)[0]
         json.dumps(tool)  # must serialise
@@ -107,7 +107,7 @@ class EnforcementTest(BridgeTestBase):
     def test_a_destructive_call_without_approval_is_refused(self) -> None:
         bridge = MCPToolBridge.from_policy(self.store, self.policy)
         bridge.gateway._transport = self.upstream
-        result = bridge.call_tool("charge", {"amount": 100})
+        result = bridge.call_tool("deploy", {"revision": 100})
         self.assertTrue(result["isError"])
         self.assertIn("approval", result["content"][0]["text"].lower())
         self.assertEqual(self.upstream.calls, [])
@@ -115,9 +115,9 @@ class EnforcementTest(BridgeTestBase):
     def test_an_approved_call_forwards_exactly_once(self) -> None:
         gateway = SafetyGateway(self.store, self.policy, transport=self.upstream)
         bridge = MCPToolBridge(gateway)
-        approval = self._approve(gateway, "charge", {"amount": 100, "_idempotency_key": "k-1"})
+        approval = self._approve(gateway, "deploy", {"revision": 100, "_idempotency_key": "k-1"})
         result = bridge.call_tool(
-            "charge", {"amount": 100}, approval_id=approval, idempotency_key="k-1"
+            "deploy", {"revision": 100}, approval_id=approval, idempotency_key="k-1"
         )
         self.assertFalse(result["isError"], result)
         self.assertEqual(len(self.upstream.calls), 1)
@@ -125,7 +125,7 @@ class EnforcementTest(BridgeTestBase):
     def test_a_read_needs_no_approval(self) -> None:
         bridge = MCPToolBridge.from_policy(self.store, self.policy)
         bridge.gateway._transport = self.upstream
-        result = bridge.call_tool("lookup", {"charge_id": "ch_1"})
+        result = bridge.call_tool("lookup", {"deploy_id": "ch_1"})
         self.assertFalse(result["isError"], result)
         self.assertEqual(len(self.upstream.calls), 1)
 
@@ -140,7 +140,7 @@ class EnforcementTest(BridgeTestBase):
         key, or the bridge becomes a route-existence oracle."""
         bridge = MCPToolBridge.from_policy(self.store, self.policy)
         missing = bridge.call_tool("nope", {})["content"][0]["text"]
-        known = bridge.call_tool("charge", {})["content"][0]["text"]
+        known = bridge.call_tool("deploy", {})["content"][0]["text"]
         # Both refuse, but for different reasons -- what must not leak is the
         # existence of a route the caller has no scope for. Here the caller is
         # the bridge itself, so assert only that an absent tool reads as absent.
@@ -157,7 +157,7 @@ class ParityTest(BridgeTestBase):
                               idempotency_key=key)
 
     def test_a_refused_action_writes_the_same_trace_over_both_doors(self) -> None:
-        self._via_http("/charge", {"amount": 100})
+        self._via_http("/deploy", {"revision": 100})
         http_rows = [
             (t["event"], t["status"]) for t in self._traces()
         ]
@@ -165,7 +165,7 @@ class ParityTest(BridgeTestBase):
         store2 = TraceStore(Path(self._tmp.name) / "second.db")
         bridge = MCPToolBridge.from_policy(store2, self.policy)
         bridge.gateway._transport = self.upstream
-        bridge.call_tool("charge", {"amount": 100})
+        bridge.call_tool("deploy", {"revision": 100})
         mcp_rows = [
             (t["event"], t["status"]) for t in store2.snapshot()["traces"]
         ]
@@ -173,21 +173,21 @@ class ParityTest(BridgeTestBase):
         self.assertEqual(http_rows, mcp_rows)
 
     def test_a_refused_action_is_refused_over_both_doors(self) -> None:
-        http = self._via_http("/charge", {"amount": 100})
+        http = self._via_http("/deploy", {"revision": 100})
         bridge = MCPToolBridge.from_policy(
             TraceStore(Path(self._tmp.name) / "second.db"), self.policy
         )
         bridge.gateway._transport = self.upstream
-        mcp = bridge.call_tool("charge", {"amount": 100})
+        mcp = bridge.call_tool("deploy", {"revision": 100})
         self.assertGreaterEqual(http.status, 400)
         self.assertTrue(mcp["isError"])
 
     def test_both_doors_mark_the_row_as_enforced(self) -> None:
-        self._via_http("/charge", {"amount": 100})
+        self._via_http("/deploy", {"revision": 100})
         store2 = TraceStore(Path(self._tmp.name) / "second.db")
         bridge = MCPToolBridge.from_policy(store2, self.policy)
         bridge.gateway._transport = self.upstream
-        bridge.call_tool("charge", {"amount": 100})
+        bridge.call_tool("deploy", {"revision": 100})
         for store in (self.store, store2):
             rows = store.snapshot()["traces"]
             self.assertTrue(rows, "a refused action must leave evidence")
@@ -197,20 +197,20 @@ class ParityTest(BridgeTestBase):
     def test_a_held_action_is_recorded_over_both_doors(self) -> None:
         """The gateway used to refuse an approval-required action in silence.
 
-        An operator asking whether anything tried to charge got an empty
+        An operator asking whether anything tried to deploy got an empty
         answer. Both doors must now leave the same evidence of the hold.
         """
-        self._via_http("/charge", {"amount": 100})
+        self._via_http("/deploy", {"revision": 100})
         store2 = TraceStore(Path(self._tmp.name) / "second.db")
         bridge = MCPToolBridge.from_policy(store2, self.policy)
         bridge.gateway._transport = self.upstream
-        bridge.call_tool("charge", {"amount": 100})
+        bridge.call_tool("deploy", {"revision": 100})
 
         for store in (self.store, store2):
             held = [t for t in store.snapshot()["traces"] if t["event"] == "gateway.held"]
             self.assertEqual(len(held), 1, store.snapshot()["traces"])
-            self.assertEqual(held[0]["output"]["action"], "charge")
-            self.assertEqual(held[0]["output"]["path"], "/charge")
+            self.assertEqual(held[0]["output"]["action"], "deploy")
+            self.assertEqual(held[0]["output"]["path"], "/deploy")
 
 
 class TransportIndependenceTest(BridgeTestBase):

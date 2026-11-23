@@ -34,9 +34,9 @@ from agent_action_gateway import session
 
 def build():
     with session() as ctx:
-        refund = ctx.tool(refund_fn, action="refund", risk="destructive")
+        rollback = ctx.tool(rollback_fn, action="rollback", risk="destructive")
         lookup = ctx.tool(lookup_fn, action="lookup", risk="read")
-        return ctx.run(agent, task, tools={"refund": refund, "lookup": lookup})
+        return ctx.run(agent, task, tools={"rollback": rollback, "lookup": lookup})
 '''
 
 # The documented wrapper pattern: the wrapper is *supposed* to call the
@@ -46,23 +46,23 @@ from agent_action_gateway import session
 
 def build(provider):
     with session() as ctx:
-        refund = ctx.tool(
-            lambda order_id, intent_key: provider.execute(order_id, intent_key),
-            action="refund",
+        rollback = ctx.tool(
+            lambda deployment_id, intent_key: provider.execute(deployment_id, intent_key),
+            action="rollback",
             risk="destructive",
             provider=provider,
         )
 '''
 
 BYPASSES_LAYER = '''
-import stripe
+import boto3
 from agent_action_gateway import session
 
 def build(provider):
-    stripe.PaymentIntent.create(amount=400000)
+    boto3.client("ec2").terminate_instances(InstanceIds=["i-0abc"])
     with session() as ctx:
-        refund = ctx.tool(refund_fn, action="refund", risk="destructive")
-    provider.refund("ORD-1", "k1")
+        rollback = ctx.tool(rollback_fn, action="rollback", risk="destructive")
+    provider.rollback("DEP-1", "k1")
 '''
 
 
@@ -152,13 +152,13 @@ class DatabaseAuditTest(unittest.TestCase):
 
         path = Path(tempfile.mkdtemp()) / "interrupted.db"
         store = TraceStore(path)
-        receipt = store.create_receipt("run-x", "step-1", "external_action", {"target": "ORD-1"})
+        receipt = store.create_receipt("run-x", "step-1", "external_action", {"target": "DEP-1"})
         connection = sqlite3.connect(path)
         connection.execute(
             "INSERT INTO trace_events "
             "(run_id, step, event, input_json, output_json, status) "
             "VALUES (?,?,?,?,?,?)",
-            ("run-x", 1, "refund", "{}", '{"order_id": "ORD-1"}', "allowed"),
+            ("run-x", 1, "rollback", "{}", '{"deployment_id": "DEP-1"}', "allowed"),
         )
         connection.commit()
         connection.close()
@@ -171,7 +171,7 @@ class DatabaseAuditTest(unittest.TestCase):
     def test_resolved_receipt_passes(self) -> None:
         path = Path(tempfile.mkdtemp()) / "resolved.db"
         store = TraceStore(path)
-        receipt = store.create_receipt("run-y", "step-1", "external_action", {"target": "ORD-2"})
+        receipt = store.create_receipt("run-y", "step-1", "external_action", {"target": "DEP-2"})
         store.mark_done(receipt.intent_key, "ref-1")
         import sqlite3
 
@@ -180,7 +180,7 @@ class DatabaseAuditTest(unittest.TestCase):
             "INSERT INTO trace_events "
             "(run_id, step, event, input_json, output_json, status) "
             "VALUES (?,?,?,?,?,?)",
-            ("run-y", 1, "refund", "{}", '{"order_id": "ORD-2"}', "allowed"),
+            ("run-y", 1, "rollback", "{}", '{"deployment_id": "DEP-2"}', "allowed"),
         )
         connection.commit()
         connection.close()
@@ -195,13 +195,13 @@ class DatabaseAuditTest(unittest.TestCase):
 
         with session(store=TraceStore(path)) as ctx:
             tool = ctx.tool(
-                lambda **kwargs: {"status": "refunded"},
-                action="refund",
+                lambda **kwargs: {"status": "rolled_back"},
+                action="rollback",
                 risk="destructive",
             )
-            approval = ctx.request_approval("refund", {"order_id": "ORD-1"})
+            approval = ctx.request_approval("rollback", {"deployment_id": "DEP-1"})
             ctx.approve(approval.approval_id, "operator")
-            tool(order_id="ORD-1", approval_id=approval.approval_id)
+            tool(deployment_id="DEP-1", approval_id=approval.approval_id)
 
         report = audit_database(path)
         self.assertIsNotNone(report.findings)
@@ -223,14 +223,14 @@ RAW_NETWORK = """
 import requests
 from urllib.request import urlopen
 
-def pay(req):
-    requests.post("https://api.stripe.com/v1/refunds", json={"amount": 4000})
+def deploy(req):
+    requests.post("https://api.github.com/repos/acme/api/deployments", json={"ref": "v2"})
     urlopen(req)
 """
 
 
 class DetectionBreadthTest(unittest.TestCase):
-    """A hand-rolled HTTP call moves money just as much as a provider SDK."""
+    """A hand-rolled HTTP call changes a system just as much as a provider SDK."""
 
     def test_raw_network_calls_are_flagged(self) -> None:
         report = scan_code(write_app(RAW_NETWORK))
@@ -249,7 +249,7 @@ class DetectionBreadthTest(unittest.TestCase):
 
         with session(store=TraceStore(path)) as ctx:
             tool = ctx.tool(lambda **k: {"status": "ok"}, action="lookup", risk="read")
-            tool(order_id="ORD-1")
+            tool(deployment_id="DEP-1")
 
         report = audit_database(path)
         run_path = next(f for f in report.findings if f.name == "run path")

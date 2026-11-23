@@ -44,13 +44,13 @@ OPEN_OBJECT: dict[str, Any] = {"type": "object", "additionalProperties": True}
 
 
 def tool_name_for(route_path: str) -> str:
-    """`/charge` -> `charge`. Leading slash stripped; a path without one is
+    """`/deploy` -> `deploy`. Leading slash stripped; a path without one is
     returned unchanged."""
     return route_path.lstrip("/") or route_path
 
 
 def route_path_for(tool_name: str) -> str:
-    """`charge` -> `/charge`. An already-slashed name is returned unchanged."""
+    """`deploy` -> `/deploy`. An already-slashed name is returned unchanged."""
     return tool_name if tool_name.startswith("/") else f"/{tool_name}"
 
 

@@ -3,7 +3,7 @@
 The library's own suites prove the enforcement path works. They say nothing
 about whether a given application uses it, which is the failure this module
 exists to catch: an agent that imports a provider directly, or calls the
-observe-only runner on a path that moves money, is unprotected while every
+observe-only runner on a path that changes production, is unprotected while every
 published check still reports green.
 
 Two inputs, because neither alone is sufficient:
@@ -125,12 +125,13 @@ _BYPASS_MODULES = frozenset(
         "openai",
         "google.generativeai",
         "boto3",
+        "kubernetes",
         "stripe",
     }
 )
 
 # Calls that reach the network directly, bypassing the layer. These are the
-# shapes that move money or data without a receipt, whichever SDK is used.
+# shapes that change systems or data without a receipt, whichever SDK is used.
 _NETWORK_CALLS = (
     "requests.post(",
     "requests.put(",
@@ -150,7 +151,7 @@ _NETWORK_CALLS = (
 # documented pattern, and calling them from anywhere else is caught by the
 # import check.
 _PROVIDER_CALLS = frozenset(
-    {".refund(", ".create_payment(", ".charge(", ".delete(", ".deploy("}
+    {".rollback(", ".delete(", ".deploy(", ".drop_table(", ".refund(", ".charge(", ".create_payment("}
 )
 
 
@@ -321,7 +322,7 @@ def _render_call(node: ast.expr) -> str | None:
 # --------------------------------------------------------------------------
 
 # Actions that move something irreversible and therefore must be recorded.
-_DESTRUCTIVE_MARKERS = ("refund", "delete", "charge", "payment", "deploy", "write")
+_DESTRUCTIVE_MARKERS = ("rollback", "delete", "drop", "deploy", "write", "refund", "charge", "payment")
 
 
 def audit_database(path: Path) -> Report:

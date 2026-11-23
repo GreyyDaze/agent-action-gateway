@@ -28,7 +28,7 @@ class MCPServerTest(unittest.TestCase):
 
         self.policy = GatewayPolicy(session_environment="prod")
         self.policy.register(
-            Route(path="/charge", upstream="https://x.invalid/charge", action="charge", risk="destructive")
+            Route(path="/deploy", upstream="https://x.invalid/deploy", action="deploy", risk="destructive")
         )
         self.gateway = SafetyGateway(self.store, self.policy, transport=transport)
         self.server = MCPServer(MCPToolBridge(self.gateway))
@@ -42,12 +42,12 @@ class MCPServerTest(unittest.TestCase):
         result = self.server.handle({"method": "tools/list", "id": 2, "params": {}})
         assert result is not None
         names = [t["name"] for t in result["result"]["tools"]]
-        self.assertIn("charge", names)
+        self.assertIn("deploy", names)
 
     def test_destructive_call_blocked(self) -> None:
         result = self.server.handle({
             "method": "tools/call", "id": 3,
-            "params": {"name": "charge", "arguments": {"amount": 100}},
+            "params": {"name": "deploy", "arguments": {"revision": 100}},
         })
         assert result is not None
         self.assertTrue(result["result"]["isError"])
@@ -55,13 +55,13 @@ class MCPServerTest(unittest.TestCase):
 
     def test_approved_call_forwards_once(self) -> None:
         approval = self.gateway.approvals.request(
-            "charge", {"amount": 100, "_idempotency_key": "k"}, datetime.now(UTC) + timedelta(minutes=5)
+            "deploy", {"revision": 100, "_idempotency_key": "k"}, datetime.now(UTC) + timedelta(minutes=5)
         )
         self.gateway.approvals.approve(approval.approval_id, "op")
         result = self.server.handle({
             "method": "tools/call", "id": 4,
-            "params": {"name": "charge", "arguments": {
-                "amount": 100,
+            "params": {"name": "deploy", "arguments": {
+                "revision": 100,
                 "_idempotency_key": "k",
                 "_approval_id": approval.approval_id,
             }},

@@ -12,7 +12,7 @@ from agent_action_gateway.policy.fuses import (
     FuseTrippedError,
 )
 from agent_action_gateway.policy.locks import ApprovalStore, RiskRegistry
-from agent_action_gateway.proofs.fakes import MockPaymentProvider
+from agent_action_gateway.proofs.fakes import MockEffectProvider
 from agent_action_gateway.runtime.orchestrator import dispatch_external_action, execute_tool, run
 from agent_action_gateway.storage.traces import TraceStore
 
@@ -200,25 +200,26 @@ class FuseTest(unittest.TestCase):
             store = TraceStore(Path(tmp) / "runtime.db")
             approvals = ApprovalStore(store)
             registry = RiskRegistry()
-            registry.register("refund", "destructive")
-            arguments = {"order_id": "ORD-100", "amount": 400}
+            registry.register("rollback", "destructive")
+            arguments = {"deployment_id": "DEP-100", "revision": 400}
             approval = approvals.create(
-                "refund", arguments, "human-1",
+                "rollback", arguments, "human-1",
                 datetime.now(UTC) + timedelta(days=1),
             )
-            provider = MockPaymentProvider(dedupe=True)
+            provider = MockEffectProvider(dedupe=True)
             fuse = FuseController(FuseBudget())
             fuse.mark_unavailable()
 
             with self.assertRaisesRegex(FuseTrippedError, "writes are refused"):
                 dispatch_external_action(
                     store, provider, "run-real-action", "step-1",
-                    arguments, "ORD-100",
+                    arguments, "DEP-100",
+                    action="rollback",
                     registry=registry, approval_store=approvals,
                     approval_id=approval.approval_id, fuse=fuse,
                 )
 
-            self.assertEqual(provider.refunds, [])
+            self.assertEqual(provider.rollbacks, [])
             self.assertIsNone(approvals.get(approval.approval_id).consumed_at)
 
     def test_available_fuse_allows_real_external_write_and_counts_step(self) -> None:
@@ -226,24 +227,25 @@ class FuseTest(unittest.TestCase):
             store = TraceStore(Path(tmp) / "runtime.db")
             approvals = ApprovalStore(store)
             registry = RiskRegistry()
-            registry.register("refund", "destructive")
-            arguments = {"order_id": "ORD-101", "amount": 200}
+            registry.register("rollback", "destructive")
+            arguments = {"deployment_id": "DEP-101", "revision": 200}
             approval = approvals.create(
-                "refund", arguments, "human-1",
+                "rollback", arguments, "human-1",
                 datetime.now(UTC) + timedelta(days=1),
             )
-            provider = MockPaymentProvider(dedupe=True)
+            provider = MockEffectProvider(dedupe=True)
             fuse = FuseController(FuseBudget(FuseLimits(max_steps=1)))
 
             result = dispatch_external_action(
                 store, provider, "run-real-action", "step-1",
-                arguments, "ORD-101",
+                arguments, "DEP-101",
+                action="rollback",
                 registry=registry, approval_store=approvals,
                 approval_id=approval.approval_id, fuse=fuse,
             )
 
             self.assertTrue(result.startswith("mock-"))
-            self.assertEqual(len(provider.refunds), 1)
+            self.assertEqual(len(provider.rollbacks), 1)
             snapshot = fuse.snapshot()
             self.assertEqual(snapshot.steps_used, 1)
             self.assertFalse(snapshot.degraded)

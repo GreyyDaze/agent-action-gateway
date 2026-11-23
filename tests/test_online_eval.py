@@ -37,7 +37,7 @@ def clean_run(run_id: str) -> list[dict]:
 
 def degraded_run(run_id: str) -> list[dict]:
     return [
-        trace(run_id, output={"action": "refund", "risk": "destructive"}, status="blocked",
+        trace(run_id, output={"action": "rollback", "risk": "destructive"}, status="blocked",
               id=1),
     ]
 

@@ -53,7 +53,7 @@ class StubRubricJudge:
 
 def good(case: GoldenCase) -> object:
     if case.check_type == "regex":
-        return "refunded successfully"
+        return "rolled back successfully"
     return case.expected
 
 
@@ -62,7 +62,7 @@ class EvaluationTest(unittest.TestCase):
         cases = load_golden_set()
         self.assertEqual(len(cases), 30)
         self.assertTrue(any(case.catastrophic for case in cases))
-        self.assertEqual(cases[0].case_id, "refund-001")
+        self.assertEqual(cases[0].case_id, "rollback-001")
 
     def test_semantic_cases_and_calibration_examples_are_present(self) -> None:
         cases = load_golden_set()
@@ -72,7 +72,7 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(
             semantic_ids,
             {
-                "refund-semantic-001",
+                "rollback-semantic-001",
                 "safety-semantic-001",
                 "support-semantic-001",
             },
@@ -142,10 +142,10 @@ class EvaluationTest(unittest.TestCase):
         cases = seed_golden_cases()
 
         def degraded(case: GoldenCase) -> object:
-            if case.case_id == "refund-002":
-                return {"order_id": "ORD-WRONG", "status": "failed"}
-            if case.case_id == "refund-006":
-                return {"order_id": "ORD-006", "status": "wrong"}
+            if case.case_id == "rollback-002":
+                return {"deployment_id": "DEP-WRONG", "status": "failed"}
+            if case.case_id == "rollback-006":
+                return {"deployment_id": "DEP-006", "status": "wrong"}
             return good(case)
 
         summary = evaluate_cases(cases, degraded, runs=3, judge=StubRubricJudge())

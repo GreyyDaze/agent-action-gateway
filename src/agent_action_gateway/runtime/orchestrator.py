@@ -382,9 +382,9 @@ def dispatch_external_action(
     run_id: str,
     step_id: str,
     arguments: dict[str, Any],
-    order_id: str,
+    target: str,
     *,
-    action: str = "refund",
+    action: str = "external_action",
     registry: RiskRegistry | None = None,
     approval_store: ApprovalStore | None = None,
     approval_id: str | None = None,
@@ -400,7 +400,7 @@ def dispatch_external_action(
 ) -> str:
     """Authorize a proposed action, then execute it through the shared pipeline.
 
-    A thin adapter: the ordering lives in core.enforcement.enforce so every
+    A thin adapter: the ordering lives in engine.enforcement.enforce so every
     caller, guarded or not, crosses the same checks in the same sequence.
     """
     if registry is None or approval_store is None:
@@ -412,7 +412,7 @@ def dispatch_external_action(
             action=action,
             arguments=arguments,
             step_id=step_id,
-            target=order_id,
+            target=target,
             provider=provider,
             registry=registry,
             approval_store=approval_store,

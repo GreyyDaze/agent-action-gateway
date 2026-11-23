@@ -90,7 +90,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Stub agents and helpers take arguments they deliberately ignore, and several
-# provider/protocol methods take `order_id` they do not need in order to
+# provider/protocol methods take `target` they do not need in order to
 # satisfy the shared interface.
 "tests/*" = ["ARG001", "ARG002", "ARG005", "SIM117"]
 "src/agent_action_gateway/integrations/adapters/base.py" = ["ARG002"]

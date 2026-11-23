@@ -11,7 +11,7 @@ from agent_action_gateway.policy.stop_rules import (
     StopPolicy,
     enforce_environment,
 )
-from agent_action_gateway.proofs.fakes import MockPaymentProvider
+from agent_action_gateway.proofs.fakes import MockEffectProvider
 from agent_action_gateway.runtime.orchestrator import (
     dispatch_external_action,
     evaluate_tool_result,
@@ -67,7 +67,7 @@ class StopRulesTest(unittest.TestCase):
 
     def test_partial_critical_result_asks(self) -> None:
         decision = self.policy.partial_result(
-            {"order": "ORD-100"},
+            {"deployment": "DEP-100"},
             ["customer_id"],
             missing_critical=True,
         )
@@ -76,7 +76,7 @@ class StopRulesTest(unittest.TestCase):
 
     def test_partial_noncritical_result_is_reported(self) -> None:
         decision = self.policy.partial_result(
-            {"order": "ORD-100"},
+            {"deployment": "DEP-100"},
             ["optional_note"],
             missing_critical=False,
         )
@@ -112,7 +112,7 @@ class StopRulesTest(unittest.TestCase):
             first_source="primary-db",
             second_source="audit-db",
             invariant_name="same-record-set",
-            second_source_fn=lambda: {"records": [{"id": "ORD-100"}]},
+            second_source_fn=lambda: {"records": [{"id": "DEP-100"}]},
             invariant=lambda first, second: first == second,
         )
 
@@ -128,19 +128,19 @@ class StopRulesTest(unittest.TestCase):
             store = TraceStore(Path(tmp) / "runtime.db")
             first = run(
                 lambda task: "should not execute",
-                "refund request",
+                "rollback request",
                 store,
                 run_id="resume-1",
-                required_inputs={"order_id": None},
+                required_inputs={"deployment_id": None},
             )
             self.assertEqual(first["status"], "needs_clarification")
 
             second = run(
                 lambda task: "should not execute",
-                "refund request",
+                "rollback request",
                 store,
                 run_id="resume-1",
-                required_inputs={"order_id": None},
+                required_inputs={"deployment_id": None},
                 new_turn=True,
             )
             self.assertEqual(second["status"], "needs_clarification")
@@ -151,10 +151,10 @@ class StopRulesTest(unittest.TestCase):
 
             third = run(
                 lambda task: "executed only after best effort",
-                "refund request",
+                "rollback request",
                 store,
                 run_id="resume-1",
-                required_inputs={"order_id": None},
+                required_inputs={"deployment_id": None},
                 new_turn=True,
             )
             self.assertEqual(third["status"], "completed")
@@ -165,7 +165,7 @@ class StopRulesTest(unittest.TestCase):
             decision = evaluate_tool_result(
                 store,
                 "tool-run-1",
-                "find order",
+                "find deployment",
                 {},
             )
             self.assertEqual(decision.decision, "CROSS_CHECK")
@@ -180,16 +180,16 @@ class StopRulesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = TraceStore(Path(tmp) / "runtime.db")
             spec = CrossCheckSpec(
-                first_source="orders",
+                first_source="deployments",
                 second_source="audit",
                 invariant_name="same-record-set",
-                second_source_fn=lambda: {"records": [{"id": "ORD-100"}]},
+                second_source_fn=lambda: {"records": [{"id": "DEP-100"}]},
                 invariant=lambda first, second: first == second,
             )
             decision = evaluate_tool_result(
                 store,
                 "tool-run-2",
-                "find order",
+                "find deployment",
                 {},
                 cross_check=spec,
             )
@@ -216,14 +216,14 @@ class StopRulesTest(unittest.TestCase):
             outcome = execute_tool(
                 store,
                 "tool-e2e-1",
-                "find order",
-                lambda: calls.append("tool") or {"order_id": "ORD-100"},
-                required_fields=("order_id",),
+                "find deployment",
+                lambda: calls.append("tool") or {"deployment_id": "DEP-100"},
+                required_fields=("deployment_id",),
             )
 
             self.assertEqual(calls, ["tool"])
             self.assertEqual(outcome["decision"], "CONTINUE")
-            self.assertEqual(outcome["result"], {"order_id": "ORD-100"})
+            self.assertEqual(outcome["result"], {"deployment_id": "DEP-100"})
 
     def test_execute_tool_hides_suspicious_result_and_stops(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -231,7 +231,7 @@ class StopRulesTest(unittest.TestCase):
             outcome = execute_tool(
                 store,
                 "tool-e2e-2",
-                "find order",
+                "find deployment",
                 lambda: {},
             )
 
@@ -244,7 +244,7 @@ class StopRulesTest(unittest.TestCase):
             store = TraceStore(Path(tmp) / "runtime.db")
             calls = []
             spec = CrossCheckSpec(
-                first_source="orders",
+                first_source="deployments",
                 second_source="audit",
                 invariant_name="same-record-set",
                 second_source_fn=lambda: calls.append("second") or {},
@@ -254,7 +254,7 @@ class StopRulesTest(unittest.TestCase):
             outcome = execute_tool(
                 store,
                 "tool-e2e-3",
-                "find order",
+                "find deployment",
                 lambda: {},
                 cross_check=spec,
             )
@@ -267,17 +267,17 @@ class StopRulesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = TraceStore(Path(tmp) / "runtime.db")
             spec = CrossCheckSpec(
-                first_source="orders",
+                first_source="deployments",
                 second_source="audit",
                 invariant_name="same-record-set",
-                second_source_fn=lambda: {"records": [{"id": "ORD-100"}]},
+                second_source_fn=lambda: {"records": [{"id": "DEP-100"}]},
                 invariant=lambda first, second: first == second,
             )
 
             outcome = execute_tool(
                 store,
                 "tool-e2e-4",
-                "find order",
+                "find deployment",
                 lambda: {},
                 cross_check=spec,
             )
@@ -285,7 +285,7 @@ class StopRulesTest(unittest.TestCase):
             traces = [e for e in store.snapshot()["traces"] if e["run_id"] == "tool-e2e-4"]
             evidence = traces[-1]["output"]
             self.assertEqual(evidence["decision"], "ASK")
-            self.assertEqual(evidence["cross_check"]["first_source"], "orders")
+            self.assertEqual(evidence["cross_check"]["first_source"], "deployments")
             self.assertEqual(evidence["cross_check"]["second_source"], "audit")
             self.assertEqual(evidence["cross_check"]["invariant"], "same-record-set")
             self.assertFalse(evidence["cross_check"]["agrees"])
@@ -303,21 +303,21 @@ class StopRulesTest(unittest.TestCase):
 
             first = run(
                 agent, "vague request 1", store, run_id="five-requests",
-                required_inputs={"order_id": None},
+                required_inputs={"deployment_id": None},
             )
             self.assertEqual(first["status"], "needs_clarification")
             self.assertEqual(calls, [])
 
             second = run(
                 agent, "vague request 2", store, run_id="five-requests",
-                required_inputs={"order_id": None}, new_turn=True,
+                required_inputs={"deployment_id": None}, new_turn=True,
             )
             self.assertEqual(second["status"], "needs_clarification")
             self.assertEqual(calls, [])
 
             third = run(
                 agent, "vague request 3", store, run_id="five-requests",
-                required_inputs={"order_id": None}, new_turn=True,
+                required_inputs={"deployment_id": None}, new_turn=True,
             )
             self.assertEqual(third["status"], "completed")
             self.assertEqual(third["attempt"], 2)
@@ -325,7 +325,7 @@ class StopRulesTest(unittest.TestCase):
 
             fourth = run(
                 agent, "vague request 4", store, run_id="five-requests",
-                required_inputs={"order_id": None}, new_turn=True,
+                required_inputs={"deployment_id": None}, new_turn=True,
             )
             self.assertEqual(fourth["status"], "completed")
             self.assertEqual(fourth["attempt"], 2)
@@ -333,7 +333,7 @@ class StopRulesTest(unittest.TestCase):
 
             fifth = run(
                 agent, "vague request 5", store, run_id="five-requests",
-                required_inputs={"order_id": None}, batch=True,
+                required_inputs={"deployment_id": None}, batch=True,
             )
             self.assertEqual(fifth["status"], "blocked")
             self.assertEqual(calls, ["vague request 3", "vague request 4"])
@@ -348,10 +348,10 @@ class StopRulesTest(unittest.TestCase):
 
             result = run(
                 lambda task: calls.append(task) or "unsafe",
-                "batch refund",
+                "batch rollback",
                 store,
                 run_id="batch-ambiguity",
-                required_inputs={"order_id": None},
+                required_inputs={"deployment_id": None},
                 batch=True,
             )
 
@@ -388,7 +388,7 @@ class StopRulesTest(unittest.TestCase):
             store = TraceStore(Path(tmp) / "runtime.db")
             calls = []
             spec = CrossCheckSpec(
-                first_source="orders",
+                first_source="deployments",
                 second_source="audit",
                 invariant_name="same-record-set",
                 second_source_fn=lambda: calls.append("second") or {},
@@ -396,10 +396,10 @@ class StopRulesTest(unittest.TestCase):
             )
 
             first = evaluate_tool_result(
-                store, "empty-once", "find order", {}, cross_check=spec,
+                store, "empty-once", "find deployment", {}, cross_check=spec,
             )
             second = evaluate_tool_result(
-                store, "empty-once", "find order", {}, cross_check=spec,
+                store, "empty-once", "find deployment", {}, cross_check=spec,
             )
 
             self.assertEqual(first.decision, "ASK")
@@ -423,15 +423,15 @@ class StopRulesTest(unittest.TestCase):
 
     def test_stop_rule_matrix(self) -> None:
         traps = [
-            self.policy.missing_input(ClarificationState(), ["order_id"]).decision,
+            self.policy.missing_input(ClarificationState(), ["deployment_id"]).decision,
             self.policy.empty_result(cross_check_performed=False).decision,
-            self.policy.partial_result({}, ["order_id"], missing_critical=True).decision,
+            self.policy.partial_result({}, ["deployment_id"], missing_critical=True).decision,
             self.policy.high_stakes_read(second_source_confirmed=False).decision,
         ]
         self.assertEqual(traps, ["ASK", "CROSS_CHECK", "ASK", "ASK"])
 
         legitimate = [
-            self.policy.partial_result({"order_id": "ORD-1"}, [], missing_critical=True).decision,
+            self.policy.partial_result({"deployment_id": "DEP-1"}, [], missing_critical=True).decision,
             self.policy.high_stakes_read(second_source_confirmed=True).decision,
             self.policy.empty_result(cross_check_performed=True).decision,
         ]
@@ -442,14 +442,14 @@ class StopRulesTest(unittest.TestCase):
         """Lock the validation proof set to explicit traps and legitimate paths."""
         traps = [
             ("missing-critical", self.policy.missing_input(
-                ClarificationState(), ["order_id"]
+                ClarificationState(), ["deployment_id"]
             ).decision, "ASK"),
             ("batch-ambiguity", self._batch_missing_input_decision(), "BLOCK"),
             ("empty-result", self.policy.empty_result(
                 cross_check_performed=False
             ).decision, "CROSS_CHECK"),
             ("partial-critical", self.policy.partial_result(
-                {}, ["order_id"], missing_critical=True
+                {}, ["deployment_id"], missing_critical=True
             ).decision, "ASK"),
             ("high-stakes-unconfirmed", self.policy.high_stakes_read(
                 second_source_confirmed=False
@@ -463,10 +463,10 @@ class StopRulesTest(unittest.TestCase):
 
         legitimate = [
             ("complete-result", self.policy.partial_result(
-                {"order_id": "ORD-1"}, [], missing_critical=True
+                {"deployment_id": "DEP-1"}, [], missing_critical=True
             ).decision, "CONTINUE"),
             ("noncritical-partial", self.policy.partial_result(
-                {"order_id": "ORD-1"}, ["optional_note"], missing_critical=False
+                {"deployment_id": "DEP-1"}, ["optional_note"], missing_critical=False
             ).decision, "REPORT_PARTIAL"),
             ("confirmed-high-stakes", self.policy.high_stakes_read(
                 second_source_confirmed=True
@@ -488,7 +488,7 @@ class StopRulesTest(unittest.TestCase):
     def _batch_missing_input_decision(self) -> str:
         try:
             self.policy.missing_input(
-                ClarificationState(), ["order_id"], batch=True
+                ClarificationState(), ["deployment_id"], batch=True
             )
         except AmbiguityBlockedError:
             return "BLOCK"
@@ -496,10 +496,10 @@ class StopRulesTest(unittest.TestCase):
 
     def _disagreement_decision(self, *, batch: bool = False) -> str:
         spec = CrossCheckSpec(
-            first_source="orders",
+            first_source="deployments",
             second_source="audit",
             invariant_name="same-record-set",
-            second_source_fn=lambda: {"records": [{"id": "ORD-100"}]},
+            second_source_fn=lambda: {"records": [{"id": "DEP-100"}]},
             invariant=lambda first, second: first == second,
         )
         return self.policy.cross_check_result(
@@ -509,9 +509,9 @@ class StopRulesTest(unittest.TestCase):
 
     def _second_question_decision(self) -> str:
         state = ClarificationState()
-        self.policy.missing_input(state, ["order_id"])
+        self.policy.missing_input(state, ["deployment_id"])
         try:
-            self.policy.missing_input(state, ["order_id"])
+            self.policy.missing_input(state, ["deployment_id"])
         except AmbiguityBlockedError:
             return "BLOCK"
         return "CONTINUE"
@@ -541,8 +541,8 @@ class StopRulesTest(unittest.TestCase):
             store = TraceStore(Path(tmp) / "runtime.db")
             approvals = ApprovalStore(store)
             registry = RiskRegistry()
-            registry.register("lookup_order", "read")
-            provider = MockPaymentProvider(dedupe=True)
+            registry.register("lookup_deployment", "read")
+            provider = MockEffectProvider(dedupe=True)
 
             with self.assertRaises(CrossEnvironmentError):
                 dispatch_external_action(
@@ -550,16 +550,16 @@ class StopRulesTest(unittest.TestCase):
                     provider,
                     "run-env",
                     "step-1",
-                    {"order_id": "ORD-100"},
-                    "ORD-100",
-                    action="lookup_order",
+                    {"deployment_id": "DEP-100"},
+                    "DEP-100",
+                    action="lookup_deployment",
                     registry=registry,
                     approval_store=approvals,
                     session_environment="staging",
                     target_environment="prod",
                 )
 
-            self.assertEqual(provider.refunds, [])
+            self.assertEqual(provider.rollbacks, [])
 
 
     def test_run_stops_and_records_missing_input(self) -> None:
@@ -567,9 +567,9 @@ class StopRulesTest(unittest.TestCase):
             store = TraceStore(Path(tmp) / "runtime.db")
             result = run(
                 lambda task: "should not execute",
-                "refund request",
+                "rollback request",
                 store,
-                required_inputs={"order_id": None},
+                required_inputs={"deployment_id": None},
             )
             self.assertEqual(result["status"], "needs_clarification")
             events = [e for e in store.snapshot()["traces"] if e["run_id"] == result["run_id"]]
@@ -580,9 +580,9 @@ class StopRulesTest(unittest.TestCase):
             store = TraceStore(Path(tmp) / "runtime.db")
             result = run(
                 lambda task: "should not execute",
-                "refund request",
+                "rollback request",
                 store,
-                required_inputs={"order_id": None},
+                required_inputs={"deployment_id": None},
                 batch=True,
             )
             self.assertEqual(result["status"], "blocked")

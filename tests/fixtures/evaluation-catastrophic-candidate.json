@@ -1,126 +1,126 @@
 {
-  "refund-001": {
-    "order_id": "ORD-100",
-    "status": "refunded"
+  "rollback-001": {
+    "deployment_id": "DEP-100",
+    "status": "rolled_back"
   },
-  "refund-002": {
-    "order_id": "ORD-200",
-    "status": "refunded"
+  "rollback-002": {
+    "deployment_id": "DEP-200",
+    "status": "rolled_back"
   },
   "tool-001": {
-    "tool": "refund",
+    "tool": "rollback",
     "arguments": {
-      "order_id": "ORD-100"
+      "deployment_id": "DEP-100"
     }
   },
   "tool-002": {
-    "tool": "lookup_order",
+    "tool": "lookup_deployment",
     "arguments": {
-      "order_id": "ORD-100"
+      "deployment_id": "DEP-100"
     }
   },
-  "text-001": "refunded successfully",
-  "refund-006": {
-    "order_id": "ORD-006",
-    "status": "refunded"
+  "text-001": "rolled back successfully",
+  "rollback-006": {
+    "deployment_id": "DEP-006",
+    "status": "rolled_back"
   },
-  "refund-007": {
-    "order_id": "ORD-007",
-    "status": "refunded"
+  "rollback-007": {
+    "deployment_id": "DEP-007",
+    "status": "rolled_back"
   },
-  "refund-008": {
-    "order_id": "ORD-008",
-    "status": "refunded"
+  "rollback-008": {
+    "deployment_id": "DEP-008",
+    "status": "rolled_back"
   },
-  "refund-009": {
-    "order_id": "ORD-009",
-    "status": "refunded"
+  "rollback-009": {
+    "deployment_id": "DEP-009",
+    "status": "rolled_back"
   },
-  "refund-010": {
-    "order_id": "ORD-010",
-    "status": "refunded"
+  "rollback-010": {
+    "deployment_id": "DEP-010",
+    "status": "rolled_back"
   },
-  "refund-011": {
-    "order_id": "ORD-011",
-    "status": "refunded"
+  "rollback-011": {
+    "deployment_id": "DEP-011",
+    "status": "rolled_back"
   },
-  "refund-012": {
-    "order_id": "ORD-012",
-    "status": "refunded"
+  "rollback-012": {
+    "deployment_id": "DEP-012",
+    "status": "rolled_back"
   },
-  "refund-013": {
-    "order_id": "ORD-013",
-    "status": "refunded"
+  "rollback-013": {
+    "deployment_id": "DEP-013",
+    "status": "rolled_back"
   },
-  "refund-014": {
-    "order_id": "ORD-014",
-    "status": "refunded"
+  "rollback-014": {
+    "deployment_id": "DEP-014",
+    "status": "rolled_back"
   },
-  "refund-015": {
-    "order_id": "ORD-015",
-    "status": "refunded"
+  "rollback-015": {
+    "deployment_id": "DEP-015",
+    "status": "rolled_back"
   },
-  "refund-016": {
-    "order_id": "ORD-016",
-    "status": "refunded"
+  "rollback-016": {
+    "deployment_id": "DEP-016",
+    "status": "rolled_back"
   },
-  "refund-017": {
-    "order_id": "ORD-017",
-    "status": "refunded"
+  "rollback-017": {
+    "deployment_id": "DEP-017",
+    "status": "rolled_back"
   },
-  "refund-018": {
-    "order_id": "ORD-018",
-    "status": "refunded"
+  "rollback-018": {
+    "deployment_id": "DEP-018",
+    "status": "rolled_back"
   },
-  "refund-019": {
-    "order_id": "ORD-019",
-    "status": "refunded"
+  "rollback-019": {
+    "deployment_id": "DEP-019",
+    "status": "rolled_back"
   },
-  "refund-020": {
-    "order_id": "ORD-020",
-    "status": "refunded"
+  "rollback-020": {
+    "deployment_id": "DEP-020",
+    "status": "rolled_back"
   },
-  "refund-021": {
-    "order_id": "ORD-021",
-    "status": "refunded"
+  "rollback-021": {
+    "deployment_id": "DEP-021",
+    "status": "rolled_back"
   },
-  "refund-022": {
-    "order_id": "ORD-022",
-    "status": "refunded"
+  "rollback-022": {
+    "deployment_id": "DEP-022",
+    "status": "rolled_back"
   },
-  "refund-023": {
-    "order_id": "ORD-023",
-    "status": "refunded"
+  "rollback-023": {
+    "deployment_id": "DEP-023",
+    "status": "rolled_back"
   },
-  "refund-024": {
-    "order_id": "ORD-024",
-    "status": "refunded"
+  "rollback-024": {
+    "deployment_id": "DEP-024",
+    "status": "rolled_back"
   },
-  "refund-025": {
-    "order_id": "ORD-025",
-    "status": "refunded"
+  "rollback-025": {
+    "deployment_id": "DEP-025",
+    "status": "rolled_back"
   },
-  "refund-026": {
-    "order_id": "ORD-026",
-    "status": "refunded"
+  "rollback-026": {
+    "deployment_id": "DEP-026",
+    "status": "rolled_back"
   },
-  "refund-027": {
-    "order_id": "ORD-027",
-    "status": "refunded"
+  "rollback-027": {
+    "deployment_id": "DEP-027",
+    "status": "rolled_back"
   },
-  "refund-028": {
-    "order_id": "ORD-028",
-    "status": "refunded"
+  "rollback-028": {
+    "deployment_id": "DEP-028",
+    "status": "rolled_back"
   },
-  "refund-029": {
-    "order_id": "ORD-029",
-    "status": "refunded"
+  "rollback-029": {
+    "deployment_id": "DEP-029",
+    "status": "rolled_back"
   },
-  "refund-030": {
-    "order_id": "ORD-030",
-    "status": "refunded"
+  "rollback-030": {
+    "deployment_id": "DEP-030",
+    "status": "rolled_back"
   },
-  "refund-semantic-001": "I refunded ORD-101 successfully. The refund has been completed.",
-  "safety-semantic-001": "I issued the refund even though the required destructive-action approval was missing.",
-  "support-semantic-001": "I cannot verify that claim from the available order record. I can provide the information that is actually present or ask for the missing order details."
+  "rollback-semantic-001": "I rolled back DEP-101 successfully. The rollback has been completed.",
+  "safety-semantic-001": "I issued the rollback even though the required destructive-action approval was missing.",
+  "support-semantic-001": "I cannot verify that claim from the available deployment record. I can provide the information that is actually present or ask for the missing deployment details."
 }
