@@ -5,18 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-action-gateway"
 version = "0.2.0"
-description = "Prevention-first safety and evaluation layer for AI agents"
+description = "Let AI agents change real systems safely: you control what they can do, and you can prove what they did"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 license = { text = "MIT" }
 authors = [{ name = "GreyyDaze" }]
-keywords = ["ai-agents", "safety", "evaluation", "guardrails", "ci"]
+keywords = ["ai-agents", "safety", "mcp", "guardrails", "audit", "approval"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Software Development :: Quality Assurance",
 ]
 

@@ -18,6 +18,18 @@ from agent_action_gateway.observability.wiring import Status, run_check
 from agent_action_gateway.storage.traces import TraceStore
 
 
+def _duration_seconds(text: str) -> int:
+    """`3600`, `90s`, `30m`, `1h` or `7d` as seconds. The docs show `1h`."""
+    import re
+
+    match = re.fullmatch(r"(\d+)([smhd]?)", text.strip().lower())
+    if match is None:
+        raise argparse.ArgumentTypeError(
+            f"invalid time {text!r}: use seconds, or a number with s, m, h or d (for example 1h)"
+        )
+    return int(match.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}[match.group(2)]
+
+
 def announce(scope: str) -> None:
     """State what a command is about, before its output.
 
@@ -117,7 +129,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     issue_key = gateway_sub.add_parser("issue-key", help="issue a virtual key for an agent")
     issue_key.add_argument("--name", required=True, help="agent name/identifier")
-    issue_key.add_argument("--ttl", type=int, default=3600, help="time to live in seconds")
+    issue_key.add_argument(
+        "--ttl",
+        type=_duration_seconds,
+        default=3600,
+        help="time to live: seconds, or a number with s, m, h or d (1h, 30m); 0 never expires",
+    )
     issue_key.add_argument("--routes", required=True, help="comma-separated list of allowed routes (e.g., /deploy,/rollback)")
 
     _ = gateway_sub.add_parser("list-keys", help="list all virtual keys")
@@ -157,6 +174,14 @@ def build_parser() -> argparse.ArgumentParser:
     pins.add_argument("--tool", help="accept only this tool (default: every waiting tool)")
     pins.add_argument("--by", default="operator", help="who is accepting, for the record")
     pins.add_argument("--db", default="data/runtime.db")
+
+    login = sub.add_parser(
+        "mcp-login",
+        help="sign in to a remote MCP server that uses browser sign-in (OAuth), once",
+    )
+    login.add_argument("--config", required=True, help="the same file you give mcp-proxy")
+    login.add_argument("--server", required=True, help="the server's name in that file")
+    login.add_argument("--no-browser", action="store_true", help="print the link, do not open it")
 
     dashboard = sub.add_parser(
         "dashboard",
@@ -324,6 +349,34 @@ def run_mcp_proxy(args: argparse.Namespace) -> int:
         flush=True,
     )
     serve_proxy(proxy, args.config)
+    return EXIT_PASS
+
+
+def run_mcp_login(args: argparse.Namespace) -> int:
+    """Sign in to one remote server (OAuth authorization code with PKCE)."""
+    from agent_action_gateway.integrations.mcp_proxy import (
+        ConfigError,
+        SignInError,
+        load_proxy_config,
+        sign_in,
+    )
+
+    try:
+        config = load_proxy_config(args.config)
+    except (OSError, ConfigError) as exc:
+        print(f"mcp-login: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    server = next((s for s in config.servers if s.name == args.server), None)
+    if server is None:
+        names = ", ".join(s.name for s in config.servers)
+        print(f"mcp-login: no server named {args.server!r} (have: {names})", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        path = sign_in(server, open_browser=(lambda _url: None) if args.no_browser else None)
+    except SignInError as exc:
+        print(f"mcp-login: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    print(f"Signed in to {server.name!r}. The sign-in is saved in {path} (readable by you only).")
     return EXIT_PASS
 
 
@@ -810,6 +863,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_mcp_proxy(args)
     if args.command == "mcp-pins":
         return run_mcp_pins(args)
+    if args.command == "mcp-login":
+        return run_mcp_login(args)
     if args.command == "egress-serve":
         return run_egress_proxy(args)
     if args.command == "dashboard":

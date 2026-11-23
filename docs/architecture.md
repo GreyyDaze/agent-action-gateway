@@ -86,6 +86,24 @@ sequenceDiagram
     end
 ```
 
+## What the checks cost
+
+Measured with `python benchmarks/overhead.py` on an Apple M1, Python 3.12, SQLite
+on the local disk, with tools that do no work, so these are the cost of the checks
+alone (median of 400 calls; run it yourself, the numbers move from run to run):
+
+| Call | Without the checks | With the checks |
+|---|---|---|
+| Library, read tool | under 0.01 ms | about 3 to 4 ms |
+| Library, destructive tool, approved (claim, receipt, record) | under 0.01 ms | about 13 to 17 ms |
+| MCP proxy, read tool | about 0.04 ms (straight to the server) | about 3 to 4 ms |
+| MCP proxy, destructive tool, approved | about 0.04 ms | about 14 to 15 ms |
+
+Nearly all of it is SQLite writes (the trace, the receipt, the approval). A real
+tool call (a network request, a database query) is usually far slower than this,
+and a PostgreSQL store will have its own cost. Reads are cheap; the extra time is
+for actions that change something.
+
 ## Configuration
 
 The package ships **example** configuration only: the route files in

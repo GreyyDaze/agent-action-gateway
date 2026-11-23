@@ -303,6 +303,37 @@ Cursor use works as it is:
   `url` connects to a remote server over Streamable HTTP, with the `headers` you
   give. `${NAME}` in any value is read from the environment, so a token never
   sits in the file. A server that cannot start stops the proxy.
+- **OAuth.** For a remote server that wants a token from an authorization server,
+  use the client-credentials grant instead of an `Authorization` header:
+  `"oauth": { "token_url": "https://auth.example.com/token", "client_id": "...",
+  "client_secret": "${TICKETS_SECRET}", "scope": "tools" }`. The proxy fetches a
+  token, reuses it until shortly before it expires, and fetches a new one if the
+  server rejects it (once). The secret is never printed or kept in an error.
+- **Browser sign-in.** For a server that needs a person to sign in once (OAuth
+  authorization code with PKCE), use `"flow": "authorization_code"` with the
+  server's `authorization_url`, `token_url`, `client_id` and a `token_file`
+  (`client_secret` and `redirect_port` are optional):
+
+  ```bash
+  agent-gateway mcp-login --config servers.json --server tickets
+  ```
+
+  This opens your browser, waits for the redirect back on `127.0.0.1`, and saves the
+  tokens in `token_file` (mode 0600; a file others can read is refused). The proxy
+  then uses them and refreshes them when they expire, or once if the server rejects
+  them. If there is no sign-in, or it cannot be refreshed, the proxy says to run
+  `mcp-login`. You give the endpoints yourself: finding them from the server and
+  registering a client automatically is not supported.
+- **Sessions.** If a remote server forgets the proxy's session (HTTP 404), the
+  proxy starts a new one and sends the same message again. That is safe because a
+  server that does not know the session has not acted on the message.
+- **Tool-list changes.** A remote server may announce changes on the optional
+  stream a client can open with a GET. The proxy opens it, and if the server has
+  none it stops asking. Changed tools go through pinning like any other.
+- **Local servers that die.** If a local server has stopped, the proxy restarts it
+  before the next call, reads its tools again and checks them against the pins. It
+  does not restart a server more than three times a minute. A call that was in
+  flight when the server died is not repeated; see "If a call times out" below.
 - **Risk classes.** The first rule that matches the name wins. With no rule, a
   tool is `read` only if its server marks it `readOnlyHint` and the server has
   `trust_hints` on (the default). Everything else is destructive and needs an
@@ -348,16 +379,33 @@ Cursor use works as it is:
   one hour; change them under `limits`.
 - **If a call times out or the server dies,** the result is unknown. The attempt
   stays unfinished and the same call is refused until a person settles it.
-- **Keys.** The proxy holds no key of its own. A key a server needs goes in that
-  server's `env` or `headers`. Keeping a key out of the agent's reach also needs
-  the proxy and its servers to run where the agent cannot read them; the proxy
-  does not provide that. Running a gateway route file as one of the proxy's
-  servers (`agent-gateway mcp-serve`) is possible but is not covered by tests.
+- **Keys.** The proxy holds no key of its own. To keep a key away from the agent
+  as well, let the gateway hold it and point the proxy at the gateway's MCP
+  endpoint:
+
+  ```json
+  { "servers": { "ops": { "url": "http://127.0.0.1:8080/mcp",
+                          "headers": { "Authorization": "Bearer ${GATEWAY_VIRTUAL_KEY}" } } } }
+  ```
+
+  The gateway serves its routes as MCP tools at `/mcp`. A virtual key sees only
+  the routes it is scoped to, and a route marked `read` is listed as read-only.
+  The proxy runs the checks; the gateway adds the real credential and makes the
+  call. The proxy sends its idempotency key along, and the gateway passes it
+  upstream as `Idempotency-Key`. The gateway must not run its own approval check
+  as well, or the same call would need two approvals: use a route file with a
+  `credentials` block (see `deploy/routes.credentials.example.json`). The
+  separation only holds if the agent cannot read the gateway's secrets or the
+  proxy's config; see the [gateway guide](gateway-deployment.md). This path is
+  tested with the real `agent-gateway gateway` process started from a route file.
 - **Boundary.** The proxy checks only what goes through it. Remove any direct
   connection from the agent to the real servers.
-- **Not supported yet:** Streamable HTTP servers that need OAuth or that only
-  send tool-list changes on a separate stream, and a session that a remote
-  server expires (restart the proxy).
+- **Not supported yet:** finding a remote server's sign-in endpoints automatically
+  (OAuth discovery and client registration), and connecting to servers over
+  anything but stdio and Streamable HTTP.
+- **Tested with:** this project's tests, the official Python MCP SDK client, and
+  one run of Claude Code (with a stand-in database tool). It has not been run with
+  Claude Desktop or Cursor.
 
 ### Route-based MCP server
 

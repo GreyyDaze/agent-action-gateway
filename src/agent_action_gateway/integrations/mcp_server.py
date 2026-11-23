@@ -14,18 +14,37 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from typing import Any, TextIO
 
-from agent_action_gateway.integrations.mcp import MCPToolBridge, tool_definitions
+from agent_action_gateway.integrations.mcp import (
+    MCPToolBridge,
+    route_path_for,
+    tool_definitions,
+)
+
+#: Where an MCP client (the proxy) puts the idempotency key of the action it
+#: forwards. It becomes the `Idempotency-Key` the gateway sends upstream. Keep
+#: in step with `INTENT_META_KEY` in mcp_proxy.py.
+INTENT_META_KEY = "agent-action-gateway/intent_key"
 
 
 class MCPServer:
-    """JSON-RPC dispatcher. Transport-agnostic: feed it lines, get lines back."""
+    """JSON-RPC dispatcher. Transport-agnostic: feed it lines, get lines back.
 
-    def __init__(self, bridge: MCPToolBridge) -> None:
+    `allowed_routes` limits the tools to those routes (a virtual key's scope). A
+    tool outside it is refused exactly like one that does not exist.
+    """
+
+    def __init__(
+        self, bridge: MCPToolBridge, allowed_routes: Collection[str] | None = None
+    ) -> None:
         self.bridge = bridge
-        self.tools = {t["name"]: t for t in tool_definitions(bridge.gateway.policy)}
+        self.tools = {
+            t["name"]: t
+            for t in tool_definitions(bridge.gateway.policy)
+            if allowed_routes is None or route_path_for(t["name"]) in allowed_routes
+        }
 
     def handle(self, message: Mapping[str, Any]) -> dict[str, Any] | None:
         """Handle one JSON-RPC message. Returns None for notifications."""
@@ -52,6 +71,14 @@ class MCPServer:
             # removed from the arguments the tool itself sees.
             idempotency_key = arguments.pop("_idempotency_key", None)
             approval_id = arguments.pop("_approval_id", None)
+            meta = params.get("_meta") or {}
+            if idempotency_key is None and isinstance(meta, Mapping):
+                idempotency_key = meta.get(INTENT_META_KEY)
+            if name not in self.tools:
+                return self._result(request_id, {
+                    "content": [{"type": "text", "text": f"tool not available: {name}"}],
+                    "isError": True,
+                })
             result = self.bridge.call_tool(
                 name,
                 arguments,

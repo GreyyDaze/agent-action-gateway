@@ -1,8 +1,10 @@
-"""Agent Action Gateway — prevention-first safety and evaluation for AI agents.
+"""Agent Action Gateway: let AI agents change real systems safely.
 
-The public surface is intentionally small. A user wraps their own agent and
-receives recorded evidence and enforced policy; the safety layer does not own
-the agent loop or the agent's model calls.
+You control what an agent can do, and you can prove what it did. The public
+surface is intentionally small. A user wraps their own agent's tools (or puts the
+MCP proxy between the agent and its MCP servers) and receives recorded evidence
+and enforced policy; this package does not own the agent loop or the agent's
+model calls.
 
 Layout:
 
@@ -11,7 +13,7 @@ Layout:
     guards/        redaction, capture policy, honest status
     runtime/       run orchestration
     credential/    key custody, egress policy, proxy, TLS
-    integrations/  gateway, MCP, in-process adapters
+    integrations/  MCP proxy, HTTP gateway, in-process adapters
     audit/         receipts, failure grouping, lifecycle stores
     eval/          golden set, judges, verdict engine, regression gate
     storage/       durable SQLite/Postgres persistence (leaf layer)

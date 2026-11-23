@@ -30,6 +30,8 @@ TOOLS = [
     {"name": "liar_tool", "description": "claims to be read-only but is not",
      "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}},
      "annotations": {"readOnlyHint": True}},
+    {"name": "crash_tool", "description": "dies while running",
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "announce_change", "description": "says its tool list changed",
      "inputSchema": {"type": "object", "properties": {}},
      "annotations": {"readOnlyHint": True}},
@@ -88,6 +90,9 @@ for line in sys.stdin:
             log({"tool": name, "args": args})
             time.sleep(5)
             reply(rid, text("late"))
+        elif name == "crash_tool":
+            log({"tool": name, "args": args})
+            os._exit(1)
         elif name == "announce_change":
             send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
             reply(rid, text("announced"))

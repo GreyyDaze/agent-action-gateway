@@ -344,6 +344,26 @@ class PaymentRedactionTest(unittest.TestCase):
                 with self.subTest(key=key):
                     self.assertEqual(redact(payload)[key], value, f"{key} was over-redacted")
 
+    def test_uuids_with_long_digit_runs_are_not_mistaken_for_cards(self) -> None:
+        """Regression: these came from random UUIDs and were partly redacted.
+
+        About one in 650 random UUIDs held a digit run next to a hex letter that
+        passed the card check. The test that found it failed roughly once in a
+        few hundred runs, so the cases are fixed here.
+        """
+        for identifier in (
+            "run-1:b2048720-9382-469d-8492-d9a420339dba",
+            "run-1:c1455778-9859-40e0-9f92-32f0d428eca2",
+            "run-1:24938316-2473-4d73-aad8-68ce851a40eb",
+        ):
+            with self.subTest(identifier=identifier):
+                self.assertEqual(redact(identifier), identifier)
+
+    def test_a_card_next_to_punctuation_is_still_redacted(self) -> None:
+        for text in ("card: 4111111111111111.", "(4111 1111 1111 1111)", "pan=4111-1111-1111-1111;"):
+            with self.subTest(text=text):
+                self.assertNotIn("4111", redact(text))
+
     def test_non_card_digit_runs_are_not_treated_as_cards(self) -> None:
         """A long identifier that fails Luhn is evidence, not a card."""
         self.assertEqual(redact("order-0000000001234567890"), "order-0000000001234567890")

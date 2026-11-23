@@ -171,6 +171,29 @@ exist.
 | `403` + `needs_approval: true` | held until a person approves | get an approval, then retry |
 | `502` | the upstream could not be reached | retry later; the action did not happen |
 
+### Behind the MCP proxy
+
+The gateway also serves its routes as MCP tools at `POST /mcp` (Streamable HTTP,
+one JSON request per call). This lets the [MCP proxy](sdk.md#mcp-proxy) forward
+to it: the proxy runs the checks (limits, approval, once-only), and the gateway
+adds the real credential and makes the call.
+
+- Authenticate with a virtual key in `Authorization: Bearer`. A scoped key sees
+  only its routes as tools, and asking for any other tool gets the same answer as
+  asking for one that does not exist.
+- A route with `risk: read` is listed as read-only, so the proxy treats it as
+  read when you trust the gateway's hints.
+- The proxy sends its idempotency key in the request's `_meta`
+  (`agent-action-gateway/intent_key`), and the gateway forwards it upstream as
+  `Idempotency-Key`.
+- Run the gateway without its own approval check: a route file with a
+  `credentials` block (as in `deploy/routes.credentials.example.json`) does that
+  unless it sets `enforce_policy: true`. Otherwise each destructive call would need
+  an approval in the proxy and another in the gateway.
+- A route in that mode must point at a hostname the gateway accepts: it refuses
+  `localhost` and literal private addresses as upstreams.
+- `/mcp` is reserved: a route cannot use that path.
+
 ### Unix socket mode (Linux)
 
 `--unix-socket PATH` is the one mode where the kernel backs the custody claim

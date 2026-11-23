@@ -19,9 +19,11 @@ from agent_action_gateway.integrations.mcp_proxy import (
     Requirement,
     Rule,
     ServerConfig,
+    SignInError,
     build_proxy,
     classify,
     parse_proxy_config,
+    sign_in,
 )
 from agent_action_gateway.policy.fuses import FuseLimits
 
@@ -84,7 +86,7 @@ class ToolListTest(ProxyTestCase):
         self.assertEqual(
             names,
             ["db__list_items", "db__delete_item", "db__create_item", "db__fail_tool",
-             "db__hang_tool", "db__liar_tool", "db__announce_change"],
+             "db__hang_tool", "db__liar_tool", "db__crash_tool", "db__announce_change"],
         )
 
     def test_definitions_keep_the_real_schema(self) -> None:
@@ -324,7 +326,7 @@ class WireTest(ProxyTestCase):
         )
         self.assertEqual([r["id"] for r in replies], [1, 2, 3, 4, 5])
         self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-06-18")
-        self.assertEqual(len(replies[1]["result"]["tools"]), 7)
+        self.assertEqual(len(replies[1]["result"]["tools"]), 8)
         self.assertEqual(text(replies[2]["result"]), "a,b,c")
         self.assertEqual(replies[4]["error"]["code"], -32601)
 
@@ -497,7 +499,7 @@ class HotReloadTest(ProxyTestCase):
         broken = ServerConfig(name="broken", command="/no/such/binary-xyz")
         with self.assertRaises(DownstreamError):
             self.proxy.reload(self.config(self.server_config, broken))
-        self.assertEqual(len(self.proxy.list_tools()), 7)
+        self.assertEqual(len(self.proxy.list_tools()), 8)
         self.assertFalse(self.proxy.call_tool("db__list_items", {})["isError"])
 
     def test_changed_rules_change_the_risk_of_existing_tools(self) -> None:
@@ -534,14 +536,71 @@ class HotReloadTest(ProxyTestCase):
         watcher = ConfigWatcher(path, self.proxy, ProxyServer(self.proxy))
         path.write_text("{ not valid")
         self.assertFalse(watcher.check())
-        self.assertEqual(len(self.proxy.list_tools()), 7)
+        self.assertEqual(len(self.proxy.list_tools()), 8)
+
+
+class RestartTest(ProxyTestCase):
+    def kill_server(self) -> None:
+        process = self.proxy.downstreams["db"]._proc
+        process.kill()
+        process.wait()
+
+    def test_a_dead_server_is_restarted_before_the_next_call(self) -> None:
+        before = self.proxy.downstreams["db"]._proc.pid
+        self.kill_server()
+        result = self.proxy.call_tool("db__list_items", {})
+        self.assertEqual(text(result), "a,b,c")
+        self.assertNotEqual(self.proxy.downstreams["db"]._proc.pid, before)
+
+    def test_a_crash_in_the_middle_of_a_destructive_call_is_held_and_the_server_returns(self) -> None:
+        self.proxy.call_tool("db__crash_tool", {})
+        self.approve_pending()
+        crashed = self.proxy.call_tool("db__crash_tool", {})
+        self.assertIn("unknown", text(crashed))
+        # the proxy is still usable: the server is restarted for the next call
+        self.assertEqual(text(self.proxy.call_tool("db__list_items", {})), "a,b,c")
+        # the crashed attempt stays unfinished, so a second approval cannot repeat it
+        self.proxy.call_tool("db__crash_tool", {})
+        self.approve_pending("bob")
+        again = self.proxy.call_tool("db__crash_tool", {})
+        self.assertTrue(again["isError"])
+        self.assertEqual(len(self.effects()), 1)
+
+    def test_a_server_that_keeps_dying_is_not_restarted_forever(self) -> None:
+        for n in range(3):
+            self.kill_server()
+            self.assertFalse(self.proxy.call_tool("db__list_items", {"n": n})["isError"])
+        self.kill_server()
+        result = self.proxy.call_tool("db__list_items", {"n": 99})
+        self.assertTrue(result["isError"])
+        self.assertIn("keeps stopping", text(result))
+
+    def test_a_server_that_comes_back_different_is_checked_against_its_pins(self) -> None:
+        self.kill_server()
+        write_tools(
+            self.tools_file,
+            lambda tools: [
+                t.update(annotations={"readOnlyHint": True}) for t in tools if t["name"] == "delete_item"
+            ],
+        )
+        self.proxy.call_tool("db__list_items", {})
+        self.assertEqual(self.proxy.report_held(), [("db__delete_item", "its definition changed")])
 
 
 class FakeHttpServer:
     """A minimal Streamable HTTP MCP server, in a thread."""
 
-    def __init__(self, *, sse: bool = False, token: str | None = None, fail_calls: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        sse: bool = False,
+        token: str | None = None,
+        fail_calls: int = 0,
+        oauth: bool = False,
+        stream: bool = False,
+    ) -> None:
         import http.server
+        import queue
         import threading
 
         outer = self
@@ -550,21 +609,121 @@ class FakeHttpServer:
         self.fail_calls = fail_calls
         self.calls: list[dict] = []
         self.sessions: list[str | None] = []
+        self.oauth = oauth
+        self.issued = 0
+        self.valid_token: str | None = None
+        self.token_forms: list[dict] = []
+        self.epoch = 1
+        self.initializations = 0
+        self.stream = stream
+        self.refresh_token = "rt-1"
+        self.token_lifetime = 3600
+        self.codes: dict[str, dict] = {}
+        self.events: queue.Queue = queue.Queue()
+        self.stream_open = threading.Event()
+        self.stopping = threading.Event()
+        self.extra_tools: list[dict] = []
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *args) -> None:
                 pass
+
+            def do_GET(self) -> None:
+                import urllib.parse
+
+                if self.path.startswith("/authorize"):
+                    query = {k: v[0] for k, v in urllib.parse.parse_qs(
+                        urllib.parse.urlparse(self.path).query).items()}
+                    code = f"code-{len(outer.codes) + 1}"
+                    outer.codes[code] = query
+                    target = urllib.parse.urlparse(query["redirect_uri"])
+                    back = urllib.parse.urlencode({"code": code, "state": query["state"]})
+                    self.send_response(302)
+                    self.send_header("Location", f"{query['redirect_uri']}?{back}")
+                    self.end_headers()
+                    del target
+                    return
+                if not outer.stream:
+                    self.send_response(405)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                outer.stream_open.set()
+                try:
+                    while not outer.stopping.is_set():
+                        try:
+                            item = outer.events.get(timeout=0.1)
+                        except queue.Empty:
+                            continue
+                        self.wfile.write(f"data: {json.dumps(item)}\n\n".encode())
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
 
             def do_DELETE(self) -> None:
                 self.send_response(200)
                 self.end_headers()
 
             def do_POST(self) -> None:
+                import urllib.parse
+
+                if self.path.endswith("/token"):
+                    raw = self.rfile.read(int(self.headers["Content-Length"])).decode()
+                    form = {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
+                    outer.token_forms.append(form)
+                    grant = form.get("grant_type")
+                    reply: dict = {}
+                    if grant == "authorization_code":
+                        import base64
+                        import hashlib
+
+                        saved = outer.codes.get(form.get("code", ""))
+                        digest = base64.urlsafe_b64encode(
+                            hashlib.sha256(form.get("code_verifier", "").encode()).digest()
+                        ).rstrip(b"=").decode()
+                        if (
+                            saved is None
+                            or saved["code_challenge"] != digest
+                            or saved["redirect_uri"] != form.get("redirect_uri")
+                        ):
+                            self.send_response(400)
+                            self.end_headers()
+                            return
+                        reply["refresh_token"] = outer.refresh_token
+                    elif grant == "refresh_token" and form.get("refresh_token") != outer.refresh_token:
+                        self.send_response(400)
+                        self.end_headers()
+                        return
+                    outer.issued += 1
+                    outer.valid_token = f"tok-{outer.issued}"
+                    data = json.dumps(
+                        {"access_token": outer.valid_token, "expires_in": outer.token_lifetime,
+                         **reply}
+                    ).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 if outer.token and self.headers.get("Authorization") != f"Bearer {outer.token}":
                     self.send_response(401)
                     self.end_headers()
                     return
+                if outer.oauth and self.headers.get("Authorization") != f"Bearer {outer.valid_token}":
+                    self.send_response(401)
+                    self.end_headers()
+                    return
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if (
+                    body.get("method") != "initialize"
+                    and self.headers.get("Mcp-Session-Id") not in (None, f"s-{outer.epoch}")
+                ):
+                    self.send_response(404)
+                    self.end_headers()
+                    return
                 method = body.get("method")
                 rid = body.get("id")
                 outer.sessions.append(self.headers.get("Mcp-Session-Id"))
@@ -573,14 +732,16 @@ class FakeHttpServer:
                     self.end_headers()
                     return
                 if method == "initialize":
+                    outer.initializations += 1
                     result = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
                               "serverInfo": {"name": "h", "version": "1"}}
-                    headers = {"Mcp-Session-Id": "s-1"}
+                    headers = {"Mcp-Session-Id": f"s-{outer.epoch}"}
                 elif method == "tools/list":
                     result = {"tools": [
                         {"name": "list_items", "inputSchema": {"type": "object"},
                          "annotations": {"readOnlyHint": True}},
                         {"name": "delete_item", "inputSchema": {"type": "object"}},
+                        *outer.extra_tools,
                     ]}
                     headers = {}
                 else:
@@ -613,7 +774,17 @@ class FakeHttpServer:
         self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}/mcp"
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
+    def push_list_changed(self) -> None:
+        self.events.put({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+
+    def expire_session(self) -> None:
+        self.epoch += 1
+
+    def revoke_token(self) -> None:
+        self.valid_token = "revoked"
+
     def stop(self) -> None:
+        self.stopping.set()
         self.httpd.shutdown()
         self.httpd.server_close()
 
@@ -675,12 +846,252 @@ class HttpDownstreamTest(unittest.TestCase):
                 self.db,
             )
 
+    def test_an_expired_session_is_replaced_and_the_call_goes_through(self) -> None:
+        fake = FakeHttpServer()
+        proxy = self.proxy_for(fake)
+        self.assertEqual(fake.initializations, 1)
+        fake.expire_session()
+        self.assertEqual(text(proxy.call_tool("remote__list_items", {})), "ok")
+        self.assertEqual(fake.initializations, 2)
+        self.assertEqual(fake.sessions[-1], "s-2")
+
+    def test_a_destructive_call_after_session_expiry_runs_exactly_once(self) -> None:
+        fake = FakeHttpServer()
+        proxy = self.proxy_for(fake)
+        proxy.call_tool("remote__delete_item", {"id": "1"})
+        proxy.session.approvals.approve(proxy.session.approvals.pending()[0].approval_id, "alice")
+        fake.expire_session()
+        result = proxy.call_tool("remote__delete_item", {"id": "1"})
+        self.assertFalse(result["isError"], text(result))
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_the_idempotency_key_of_a_destructive_call_is_sent_in_meta(self) -> None:
+        fake = FakeHttpServer()
+        proxy = self.proxy_for(fake)
+        proxy.call_tool("remote__delete_item", {"id": "1"})
+        proxy.session.approvals.approve(proxy.session.approvals.pending()[0].approval_id, "alice")
+        proxy.call_tool("remote__delete_item", {"id": "1"})
+        meta = fake.calls[0]["_meta"]
+        self.assertTrue(meta["agent-action-gateway/intent_key"])
+
+    def test_oauth_gets_a_token_and_sends_it(self) -> None:
+        fake = FakeHttpServer(oauth=True)
+        proxy = self.proxy_for(
+            fake,
+            oauth={
+                "token_url": fake.url.replace("/mcp", "/token"),
+                "client_id": "cid",
+                "client_secret": "csecret",
+                "scope": "tools",
+            },
+        )
+        self.assertEqual(text(proxy.call_tool("remote__list_items", {})), "ok")
+        self.assertEqual(fake.token_forms[0]["grant_type"], "client_credentials")
+        self.assertEqual(fake.token_forms[0]["client_id"], "cid")
+        self.assertEqual(fake.token_forms[0]["scope"], "tools")
+        self.assertEqual(fake.issued, 1)  # one token serves every request
+
+    def test_a_revoked_token_is_replaced_once(self) -> None:
+        fake = FakeHttpServer(oauth=True)
+        proxy = self.proxy_for(
+            fake,
+            oauth={"token_url": fake.url.replace("/mcp", "/token"),
+                   "client_id": "cid", "client_secret": "csecret"},
+        )
+        fake.revoke_token()
+        self.assertEqual(text(proxy.call_tool("remote__list_items", {})), "ok")
+        self.assertEqual(fake.issued, 2)
+
+    def test_a_token_endpoint_that_fails_stops_start_up_without_leaking_the_secret(self) -> None:
+        fake = FakeHttpServer(oauth=True)
+        self.addCleanup(fake.stop)
+        config = ServerConfig(
+            name="remote", url=fake.url,
+            oauth={"token_url": "http://127.0.0.1:9/token", "client_id": "cid",
+                   "client_secret": "super-secret-value"},
+            timeout=2,
+        )
+        with self.assertRaises(DownstreamError) as raised:
+            build_proxy(ProxyConfig((config,), environment="dev"), self.db)
+        self.assertNotIn("super-secret-value", str(raised.exception))
+
+    def test_a_tool_list_change_sent_on_the_separate_stream_is_heard(self) -> None:
+        fake = FakeHttpServer(stream=True)
+        proxy = self.proxy_for(fake)
+        self.assertTrue(fake.stream_open.wait(5))
+        fake.extra_tools.append({"name": "wipe", "inputSchema": {"type": "object"}})
+        fake.push_list_changed()
+        deadline = time.monotonic() + 5
+        while not proxy.downstreams["remote"].tools_changed and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(proxy.downstreams["remote"].tools_changed)
+        proxy.poll()
+        self.assertEqual(
+            proxy.report_held(), [("remote__wipe", "it is new on a pinned server")]
+        )
+
+    def test_a_server_without_a_stream_is_left_alone(self) -> None:
+        fake = FakeHttpServer(stream=False)
+        proxy = self.proxy_for(fake)
+        listener = proxy.downstreams["remote"]._listener
+        listener.join(5)
+        self.assertFalse(listener.is_alive())
+        self.assertEqual(text(proxy.call_tool("remote__list_items", {})), "ok")
+
+    def test_closing_stops_the_listener(self) -> None:
+        fake = FakeHttpServer(stream=True)
+        proxy = self.proxy_for(fake)
+        self.assertTrue(fake.stream_open.wait(5))
+        listener = proxy.downstreams["remote"]._listener
+        proxy.close()
+        listener.join(5)
+        self.assertFalse(listener.is_alive())
+
     def test_a_server_error_on_a_call_is_an_unknown_outcome(self) -> None:
         fake = FakeHttpServer(fail_calls=1)
         proxy = self.proxy_for(fake)
         result = proxy.call_tool("remote__list_items", {})
         # A read has no claim to hold, but the agent is still told the truth.
         self.assertIn("unknown", text(result))
+
+
+class BrowserSignInTest(unittest.TestCase):
+    """OAuth authorization code with PKCE: a person signs in once, the proxy keeps it fresh."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.db = Path(self._tmp.name) / "runtime.db"
+        self.token_file = Path(self._tmp.name) / "tokens" / "remote.json"
+        self.fake = FakeHttpServer(oauth=True)
+        self.addCleanup(self.fake.stop)
+        base = self.fake.url.replace("/mcp", "")
+        self.server = ServerConfig(
+            name="remote",
+            url=self.fake.url,
+            oauth={
+                "flow": "authorization_code",
+                "authorization_url": base + "/authorize",
+                "token_url": base + "/token",
+                "client_id": "cid",
+                "token_file": str(self.token_file),
+            },
+        )
+
+    def browser(self, url: str) -> None:
+        """Stands in for the person: opens the sign-in link and follows the redirect back."""
+        import urllib.request
+
+        urllib.request.urlopen(url, timeout=5).read()
+
+    def sign_in(self):
+        return sign_in(self.server, open_browser=self.browser, timeout=10)
+
+    def proxy(self):
+        proxy = build_proxy(ProxyConfig((self.server,), environment="dev"), self.db)
+        self.addCleanup(proxy.close)
+        return proxy
+
+    def test_signing_in_saves_the_tokens_readable_by_the_owner_only(self) -> None:
+        import os
+
+        path = self.sign_in()
+        saved = json.loads(path.read_text())
+        self.assertEqual(saved["refresh_token"], "rt-1")
+        self.assertTrue(saved["access_token"].startswith("tok-"))
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+    def test_the_sign_in_link_carries_a_pkce_challenge_and_a_state(self) -> None:
+        self.sign_in()
+        query = next(iter(self.fake.codes.values()))
+        self.assertEqual(query["code_challenge_method"], "S256")
+        self.assertEqual(query["response_type"], "code")
+        self.assertTrue(query["state"])
+        self.assertTrue(query["redirect_uri"].startswith("http://127.0.0.1:"))
+
+    def test_the_proxy_uses_the_saved_sign_in(self) -> None:
+        self.sign_in()
+        self.assertEqual(text(self.proxy().call_tool("remote__list_items", {})), "ok")
+
+    def test_an_expired_token_is_refreshed_and_saved(self) -> None:
+        self.sign_in()
+        saved = json.loads(self.token_file.read_text())
+        saved["expires_at"] = 0
+        self.token_file.write_text(json.dumps(saved))
+        self.token_file.chmod(0o600)
+        proxy = self.proxy()
+        self.assertEqual(text(proxy.call_tool("remote__list_items", {})), "ok")
+        refreshed = json.loads(self.token_file.read_text())
+        self.assertNotEqual(refreshed["access_token"], saved["access_token"])
+        self.assertEqual(refreshed["refresh_token"], "rt-1")  # kept when the server sends none
+        self.assertEqual(self.fake.token_forms[-1]["grant_type"], "refresh_token")
+
+    def test_a_revoked_token_is_refreshed_once(self) -> None:
+        self.sign_in()
+        proxy = self.proxy()
+        self.fake.revoke_token()
+        self.assertEqual(text(proxy.call_tool("remote__list_items", {})), "ok")
+
+    def test_without_a_sign_in_the_proxy_says_how_to_sign_in(self) -> None:
+        with self.assertRaises(DownstreamError) as raised:
+            self.proxy()
+        self.assertIn("mcp-login", str(raised.exception))
+
+    def test_a_sign_in_file_other_users_can_read_is_refused(self) -> None:
+        self.sign_in()
+        self.token_file.chmod(0o644)
+        with self.assertRaises(DownstreamError) as raised:
+            self.proxy()
+        self.assertIn("chmod 600", str(raised.exception))
+
+    def test_a_wrong_state_in_the_answer_is_refused_and_nothing_is_saved(self) -> None:
+        import urllib.parse
+        import urllib.request
+
+        def tampering_browser(url: str) -> None:
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            back = query["redirect_uri"][0] + "?code=x&state=not-the-state"
+            urllib.request.urlopen(back, timeout=5).read()
+
+        with self.assertRaises(SignInError):
+            sign_in(self.server, open_browser=tampering_browser, timeout=10)
+        self.assertFalse(self.token_file.exists())
+
+    def test_a_server_refusing_the_sign_in_is_reported(self) -> None:
+        import urllib.parse
+        import urllib.request
+
+        def refusing_browser(url: str) -> None:
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            back = f"{query['redirect_uri'][0]}?error=access_denied&state={query['state'][0]}"
+            urllib.request.urlopen(back, timeout=5).read()
+
+        with self.assertRaisesRegex(SignInError, "access_denied"):
+            sign_in(self.server, open_browser=refusing_browser, timeout=10)
+
+    def test_no_answer_in_time_is_reported(self) -> None:
+        with self.assertRaisesRegex(SignInError, "no sign-in answer"):
+            sign_in(self.server, open_browser=lambda _url: None, timeout=0.3)
+
+    def test_a_failed_token_exchange_is_reported_without_secrets(self) -> None:
+        server = ServerConfig(
+            name="remote", url=self.fake.url,
+            oauth={**self.server.oauth, "client_secret": "super-secret-value"},
+        )
+
+        def sign_in_then_lose_the_code(url: str) -> None:
+            self.browser(url)
+            self.fake.codes.clear()  # the server no longer knows the code
+
+        with self.assertRaises(SignInError) as raised:
+            sign_in(server, open_browser=sign_in_then_lose_the_code, timeout=10)
+        self.assertNotIn("super-secret-value", str(raised.exception))
+        self.assertFalse(self.token_file.exists())
+
+    def test_signing_in_with_the_wrong_kind_of_server_is_refused(self) -> None:
+        plain = ServerConfig(name="plain", url=self.fake.url)
+        with self.assertRaises(SignInError):
+            sign_in(plain, open_browser=lambda _url: None, timeout=1)
 
 
 class ConfigRemoteTest(unittest.TestCase):
@@ -700,6 +1111,46 @@ class ConfigRemoteTest(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "AAG_NOT_SET"):
             parse_proxy_config({"servers": {"r": {
                 "url": "https://example.com", "headers": {"X": "${AAG_NOT_SET}"}}}})
+
+    def test_oauth_settings_are_parsed_and_checked(self) -> None:
+        import os
+
+        os.environ["AAG_TEST_SECRET"] = "s3"
+        self.addCleanup(os.environ.pop, "AAG_TEST_SECRET", None)
+        good = {"url": "https://x.example/mcp", "oauth": {
+            "token_url": "https://auth.example/token", "client_id": "c",
+            "client_secret": "${AAG_TEST_SECRET}"}}
+        config = parse_proxy_config({"servers": {"r": good}})
+        self.assertEqual(config.servers[0].oauth["client_secret"], "s3")
+        self.assertNotIn("s3", repr(config.servers[0]))
+        for bad in (
+            {"command": "c", "oauth": good["oauth"]},
+            {**good, "oauth": {"token_url": "https://a/t", "client_id": "c"}},
+            {**good, "headers": {"Authorization": "Bearer x"}},
+            {**good, "oauth": {**good["oauth"], "token_url": "ftp://a/t"}},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ConfigError):
+                parse_proxy_config({"servers": {"r": bad}})
+
+    def test_browser_sign_in_settings_are_checked(self) -> None:
+        good = {"url": "https://x.example/mcp", "oauth": {
+            "flow": "authorization_code",
+            "authorization_url": "https://auth.example/authorize",
+            "token_url": "https://auth.example/token",
+            "client_id": "c", "token_file": "~/tokens/x.json"}}
+        config = parse_proxy_config({"servers": {"r": good}})
+        oauth = config.servers[0].oauth
+        self.assertEqual(oauth["flow"], "authorization_code")
+        self.assertNotIn("~", oauth["token_file"])  # expanded
+        for drop in ("authorization_url", "token_file", "client_id"):
+            bad = {**good, "oauth": {k: v for k, v in good["oauth"].items() if k != drop}}
+            with self.subTest(missing=drop), self.assertRaises(ConfigError):
+                parse_proxy_config({"servers": {"r": bad}})
+        with self.assertRaises(ConfigError):
+            parse_proxy_config({"servers": {"r": {**good, "oauth": {**good["oauth"], "flow": "x"}}}})
+        with self.assertRaises(ConfigError):
+            parse_proxy_config({"servers": {"r": {
+                **good, "oauth": {**good["oauth"], "redirect_port": "abc"}}}})
 
     def test_require_entries_are_parsed(self) -> None:
         config = parse_proxy_config({

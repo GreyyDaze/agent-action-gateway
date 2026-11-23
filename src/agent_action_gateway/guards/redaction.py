@@ -53,7 +53,11 @@ _VENDOR_TOKEN = re.compile(
 )
 # Digit runs that could be a payment card. Validated by Luhn before redacting so
 # ordinary long identifiers are left alone.
-_CARD_CANDIDATE = re.compile(r"(?<![\d-])(\d[\d -]{11,25}\d)(?![\d-])")
+# A candidate must not touch a letter, a digit or a dash. Letters matter because
+# identifiers such as UUIDs hold runs of digits next to hex letters, and about one
+# in 650 random UUIDs held a run that looked like a card and was redacted, which
+# destroyed the identifier the trace exists to keep.
+_CARD_CANDIDATE = re.compile(r"(?<![A-Za-z0-9-])(\d[\d -]{11,25}\d)(?![A-Za-z0-9-])")
 _IBAN = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b")
 _SSN = re.compile(r"(?<![\d-])\d{3}-\d{2}-\d{4}(?![\d-])")
 

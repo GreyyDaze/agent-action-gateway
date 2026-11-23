@@ -65,6 +65,12 @@ def tool_definitions(policy: GatewayPolicy) -> list[dict[str, Any]]:
                     f"Risk: {route.risk}. Irreversible actions are held for approval."
                 ),
                 "inputSchema": dict(OPEN_OBJECT),
+                # The gateway knows each route's risk, so it can say so. A client
+                # that trusts this server may use the read-only hint.
+                "annotations": {
+                    "readOnlyHint": route.risk == "read",
+                    "destructiveHint": route.risk == "destructive",
+                },
             }
         )
     return tools

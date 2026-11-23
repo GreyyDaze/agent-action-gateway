@@ -39,6 +39,7 @@ from __future__ import annotations
 import contextlib
 import fnmatch
 import hashlib
+import http.client
 import json
 import os
 import queue
@@ -49,6 +50,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -67,9 +69,16 @@ SUPPORTED_PROTOCOLS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 #: Where an MCP client that wants to pass an approval id puts it (`params._meta`).
 #: It is never read from the tool's arguments, so no argument name can collide.
 APPROVAL_META_KEY = "agent-action-gateway/approval_id"
+#: Where the proxy puts the idempotency key of the action it forwards. A server
+#: that understands it (the gateway's /mcp endpoint) passes it on to the real
+#: system, so a retry after a crash is recognised there too. Keep in step with
+#: `INTENT_META_KEY` in mcp_server.py.
+INTENT_META_KEY = "agent-action-gateway/intent_key"
 #: A proxy lives as long as the agent's client keeps it. Ten minutes (the
 #: library default) would stop a normal session, so the default is longer.
 DEFAULT_LIMITS = FuseLimits(max_steps=500, max_wall_seconds=3600.0)
+#: A local server that dies is restarted, but not more often than this.
+MAX_RESTARTS_PER_MINUTE = 3
 #: Results larger than this are not kept for repeats.
 MAX_STORED_RESULT_BYTES = 16_384
 
@@ -121,6 +130,9 @@ class ServerConfig:
     #: A remote server (Streamable HTTP).
     url: str | None = None
     headers: Mapping[str, str] = field(default_factory=dict, repr=False)
+    #: OAuth client-credentials settings for a remote server: token_url,
+    #: client_id, client_secret and optionally scope.
+    oauth: Mapping[str, str] = field(default_factory=dict, repr=False)
     #: The environment this server's tools act on. Empty means the session's.
     environment: str | None = None
     #: Whether this server's `readOnlyHint` may mark its tools as read.
@@ -261,6 +273,7 @@ def _parse_server(name: str, entry: Any) -> ServerConfig:
         url = _expand(str(url), where)
         if not url.startswith(("http://", "https://")):
             raise ConfigError(f"{where}: 'url' must start with http:// or https://")
+    oauth = _parse_oauth(entry.get("oauth"), where, url is not None, entry.get("headers") or {})
     return ServerConfig(
         name=name,
         command=_expand(str(command), where) if command else None,
@@ -269,10 +282,47 @@ def _parse_server(name: str, entry: Any) -> ServerConfig:
         cwd=entry.get("cwd"),
         url=url,
         headers={str(k): _expand(str(v), where) for k, v in dict(entry.get("headers", {})).items()},
+        oauth=oauth,
         environment=server_env,
         trust_hints=bool(entry.get("trust_hints", True)),
         timeout=float(entry.get("timeout", 30.0)),
     )
+
+
+def _parse_oauth(raw: Any, where: str, remote: bool, headers: Mapping[str, Any]) -> dict[str, str]:
+    """Check an `oauth` block. Two flows: client credentials (no person involved)
+    and authorization code with PKCE (a person signs in once with `mcp-login`)."""
+    if raw is None:
+        return {}
+    if not remote:
+        raise ConfigError(f"{where}: 'oauth' only applies to a remote server (one with 'url')")
+    if not isinstance(raw, Mapping):
+        raise ConfigError(f"{where}: 'oauth' must be an object")
+    flow = str(raw.get("flow", "client_credentials"))
+    if flow not in ("client_credentials", "authorization_code"):
+        raise ConfigError(f"{where}: oauth 'flow' must be client_credentials or authorization_code")
+    required = ["token_url", "client_id"]
+    if flow == "client_credentials":
+        required.append("client_secret")
+    else:
+        required += ["authorization_url", "token_file"]
+    missing = [k for k in required if not raw.get(k)]
+    if missing:
+        raise ConfigError(f"{where}: 'oauth' needs {', '.join(missing)}")
+    if any(str(k).lower() == "authorization" for k in headers):
+        raise ConfigError(f"{where}: use either an Authorization header or 'oauth', not both")
+    keys = ("token_url", "authorization_url", "client_id", "client_secret", "scope",
+            "token_file", "redirect_port")
+    settings = {k: _expand(str(raw[k]), where) for k in keys if raw.get(k)}
+    settings["flow"] = flow
+    for key in ("token_url", "authorization_url"):
+        if key in settings and not settings[key].startswith(("http://", "https://")):
+            raise ConfigError(f"{where}: oauth '{key}' must start with http:// or https://")
+    if "token_file" in settings:
+        settings["token_file"] = str(Path(settings["token_file"]).expanduser())
+    if "redirect_port" in settings and not settings["redirect_port"].isdigit():
+        raise ConfigError(f"{where}: oauth 'redirect_port' must be a number")
+    return settings
 
 
 # --------------------------------------------------------------------------
@@ -287,9 +337,13 @@ class Downstream(Protocol):
 
     def start(self) -> None: ...
 
+    def alive(self) -> bool: ...
+
     def list_tools(self) -> list[dict[str, Any]]: ...
 
-    def call_tool(self, tool: str, arguments: Mapping[str, Any]) -> dict[str, Any]: ...
+    def call_tool(
+        self, tool: str, arguments: Mapping[str, Any], meta: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]: ...
 
     def close(self) -> None: ...
 
@@ -329,7 +383,14 @@ class StdioDownstream:
 
     # -- lifecycle ---------------------------------------------------------
 
+    def alive(self) -> bool:
+        proc = self._proc
+        return proc is not None and proc.poll() is None
+
     def start(self) -> None:
+        # A restart begins with an empty inbox: anything left in it belongs to
+        # the process that died.
+        self._inbox = queue.Queue()
         try:
             self._proc = subprocess.Popen(
                 self._command,
@@ -342,7 +403,7 @@ class StdioDownstream:
             )
         except OSError as exc:
             raise DownstreamNotRun(f"cannot start {self._command[0]!r}: {exc}") from exc
-        threading.Thread(target=self._read_loop, daemon=True).start()
+        threading.Thread(target=self._read_loop, args=(self._proc, self._inbox), daemon=True).start()
         self._request(
             "initialize",
             {
@@ -378,17 +439,21 @@ class StdioDownstream:
             if not cursor:
                 return tools
 
-    def call_tool(self, tool: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
-        result = self._request("tools/call", {"name": tool, "arguments": dict(arguments)})
+    def call_tool(
+        self, tool: str, arguments: Mapping[str, Any], meta: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"name": tool, "arguments": dict(arguments)}
+        if meta:
+            params["_meta"] = dict(meta)
+        result = self._request("tools/call", params)
         if not isinstance(result, dict):
             raise DownstreamNotRun(f"{self.name}: unreadable tool result")
         return result
 
     # -- plumbing ----------------------------------------------------------
 
-    def _read_loop(self) -> None:
-        proc = self._proc
-        assert proc is not None and proc.stdout is not None
+    def _read_loop(self, proc: subprocess.Popen[str], inbox: queue.Queue[Any]) -> None:
+        assert proc.stdout is not None
         for line in proc.stdout:
             line = line.strip()
             if not line:
@@ -412,8 +477,8 @@ class StdioDownstream:
             if message.get("method") == _LIST_CHANGED:
                 self.tools_changed = True
                 continue
-            self._inbox.put(message)
-        self._inbox.put(_EOF)
+            inbox.put(message)
+        inbox.put(_EOF)
 
     def _send(self, message: Mapping[str, Any]) -> None:
         proc = self._proc
@@ -457,6 +522,14 @@ class StdioDownstream:
                 return message.get("result", {})
 
 
+class _HttpRejected(DownstreamNotRun):
+    """The server answered with an HTTP error status, so it did not run the call."""
+
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 class HttpDownstream:
     """Talks to a remote MCP server over Streamable HTTP.
 
@@ -470,11 +543,19 @@ class HttpDownstream:
         url: str,
         headers: Mapping[str, str] | None = None,
         timeout: float = 30.0,
+        oauth: Mapping[str, str] | None = None,
     ) -> None:
         self.name = name
         self.tools_changed = False
         self.url = url
         self._headers = dict(headers or {})
+        self._oauth = dict(oauth or {})
+        self._token: str | None = None
+        self._token_expiry = 0.0
+        self._force_refresh = False
+        self._stopping = threading.Event()
+        self._stream_socket: socket.socket | None = None
+        self._listener: threading.Thread | None = None
         self.timeout = timeout
         self._session_id: str | None = None
         self._protocol = SUPPORTED_PROTOCOLS[-2]
@@ -484,7 +565,7 @@ class HttpDownstream:
     @classmethod
     def from_config(cls, config: ServerConfig) -> HttpDownstream:
         assert config.url is not None
-        return cls(config.name, config.url, config.headers, config.timeout)
+        return cls(config.name, config.url, config.headers, config.timeout, config.oauth)
 
     def start(self) -> None:
         result = self._request(
@@ -499,8 +580,73 @@ class HttpDownstream:
         if negotiated in SUPPORTED_PROTOCOLS:
             self._protocol = str(negotiated)
         self._post({"jsonrpc": "2.0", "method": "notifications/initialized"}, None, "initialized")
+        if self._listener is None or not self._listener.is_alive():
+            self._stopping.clear()
+            self._listener = threading.Thread(target=self._listen, daemon=True)
+            self._listener.start()
+
+    def alive(self) -> bool:
+        return True  # a remote server has no process of ours to check
+
+    def _listen(self) -> None:
+        """Hold the optional server-to-client stream open, to hear tool-list changes.
+
+        A server that has no such stream answers 405 (or similar) and we stop. A
+        dropped stream is reopened after a short wait. A plain `http.client`
+        connection is used so `close()` can shut its socket and wake this thread.
+        """
+        parsed = urllib.parse.urlparse(self.url)
+        connect = (
+            http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        )
+        target = parsed.path or "/"
+        if parsed.query:
+            target += "?" + parsed.query
+        while not self._stopping.is_set():
+            connection = connect(parsed.netloc, timeout=300)
+            try:
+                headers = {**self._request_headers(), "Accept": "text/event-stream"}
+                connection.request("GET", target, headers=headers)
+                # Kept now: after `getresponse` the connection may let go of it.
+                self._stream_socket = connection.sock
+                response = connection.getresponse()
+                if 400 <= response.status < 500:
+                    return  # no stream on this server, or this session is gone
+                if response.status == 200 and response.getheader("Content-Type", "").startswith(
+                    "text/event-stream"
+                ):
+                    self._read_events(response)
+            except (OSError, http.client.HTTPException, DownstreamError):
+                pass
+            finally:
+                self._stream_socket = None
+                connection.close()
+            self._stopping.wait(2.0)
+
+    def _read_events(self, response: Any) -> None:
+        data: list[str] = []
+        for raw in response:
+            if self._stopping.is_set():
+                return
+            line = raw.decode("utf-8", "replace").rstrip("\r\n")
+            if line == "":
+                if data:
+                    with contextlib.suppress(json.JSONDecodeError):
+                        message = json.loads("\n".join(data))
+                        if isinstance(message, dict) and message.get("method") == _LIST_CHANGED:
+                            self.tools_changed = True
+                    data.clear()
+            elif line.startswith("data:"):
+                data.append(line[5:].lstrip(" "))
 
     def close(self) -> None:
+        self._stopping.set()
+        stream_socket = self._stream_socket
+        if stream_socket is not None:
+            # Waking the thread that is blocked reading the stream: closing the
+            # response from here would wait for that read to finish.
+            with contextlib.suppress(OSError):
+                stream_socket.shutdown(socket.SHUT_RDWR)
         if self._session_id is None:
             return
         request = urllib.request.Request(self.url, method="DELETE", headers=self._request_headers())
@@ -518,13 +664,102 @@ class HttpDownstream:
             if not cursor:
                 return tools
 
-    def call_tool(self, tool: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
-        result = self._request("tools/call", {"name": tool, "arguments": dict(arguments)})
+    def call_tool(
+        self, tool: str, arguments: Mapping[str, Any], meta: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"name": tool, "arguments": dict(arguments)}
+        if meta:
+            params["_meta"] = dict(meta)
+        result = self._request("tools/call", params)
         if not isinstance(result, dict):
             raise DownstreamNotRun(f"{self.name}: unreadable tool result")
         return result
 
     # -- plumbing ----------------------------------------------------------
+
+    def _bearer(self) -> str | None:
+        """An OAuth access token, fetched or refreshed when needed."""
+        if not self._oauth:
+            return None
+        if self._token and time.monotonic() < self._token_expiry:
+            return self._token
+        if self._oauth.get("flow") == "authorization_code":
+            token, lifetime = self._signed_in_token()
+        else:
+            token, lifetime = self._client_credentials_token()
+        self._token = token
+        self._token_expiry = time.monotonic() + max(lifetime - 30.0, 1.0)
+        return token
+
+    def _token_request(self, form: Mapping[str, str]) -> dict[str, Any]:
+        request = urllib.request.Request(
+            self._oauth["token_url"],
+            data=urllib.parse.urlencode(form).encode("ascii"),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            # The URL comes from the operator's config and is checked to be http(s).
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:  # noqa: S310
+                body = json.loads(response.read())
+            if not isinstance(body, dict) or "access_token" not in body:
+                raise KeyError("access_token")
+            return body
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            # Never include the form: it holds secrets.
+            raise DownstreamNotRun(
+                f"{self.name}: could not get an OAuth token ({type(exc).__name__})"
+            ) from exc
+
+    def _client_credentials_token(self) -> tuple[str, float]:
+        form = {
+            "grant_type": "client_credentials",
+            "client_id": self._oauth["client_id"],
+            "client_secret": self._oauth["client_secret"],
+        }
+        if self._oauth.get("scope"):
+            form["scope"] = self._oauth["scope"]
+        body = self._token_request(form)
+        return str(body["access_token"]), float(body.get("expires_in", 300))
+
+    def _signed_in_token(self) -> tuple[str, float]:
+        """The token a person signed in with (`mcp-login`), refreshed when it is old."""
+        path = Path(self._oauth["token_file"])
+        tokens = read_token_file(path)
+        if tokens is None:
+            raise DownstreamNotRun(
+                f"{self.name}: not signed in. Run: agent-gateway mcp-login "
+                f"--config <your config> --server {self.name}"
+            )
+        remaining = float(tokens.get("expires_at", 0)) - time.time()
+        if remaining > 30 and not self._force_refresh:
+            return str(tokens["access_token"]), remaining
+        refresh = tokens.get("refresh_token")
+        if not refresh:
+            raise DownstreamNotRun(
+                f"{self.name}: the sign-in expired and has no refresh token. Run: "
+                f"agent-gateway mcp-login --config <your config> --server {self.name}"
+            )
+        form = {
+            "grant_type": "refresh_token",
+            "refresh_token": str(refresh),
+            "client_id": self._oauth["client_id"],
+        }
+        if self._oauth.get("client_secret"):
+            form["client_secret"] = self._oauth["client_secret"]
+        body = self._token_request(form)
+        self._force_refresh = False
+        lifetime = float(body.get("expires_in", 300))
+        write_token_file(path, {
+            "access_token": str(body["access_token"]),
+            # A server may rotate the refresh token; if it did not, keep ours.
+            "refresh_token": str(body.get("refresh_token", refresh)),
+            "expires_at": time.time() + lifetime,
+        })
+        return str(body["access_token"]), lifetime
 
     def _request_headers(self) -> dict[str, str]:
         headers = {
@@ -533,6 +768,9 @@ class HttpDownstream:
             "MCP-Protocol-Version": self._protocol,
             **self._headers,
         }
+        bearer = self._bearer()
+        if bearer:
+            headers["Authorization"] = f"Bearer {bearer}"
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
         return headers
@@ -544,7 +782,33 @@ class HttpDownstream:
         message = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": dict(params)}
         return self._post(message, request_id, method)
 
-    def _post(self, message: Mapping[str, Any], request_id: int | None, method: str) -> Any:
+    def _post(
+        self,
+        message: Mapping[str, Any],
+        request_id: int | None,
+        method: str,
+        *,
+        retried: bool = False,
+    ) -> Any:
+        """Send one message. Two refusals are safe to retry once, because in both
+        the server did not act on the message: an unknown session (404) gets a
+        fresh session, and a rejected token (401) gets a fresh token."""
+        try:
+            return self._post_once(message, request_id, method)
+        except _HttpRejected as exc:
+            if retried:
+                raise
+            if exc.status == 404 and self._session_id and method != "initialize":
+                self._session_id = None
+                self.start()
+                return self._post(message, request_id, method, retried=True)
+            if exc.status == 401 and self._oauth:
+                self._token = None
+                self._force_refresh = True
+                return self._post(message, request_id, method, retried=True)
+            raise
+
+    def _post_once(self, message: Mapping[str, Any], request_id: int | None, method: str) -> Any:
         request = urllib.request.Request(
             self.url,
             data=json.dumps(message).encode("utf-8"),
@@ -568,7 +832,7 @@ class HttpDownstream:
             # A 5xx on a call may have come after the tool ran.
             if exc.code >= 500 and method == "tools/call":
                 raise DownstreamUnknown(detail) from exc
-            raise DownstreamNotRun(detail) from exc
+            raise _HttpRejected(detail, exc.code) from exc
         except urllib.error.URLError as exc:
             reason = exc.reason
             if isinstance(reason, ConnectionRefusedError | socket.gaierror):
@@ -631,6 +895,146 @@ class HttpDownstream:
 def default_downstream(config: ServerConfig) -> Downstream:
     """Build (but do not start) the right kind of client for a server."""
     return HttpDownstream.from_config(config) if config.url else StdioDownstream.from_config(config)
+
+
+# --------------------------------------------------------------------------
+# signing in (OAuth authorization code with PKCE)
+# --------------------------------------------------------------------------
+
+
+def read_token_file(path: Path) -> dict[str, Any] | None:
+    """The saved sign-in, or None if there is none. Refuses a file others can read."""
+    try:
+        mode = path.stat().st_mode
+    except FileNotFoundError:
+        return None
+    if mode & 0o077:
+        raise DownstreamNotRun(
+            f"{path} holds a sign-in and must be readable by you only "
+            f"(mode {oct(mode & 0o777)}); run: chmod 600 {path}"
+        )
+    try:
+        tokens = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DownstreamNotRun(f"{path} is not a readable sign-in file") from exc
+    return tokens if isinstance(tokens, dict) and tokens.get("access_token") else None
+
+
+def write_token_file(path: Path, tokens: Mapping[str, Any]) -> None:
+    """Save a sign-in with mode 0600, replacing the old file in one step."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump(dict(tokens), handle)
+    os.replace(temporary, path)
+
+
+class SignInError(Exception):
+    """The sign-in did not finish. The message says why and is safe to print."""
+
+
+def sign_in(
+    config: ServerConfig,
+    *,
+    open_browser: Any = None,
+    timeout: float = 300.0,
+) -> Path:
+    """Sign a person in to a remote server: OAuth authorization code with PKCE.
+
+    Starts a listener on 127.0.0.1, sends the person to the server's sign-in page,
+    waits for the redirect back, swaps the code for tokens and saves them (mode
+    0600) in the configured `token_file`. The proxy then uses and refreshes them.
+    """
+    import base64
+    import http.server
+    import secrets
+    import webbrowser
+
+    oauth = config.oauth
+    if oauth.get("flow") != "authorization_code":
+        raise SignInError(f"{config.name!r} does not use the authorization_code flow")
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+    state = secrets.token_urlsafe(16)
+    outcome: dict[str, str] = {}
+    done = threading.Event()
+
+    class Callback(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args: object) -> None:  # noqa: ARG002
+            return
+
+        def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path != "/callback":
+                self.send_error(404)
+                return
+            query = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
+            if query.get("state") != state:
+                outcome["error"] = "the sign-in answer did not match this request (wrong state)"
+            elif "error" in query:
+                outcome["error"] = f"the server refused the sign-in: {query['error']}"
+            elif "code" in query:
+                outcome["code"] = query["code"]
+            else:
+                outcome["error"] = "the sign-in answer had no code"
+            body = b"You can close this tab and return to the terminal."
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            done.set()
+
+    listener = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", int(oauth.get("redirect_port", 0))), Callback
+    )
+    redirect_uri = f"http://127.0.0.1:{listener.server_address[1]}/callback"
+    threading.Thread(target=listener.serve_forever, daemon=True).start()
+    try:
+        query = {
+            "response_type": "code",
+            "client_id": oauth["client_id"],
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "code_challenge": challenge.rstrip(b"=").decode("ascii"),
+            "code_challenge_method": "S256",
+        }
+        if oauth.get("scope"):
+            query["scope"] = oauth["scope"]
+        separator = "&" if "?" in oauth["authorization_url"] else "?"
+        url = oauth["authorization_url"] + separator + urllib.parse.urlencode(query)
+        say(f"sign in to {config.name!r} in your browser: {url}")
+        (open_browser or webbrowser.open)(url)
+        if not done.wait(timeout):
+            raise SignInError(f"no sign-in answer within {timeout:g} seconds")
+    finally:
+        listener.shutdown()
+        listener.server_close()
+    if "error" in outcome:
+        raise SignInError(outcome["error"])
+
+    form = {
+        "grant_type": "authorization_code",
+        "code": outcome["code"],
+        "redirect_uri": redirect_uri,
+        "client_id": oauth["client_id"],
+        "code_verifier": verifier,
+    }
+    if oauth.get("client_secret"):
+        form["client_secret"] = oauth["client_secret"]
+    downstream = HttpDownstream.from_config(config)
+    try:
+        body = downstream._token_request(form)
+    except DownstreamError as exc:
+        raise SignInError(str(exc)) from exc
+    path = Path(oauth["token_file"])
+    write_token_file(path, {
+        "access_token": str(body["access_token"]),
+        "refresh_token": str(body.get("refresh_token", "")),
+        "expires_at": time.time() + float(body.get("expires_in", 300)),
+    })
+    return path
 
 
 # --------------------------------------------------------------------------
@@ -806,6 +1210,7 @@ class MCPProxy:
         self._definitions: dict[str, list[dict[str, Any]]] = {}
         self._signature: tuple[tuple[str, str], ...] = ()
         self._asks: dict[tuple[str, tuple[str, ...]], int] = {}
+        self._restarts: dict[str, list[float]] = {}
         self._lock = threading.RLock()
         for server, downstream in self.downstreams.items():
             self._definitions[server] = downstream.list_tools()
@@ -992,10 +1397,22 @@ class MCPProxy:
                 if usable is not None:
                     approval_id = usable.approval_id
 
+            if not self.downstreams[entry.server].alive():
+                try:
+                    self._restart(entry.server)
+                except DownstreamError as exc:
+                    return _error(f"the tool did not run: {exc}")
+                entry = self.tools.get(name)
+                if entry is None:
+                    return _error(
+                        f"tool not available: {name} "
+                        f"({self.held.get(name, 'it is gone')}; a person must accept it)"
+                    )
             downstream = self.downstreams[entry.server]
 
-            def call(_intent_key: str | None) -> dict[str, Any]:
-                result = downstream.call_tool(entry.tool, args)
+            def call(intent_key: str | None) -> dict[str, Any]:
+                meta = {INTENT_META_KEY: intent_key} if intent_key else None
+                result = downstream.call_tool(entry.tool, args, meta)
                 if result.get("isError"):
                     raise ToolReportedError(result)
                 return result
@@ -1026,6 +1443,31 @@ class MCPProxy:
                 "content": [{"type": "text", "text": json.dumps(result, default=str)}],
                 "isError": False,
             }
+
+    def _restart(self, server: str) -> None:
+        """Start a local server that has died, then check its tools again.
+
+        The call that found it dead has not been sent, so nothing is repeated.
+        The tools are read again and checked against their pins, because a
+        server that comes back may not be the same one. A server that keeps
+        dying is not restarted forever.
+        """
+        now = time.monotonic()
+        recent = [t for t in self._restarts.get(server, []) if now - t < 60.0]
+        if len(recent) >= MAX_RESTARTS_PER_MINUTE:
+            raise DownstreamNotRun(
+                f"{server}: the server keeps stopping ({MAX_RESTARTS_PER_MINUTE} restarts "
+                "in the last minute), so it is not being restarted again"
+            )
+        self._restarts[server] = [*recent, now]
+        say(f"{server!r} is not running: restarting it")
+        downstream = self.downstreams[server]
+        downstream.close()
+        downstream.start()
+        self._definitions[server] = downstream.list_tools()
+        before = dict(self.held)
+        self._rebuild()
+        self._announce_held(before)
 
     def _ask(self, entry: ProxiedTool, missing: list[str]) -> dict[str, Any]:
         """Refuse a call that lacks required input, and tell the agent to ask."""
@@ -1305,6 +1747,7 @@ __all__ = [
     "MCPProxy",
     "PinStore",
     "ProxyConfig",
+    "SignInError",
     "ProxyServer",
     "StdioDownstream",
     "build_proxy",
@@ -1314,4 +1757,5 @@ __all__ = [
     "load_proxy_config",
     "parse_proxy_config",
     "serve_proxy",
+    "sign_in",
 ]

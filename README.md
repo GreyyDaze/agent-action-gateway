@@ -101,7 +101,8 @@ Three things to know:
   A tool whose definition later changes is held back until you accept it, and
   edits to the config apply without a restart.
 - **Keeping the key from the agent** works only with the gateway, run as its own
-  service where the agent cannot reach it. See the
+  service where the agent cannot reach it. The proxy can forward to the gateway,
+  so one agent gets the full checks and key custody. See the
   [gateway guide](docs/gateway-deployment.md).
 
 ### Example: the library

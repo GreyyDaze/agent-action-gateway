@@ -137,6 +137,8 @@ class GatewayPolicy:
     enforcement_enabled: bool = True
 
     def register(self, route: Route) -> None:
+        if route.path == MCP_PATH:
+            raise GatewayError(f"{MCP_PATH} is the gateway's MCP endpoint; choose another path")
         self.routes[route.path] = route
 
     def resolve(self, path: str) -> Route | None:
@@ -504,6 +506,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._denied(401, "gateway token required")
             return
 
+        if parsed.path == MCP_PATH:
+            self._mcp(virtual_key)
+            return
+
         # An unregistered path is refused outright. A scoped key that is valid
         # for other routes must not be told whether this one exists.
         route = self.policy.resolve(parsed.path)
@@ -531,6 +537,42 @@ class GatewayHandler(BaseHTTPRequestHandler):
             idempotency_key=self.headers.get("Idempotency-Key"),
         )
         self._respond(result.status, result.body)
+
+
+    def _mcp(self, virtual_key: VirtualKey | None) -> None:
+        """Serve the gateway's routes as MCP tools (Streamable HTTP, JSON replies).
+
+        This is what lets the MCP proxy forward to the gateway: the proxy runs
+        the checks, and the gateway holds the real key and makes the upstream
+        call. The caller was already authenticated. A virtual key sees only the
+        routes it is scoped to.
+        """
+        from agent_action_gateway.integrations.mcp import MCPToolBridge
+        from agent_action_gateway.integrations.mcp_server import MCPServer
+
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            message = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+        except (ValueError, json.JSONDecodeError):
+            self._respond(400, {"jsonrpc": "2.0", "id": None,
+                                "error": {"code": -32700, "message": "parse error"}})
+            return
+        if not isinstance(message, dict):
+            self._respond(400, {"jsonrpc": "2.0", "id": None,
+                                "error": {"code": -32600, "message": "send one request at a time"}})
+            return
+        allowed = None if virtual_key is None else set(virtual_key.routes)
+        reply = MCPServer(MCPToolBridge(self.gateway), allowed).handle(message)
+        if reply is None:
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self._respond(200, reply)
+
+
+#: The gateway's MCP endpoint. A route cannot use this path.
+MCP_PATH = "/mcp"
 
 
 def build_gateway_server(
@@ -643,6 +685,7 @@ __all__ = [
     "GatewayResult",
     "SafetyGateway",
     "GatewayHandler",
+    "MCP_PATH",
     "build_gateway_server",
     "VirtualKey",
     "EnforcementContext",
