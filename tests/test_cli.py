@@ -105,7 +105,7 @@ class ParserTest(unittest.TestCase):
         parser = cli.build_parser()
         commands = (
             "check", "gate", "wall", "path", "prune", "gateway", "mcp-serve", "mcp-proxy",
-            "mcp-pins", "mcp-login", "egress-serve", "dashboard",
+            "mcp-pins", "mcp-login", "egress-serve", "dashboard", "mcp-connect", "receipts",
         )
         for command in commands:
             with self.subTest(command=command):
@@ -147,9 +147,14 @@ class DashboardCommandTest(unittest.TestCase):
         from unittest import mock
 
         with mock.patch("agent_action_gateway.observability.dashboard.serve") as serve:
-            code = cli.main(["dashboard", "--db", "x.db", "--port", "8123"])
+            code = cli.main([
+                "dashboard", "--db", "x.db", "--port", "8123",
+                "--allow-origin", "http://127.0.0.1:8765",
+            ])
         self.assertEqual(code, 0)
-        serve.assert_called_once_with("x.db", "127.0.0.1", 8123)
+        serve.assert_called_once_with(
+            "x.db", "127.0.0.1", 8123, allow_origins=("http://127.0.0.1:8765",)
+        )
 
 
 class DelegationTest(unittest.TestCase):

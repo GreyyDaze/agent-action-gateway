@@ -197,9 +197,6 @@ class PlaceholderVault:
     def placeholders(self) -> tuple[str, ...]:
         return tuple(self._rules)
 
-    def rule_for(self, placeholder: str) -> CredentialRule | None:
-        return self._rules.get(placeholder)
-
     def rotate(self, secret_name: str, secret: str, *, expires_at: float | None = None) -> None:
         """Replace the real value without changing the agent's placeholder."""
         placeholder = self._placeholder_for.get(secret_name)

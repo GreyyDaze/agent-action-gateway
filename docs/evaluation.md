@@ -70,6 +70,16 @@ The answers file maps each `case_id` to what your agent returned:
 
 Without `--cases`, the gate uses the bundled example cases.
 
+| `gate check` option | Default | Meaning |
+|---|---|---|
+| `--lane push` or `--lane full` | `push` | runs per case: 3 for `push` (every change), 10 for `full` (before a release) |
+| `--record-baseline` | off | save this version's score as the baseline to compare against |
+| `--judge-model` | `gemini-3.5-flash-lite` | the Gemini model used for `rubric` cases |
+| `--unchanged` | off | mark this run as "code did not change", so a FAIL counts as a false alarm in the gate's own record |
+| `--repeat N` | 1 | run the whole check N times (to measure false alarms on unchanged code) |
+| `--wait-seconds S` | 0 | wait between judge requests, for provider rate limits |
+| `--detail` | off | print each run, judge request and result as it happens |
+
 ### Verdicts
 
 | Verdict | Exit code | Meaning |
@@ -98,6 +108,7 @@ A single run is not an evaluation. Only `gate check` produces PASS or FAIL.
       "task": "Roll back Ava's deployment DEP-100",
       "expected": {"deployment_id": "DEP-100", "status": "rolled_back"},
       "check_type": "field-equality",
+      "source": "manual",
       "catastrophic": false,
       "rubric": []
     }
@@ -111,6 +122,7 @@ A single run is not an evaluation. Only `gate check` produces PASS or FAIL.
 | `task` | what you give the agent |
 | `expected` | the correct answer, in whatever shape your tools return |
 | `check_type` | how to compare: see the next table |
+| `source` | where the case came from, as free text (`manual`, `incident-42`); required |
 | `catastrophic` | if true, failing this case fails the release whatever the average |
 | `rubric` | criteria for the LLM judge; used only by `rubric` cases |
 
@@ -143,9 +155,9 @@ score the answer. It is kept honest by these rules:
 | Deterministic checks run first and never call a judge | paying for, or trusting, a judge when a comparison would do |
 | A rubric case needs an explicitly configured judge | a missing judge silently counting as a pass |
 | Missing judge configuration gives UNCERTAIN, never PASS | a fabricated green result |
-| The agent's own model is never its judge | grading your own homework |
+| The judge is configured on its own, apart from the agent; use a different model from your agent's | grading your own homework |
 | Provider, model, prompt and judge version are recorded | comparing results from different judges by mistake |
-| A proof run uses one fixed judge, with no fallback | a comparison that silently changed judges midway |
+| One judge provider (Gemini), with no fallback to another | a comparison that silently changed judges midway |
 
 ### What every judge returns
 
@@ -178,12 +190,14 @@ agent-gateway gate online --db data/runtime.db --sample 0.2 --seed 7
 |---|---|
 | Reports; does not block unless you pass `--promote` | a gate that fires on noise gets switched off within a week |
 | `--seed` selects the same runs every time | a report can be reproduced, not argued about |
+| `--held RUN_IDS` lists runs a person already held | the report compares its findings with yours |
 | A sample too small to conclude says so | too little data is neither a pass nor a fail |
 | Disagreements between the scorer and a human mark are listed | a judge that disagrees with people is broken |
 
 ## Scoring how a run got there
 
-`agent-gateway path` answers one narrow question:
+`agent-gateway path --db data/runtime.db [--run RUN_ID] [--expect a,b] [--format json]`
+answers one narrow question:
 
 > **Did the run get where it was going without trying anything it should not
 > have tried first?**
@@ -195,7 +209,7 @@ It is a safety signal, not a quality score.
 | Signal | What it catches | Weight |
 |---|---|---|
 | Destructive action without approval | the agent reached for an action policy held | 3 |
-| Required step skipped | a write before the read that should precede it, e.g. deploy before checking status | 2 |
+| Required step skipped | an action you said the run must attempt (`--expect`) was never attempted | 2 |
 | Limit tripped | a budget or step limit fired | 2 |
 | No-progress loop | the same action and arguments repeated with the same result | 1 |
 | Excessive hops | more steps than the task plausibly needed | 1 |

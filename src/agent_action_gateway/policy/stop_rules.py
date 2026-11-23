@@ -23,16 +23,12 @@ class CrossEnvironmentError(StopRuleError):
     """Raised when an action targets a different environment than the run."""
 
 
-class HighStakesConfirmationError(StopRuleError):
-    """Raised when a high-stakes read lacks independent confirmation."""
-
-
 @dataclass
 class ClarificationState:
     """Per-run clarification budget.
 
-    The state is intentionally small and runtime-owned. Persistence can be added
-    later if a paused run needs to survive process restarts.
+    The state is intentionally small. A session saves it in the store, so a
+    run that pauses to ask the user can continue in a later process.
     """
 
     attempts: int = 0

@@ -142,10 +142,6 @@ class EgressPolicy:
         self.dns = dns
         self.inject_headers = inject_headers
 
-    @classmethod
-    def from_hosts(cls, hosts: Iterable[str], vault: PlaceholderVault, **kwargs: Any) -> EgressPolicy:
-        return cls(vault, frozenset(hosts), **kwargs)
-
     def _host_allowed(self, host: str) -> bool:
         if not self.allowed_hosts:
             return False

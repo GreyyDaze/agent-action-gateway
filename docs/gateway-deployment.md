@@ -10,6 +10,8 @@ against.
 - [Two boundaries](#two-boundaries)
 - [Choosing a setup](#choosing-a-setup)
 - [Connecting your agent](#connecting-your-agent)
+- [Route file reference](#route-file-reference)
+- [Running the MCP proxy as a service](#running-the-mcp-proxy-as-a-service)
 - [Checking your deployment](#checking-your-deployment)
 - [What it defends against](#what-it-defends-against)
 - [Known limitations](#known-limitations)
@@ -200,6 +202,20 @@ adds the real credential and makes the call.
   cloud-metadata range (`169.254.0.0/16`) stays blocked.
 - `/mcp` is reserved: a route cannot use that path.
 
+### An agent that calls the API itself (egress proxy)
+
+`agent-gateway egress-serve --config routes.credentials.example.json --port 8888`
+is for an agent you cannot change to call the gateway. Point its HTTP client at
+the proxy (`HTTP_PROXY`). The agent keeps addressing the real API, holding only a
+placeholder in place of the key. The proxy checks the host against each
+credential's `allowed_hosts`, swaps the placeholder for the real key, and
+forwards. A placeholder sent to any other host is refused.
+
+It needs a `credentials` block in the route file. It does not terminate TLS, so
+it injects keys into plain `http` requests only; an HTTPS tunnel (`CONNECT`) is
+refused. For HTTPS, terminate TLS at your network egress layer with the same
+policy, or use the gateway's routes instead.
+
 ### Unix socket mode (Linux)
 
 `--unix-socket PATH` is the one mode where the kernel backs the custody claim
@@ -213,6 +229,90 @@ as its own user, whatever key they present. Verified on Linux:
 
 A refused caller does not stop the gateway; it keeps serving others.
 
+## Route file reference
+
+JSON, or YAML with `pip install 'agent-action-gateway[yaml]'`. Examples:
+`deploy/routes.example.json` and `deploy/routes.credentials.example.json`.
+
+| Top-level key | Default | Meaning |
+|---|---|---|
+| `routes` | none | the only paths the gateway forwards |
+| `session_environment` | `dev` | the gateway's environment: a route bound to another one is refused |
+| `master_key_env` | none | the variable holding the admin key that issues and revokes virtual keys |
+| `credentials` | none | turns on custody mode: the gateway holds these secrets, and its own approval check is off unless `enforce_policy` is true |
+| `enforce_policy` | `false` | with `credentials`: also run the gateway's approval check |
+| `allowed_hosts` | each credential's hosts | with `credentials`: hosts any request may reach |
+| `private_hosts` | none | internal hostnames a route may reach on purpose (the metadata range stays blocked) |
+
+| Route key | Default | Meaning |
+|---|---|---|
+| `path` | required | the path the agent calls, e.g. `/deploy` (`/mcp` is reserved) |
+| `upstream` | required | the real URL the gateway forwards to |
+| `action` | required | the action name in approvals and records |
+| `risk` | `destructive` | `read`, `write` or `destructive` |
+| `method` | `POST` | must be `POST`: the gateway serves POST only |
+| `secret_env` | none | the upstream key: a variable name, or `file:/path` (mode 0600, owned by the gateway's user) |
+| `environment` | `prod` | where the route acts |
+
+| Credential key | Meaning |
+|---|---|
+| `secret_name` | the placeholder name the agent sees |
+| `secret_env` | the real secret: a variable name or `file:/path` |
+| `allowed_hosts` | hostnames (not IP addresses) this secret may be sent to; required |
+| `header` | if set, the gateway adds the secret in this header itself; if not, the agent puts the placeholder where the key goes |
+
+## Running the MCP proxy as a service
+
+The same rule applies to the [MCP proxy](sdk.md#mcp-proxy). Started by the
+agent's app over stdio, it runs as the agent's own user: an agent with a
+terminal or file access could change its config, approve itself through its
+database, or read the real servers' secrets. Run it with `--http` across the
+same two boundaries instead:
+
+```mermaid
+flowchart LR
+    subgraph agentside[Agent's user, container or host]
+        A[Agent<br/>proxy URL + token only]
+    end
+    subgraph proxyside[Proxy's user, container or host]
+        P[MCP proxy --http<br/>config, approvals, server secrets]
+        D[Dashboard]
+    end
+    A -->|HTTP + token| P
+    P --> S[Real MCP servers / gateway]
+    D --- P
+    A -.->|blocked by boundary B| S
+```
+
+| Lives on the proxy's side | Lives on the agent's side |
+|---|---|
+| `servers.json`, the database (approvals, records), the real servers' secrets, network access to the real systems, the dashboard | the proxy's URL and a token (`AGENT_GATEWAY_PROXY_TOKEN`), nothing else |
+
+```bash
+AGENT_GATEWAY_PROXY_TOKEN=... agent-gateway mcp-proxy --config servers.json \
+    --db proxy.db --http --host 0.0.0.0 --port 8090
+```
+
+- **Boundary A:** run it as its own OS user or container, so the agent cannot
+  read `servers.json`, the database or the secrets.
+- **Boundary B:** the agent's network reaches the proxy and nothing else that
+  matters: no route to the database or the APIs the tools change. This is what
+  makes a terminal harmless: the agent can run commands in its own box, but has
+  no key to steal and no other way out.
+- **HTTPS:** across machines, put a TLS reverse proxy in front; `mcp-connect`
+  refuses plain `http` to another machine.
+- **Approvals:** run the dashboard on the proxy's side, against the same
+  database. The agent's token cannot approve anything.
+- **Keys for HTTP APIs:** list the gateway as one of the proxy's servers
+  ([Behind the MCP proxy](#behind-the-mcp-proxy)), so the proxy runs the checks
+  and the gateway holds the key.
+
+**Reference setup:** `deploy/docker-compose.proxy.yml` runs the proxy, the
+gateway behind it and the dashboard beside it, on separate networks, and
+`make verify-proxy-boundary` checks it from the agent's side
+([deploy/README](../deploy/README.md#the-mcp-proxy)). There is no Kubernetes
+file for the proxy yet; the Compose file shows the shape to copy.
+
 ## Checking your deployment
 
 Two commands, answering different questions:
@@ -221,6 +321,7 @@ Two commands, answering different questions:
 |---|---|---|---|
 | `agent-gateway gateway doctor --config routes.json` | the gateway host | its user, secret file owner and mode, master key, bind address | whether the agent can reach a provider |
 | `make verify-boundary` | the agent's network | can it reach a provider, read the secret, or call without a key? | whether the agent behaves correctly |
+| `make verify-proxy-boundary` | the agent's network | the same for the proxy: can it skip the proxy, call it without a token, or read its config and database? | whether the agent behaves correctly |
 
 `make verify-boundary` attaches a temporary container to your agent's network
 and tries to escape. It uses only the standard library, because a probe that

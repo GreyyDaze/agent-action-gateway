@@ -133,7 +133,3 @@ def load_golden_cases(
 def seed_golden_cases() -> tuple[GoldenCase, ...]:
     """Backward-compatible name for the canonical versioned golden set."""
     return load_golden_set()
-
-
-def case_count() -> int:
-    return len(load_golden_set())

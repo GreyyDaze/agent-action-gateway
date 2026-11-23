@@ -70,14 +70,15 @@ flowchart LR
     S --> D[Dashboard]
 ```
 
-| Part | Use it when your agent calls | Checks |
-|---|---|---|
-| **Library** (`session()`) | Python functions | everything in section 6 |
-| **MCP proxy** (`agent-gateway mcp-proxy`) | MCP tools, started as a command or reached by URL (`--http`) | everything in section 6, plus pinning |
-| **Gateway** (`agent-gateway gateway`) | HTTP APIs, key kept from the agent | routes, environment, key custody, approval (off when the route file holds keys); no limits or effect claim of its own |
+| Part | Use it when your agent calls | Checks | Guide |
+|---|---|---|---|
+| **Library** (`session()`) | Python functions | everything in section 6 | [SDK guide](docs/sdk.md#sessions) |
+| **MCP proxy** (`agent-gateway mcp-proxy`) | MCP tools, started as a command or reached by URL (`--http`) | everything in section 6, plus pinning | [MCP proxy](docs/sdk.md#mcp-proxy) |
+| **Gateway** (`agent-gateway gateway`) | HTTP APIs, key kept from the agent | routes, environment, key custody, approval (off when the route file holds keys); no limits or effect claim of its own | [gateway guide](docs/gateway-deployment.md) |
 
 For full checks *and* key custody, put the gateway behind the proxy
-([architecture](docs/architecture.md)).
+([how](docs/gateway-deployment.md#behind-the-mcp-proxy)). Package layout:
+[architecture](docs/architecture.md).
 
 ## 6. Execution flow
 
@@ -156,12 +157,16 @@ More: [SDK guide](docs/sdk.md).
 
 ## 9. Failures, security and limits
 
-- **Unknown result** (crash or timeout mid-call): held as unfinished, never
-  repeated silently; the agent is told to check first.
+- **Unknown result:** a timeout, a dropped connection, a 5xx or a crash mid-call
+  may have landed, so the action is held and never repeated silently; settle it
+  with `agent-gateway receipts`. A failure that proves nothing happened (a
+  refused connection, a 4xx) may be retried, with the same intent key
+  ([details](docs/receipt-guarantees.md#which-failures-may-be-retried)).
 - **Dead MCP server:** restarted (at most 3 times a minute), tools re-checked
   against the pins. A broken config edit keeps the last good config.
 - **Proxy isolation:** run with `--http` as its own user or container, so the
-  agent cannot change its config or approvals; agents need a token.
+  agent cannot change its config or approvals; agents need a token
+  ([details](docs/sdk.md#mcp-proxy)).
 - **Secrets:** records are redacted before they are written.
 - **Dashboard:** needs the token printed at start; refuses non-local addresses
   without one.
@@ -169,13 +174,15 @@ More: [SDK guide](docs/sdk.md).
   names that resolve to private addresses.
 
 **Limits:** it checks actions, not reasoning. It cannot detect a guessed value.
-Only calls through the checkpoint are checked. The SQL check cannot see inside
+Only calls through the checkpoint are checked: an agent with a terminal can go
+around it unless it runs where it has no keys and no direct network route to
+your systems ([setups](docs/gateway-deployment.md#choosing-a-setup)). The SQL check cannot see inside
 your own database functions. "Once" needs a provider idempotency key or lookup.
 Not independently audited. ([full list](docs/gateway-deployment.md#known-limitations))
 
 ## 10. Testing
 
-- About 650 automated tests, plus lint and type checks, in CI.
+- About 675 automated tests, plus lint and type checks, in CI.
 - `make proof`: 1,000 crashed retries cause **1** side effect; **0** destructive
   actions run without a valid approval.
 - Tried once with Claude Code against the MCP proxy (test tools); not yet with
@@ -193,17 +200,31 @@ pip install agent-action-gateway
 | run the proxy as its own service | `agent-gateway mcp-proxy --config servers.json --http` |
 | run the key-holding gateway | `agent-gateway gateway --config routes.json --db gateway.db` |
 | see runs and approve | `agent-gateway dashboard` |
-| find calls that skip the checkpoint | `agent-gateway check --app your_agent.py` |
+| settle actions held with an unknown outcome | `agent-gateway receipts list` |
+| find calls that skip the checkpoint | `agent-gateway check --app your_agent.py` (`--format json` for CI) |
 | test a new agent version | `agent-gateway gate check --cases your-cases.json ...` ([guide](docs/evaluation.md)) |
 
 Secrets come from environment variables: the upstream keys named in the route
 file, `AGENT_GATEWAY_MASTER_KEY`, `AGENT_GATEWAY_DASHBOARD_TOKEN`,
 `AGENT_GATEWAY_PROXY_TOKEN` (proxy over HTTP), and `${NAME}`
-in the proxy config. Run the gateway where the agent cannot read its keys
-(separate user, container or host); see [`deploy/`](deploy/) and the
+in the proxy config. Run the gateway and the proxy where the agent cannot read
+their keys, config or approvals (separate user, container or host).
+[`deploy/`](deploy/) has a Compose setup for each, and `make verify-boundary` /
+`make verify-proxy-boundary` check it from the agent's side; see the
 [gateway guide](docs/gateway-deployment.md).
 
 Develop: `pip install -e ".[dev]"`, then `make verify` and `make proof`.
+
+## Documentation
+
+| Guide | Read it for |
+|---|---|
+| [SDK guide](docs/sdk.md) | the library, approvals, limits, stop-and-ask, the [MCP proxy](docs/sdk.md#mcp-proxy) (rules, per-call risk, pinning, HTTP mode) |
+| [Gateway guide](docs/gateway-deployment.md) | holding keys, deployment setups, checking your deployment, known limitations |
+| [Receipt guarantees](docs/receipt-guarantees.md) | exactly what "once only" means |
+| [Evaluation guide](docs/evaluation.md) | the release gate, `gate online`, `path`, `wall` |
+| [Architecture](docs/architecture.md) | how the package is organized |
+| [`deploy/`](deploy/) | Docker Compose for the gateway and the proxy, Kubernetes and systemd examples |
 
 ## License
 

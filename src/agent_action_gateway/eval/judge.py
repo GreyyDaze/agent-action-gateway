@@ -1,4 +1,4 @@
-"""Scoring by a hosted judge model."""
+"""Judges: fixed checks for exact cases, and the interface a hosted judge model fills."""
 from __future__ import annotations
 
 import re

@@ -30,7 +30,7 @@ class RetryHarness(unittest.TestCase):
 
 
 class BlockedIsNeverRetriedTest(RetryHarness):
-    """The rule this whole phase exists to enforce."""
+    """The rule this file exists to enforce."""
 
     def test_the_tool_is_never_reached(self) -> None:
         """Stronger than "not retried": policy blocks *before* dispatch, so the
@@ -174,11 +174,10 @@ class RetryGuardOnItsOwnTest(RetryHarness):
 
 
 class RetryLogicTest(RetryHarness):
-    """The retry rule on its own, wrapping a plain callable.
+    """The retry rule, over a plain callable and over a `ctx.tool` tool.
 
-    Guarded tools are covered separately below. Mixing the two would hide which
-    guard stopped a loop: `ctx.retrying` bounds its own attempts, and the
-    no-progress fuse bounds repeated calls to a guarded action.
+    A plain callable gets every attempt it asks for. A `ctx.tool` tool is capped
+    at the loop limit (3 by default), however many attempts are asked for.
     """
 
     def test_a_5xx_result_is_retried_up_to_the_bound(self) -> None:
@@ -191,8 +190,8 @@ class RetryLogicTest(RetryHarness):
         self.assertEqual(len(calls), 3)
 
     def test_repeating_one_call_is_stopped_by_the_fuse(self) -> None:
-        """Belt and braces: a retry loop over a guarded action cannot grind
-        past the no-progress guard by asking repeatedly."""
+        """A retry loop over a guarded action cannot grind on a failing call by
+        asking for many attempts: it is capped at the loop limit."""
         calls: list[int] = []
 
         with self._session() as ctx:

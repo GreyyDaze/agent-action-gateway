@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "Example config for the MCP proxy in docker-compose.proxy.yml.",
+    "",
+    "One server: the gateway's MCP endpoint. The proxy runs the checks",
+    "(risk, approval, limits, once-only); the gateway holds the real key and",
+    "makes the call. GATEWAY_VIRTUAL_KEY is read from the proxy's environment.",
+    "",
+    "Add your own MCP servers next to it, for example:",
+    "  \"db\": { \"url\": \"http://postgres-mcp:8000/mcp\" }",
+    "and put that server on tools_net, never on agent_net."
+  ],
+
+  "environment": "prod",
+
+  "servers": {
+    "ops": {
+      "url": "http://gateway:8080/mcp",
+      "headers": { "Authorization": "Bearer ${GATEWAY_VIRTUAL_KEY}" },
+      "environment": "prod"
+    }
+  }
+}

@@ -17,24 +17,24 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: safety
+  name: agent-action-gateway
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: agent-action-gateway
-  namespace: safety
+  namespace: agent-action-gateway
   annotations:
     # Replace with your own workload identity (IRSA, GKE Workload Identity, or a
     # Vault AppRole) so the gateway authenticates to the provider and no static
     # key is stored anywhere.
-    safety.example.com/identity: "TODO: bind this to your provider's workload identity"
+    example.com/identity: "TODO: bind this to your provider's workload identity"
 ---
 apiVersion: v1
 kind: Secret
 metadata:
   name: agent-action-gateway-secrets
-  namespace: safety
+  namespace: agent-action-gateway
 type: Opaque
 stringData:
   # PLACEHOLDER. In production, do not store provider keys here — have the
@@ -47,7 +47,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: agent-action-gateway
-  namespace: safety
+  namespace: agent-action-gateway
   labels:
     app: agent-action-gateway
     role: gateway
@@ -102,11 +102,9 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: {drop: ["ALL"]}
           readinessProbe:
-            httpGet: {path: /, port: http}
-            # The gateway answers 401 to an unauthenticated GET, which is a
-            # correct "I am up and I require a token".
-            httpHeaders:
-              - {name: Authorization, value: "Bearer probe"}
+            # A TCP check: the gateway answers POST only, and every request
+            # needs a key, so an HTTP probe could never see a success code.
+            tcpSocket: {port: http}
             initialDelaySeconds: 2
           livenessProbe:
             tcpSocket: {port: http}
@@ -119,13 +117,27 @@ spec:
           secret:
             secretName: agent-action-gateway-secrets
         - name: state
-          emptyDir: {}
+          # Persistent, not emptyDir: the trace database and every issued
+          # virtual key live here, so losing it on restart would silently
+          # revoke every key your agents hold.
+          persistentVolumeClaim:
+            claimName: agent-action-gateway-state
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-action-gateway-state
+  namespace: agent-action-gateway
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests: {storage: 1Gi}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: agent-action-gateway-routes
-  namespace: safety
+  namespace: agent-action-gateway
 data:
   routes.yaml: |
     master_key_env: AGENT_GATEWAY_MASTER_KEY
@@ -143,7 +155,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: agent-action-gateway
-  namespace: safety
+  namespace: agent-action-gateway
 spec:
   selector: {app: agent-action-gateway}
   ports:
@@ -159,7 +171,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-ingress
-  namespace: safety
+  namespace: agent-action-gateway
 spec:
   podSelector: {app: agent-action-gateway}
   policyTypes: [Ingress]
@@ -177,7 +189,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: agent-egress-allowlist
-  namespace: safety
+  namespace: agent-action-gateway
 spec:
   podSelector: {matchLabels: {role: agent}}
   policyTypes: [Egress]
@@ -201,7 +213,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: gateway-egress-to-providers
-  namespace: safety
+  namespace: agent-action-gateway
 spec:
   podSelector: {app: agent-action-gateway}
   policyTypes: [Egress]

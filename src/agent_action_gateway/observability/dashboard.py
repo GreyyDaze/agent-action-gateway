@@ -1,4 +1,4 @@
-"""A read-only local dashboard for recorded evidence.
+"""A local dashboard for recorded evidence, and where a person gives approvals.
 
 Server-rendered and deliberately script-free. The Content-Security-Policy below
 sets `default-src 'none'` with no `script-src`, so there is no way to run
@@ -526,7 +526,11 @@ and what landed. <span class="badge b-{'info' if view['enforcement'] == 'enforce
 
 
 def build_server(
-    path: str, host: str, port: int, token: str | None = None
+    path: str,
+    host: str,
+    port: int,
+    token: str | None = None,
+    allow_origins: tuple[str, ...] = (),
 ) -> tuple[ThreadingHTTPServer, type[Handler]]:
     """Create a dashboard server with per-instance state.
 
@@ -536,6 +540,9 @@ def build_server(
 
     The trusted origins are derived from the address the OS actually bound, not
     the requested one, so `--port 0` and host aliases resolve correctly.
+    `allow_origins` adds the address a person really opens, when it differs
+    from the bound one: a container bound to 0.0.0.0 and opened as
+    http://127.0.0.1:8765 from the host.
     """
     store = TraceStore(path)
     csrf_token = secrets.token_urlsafe(32)
@@ -558,6 +565,7 @@ def build_server(
     bound_port = int(raw_port)
     bound.allowed_origins = frozenset(
         {f"http://{bound_host}:{bound_port}", f"https://{bound_host}:{bound_port}"}
+        | {origin.rstrip("/") for origin in allow_origins}
     )
     # The renderer reads the token from a module-level slot so it is not
     # threaded through every helper. Set here, per server, so two servers in one
@@ -566,7 +574,13 @@ def build_server(
     return server, bound
 
 
-def serve(path: str, host: str, port: int, token: str | None = None) -> None:
+def serve(
+    path: str,
+    host: str,
+    port: int,
+    token: str | None = None,
+    allow_origins: tuple[str, ...] = (),
+) -> None:
     """Start the dashboard, printing the access token to the operator.
 
     Binding beyond loopback is refused unless a token was supplied explicitly:
@@ -579,7 +593,7 @@ def serve(path: str, host: str, port: int, token: str | None = None) -> None:
             f"refusing to bind {host}: a dashboard reachable off-host needs an "
             "explicit AGENT_GATEWAY_DASHBOARD_TOKEN"
         )
-    server, handler = build_server(path, host, port, resolved)
+    server, handler = build_server(path, host, port, resolved, allow_origins)
     print(f"Agent Action Gateway dashboard on http://{host}:{server.server_address[1]}/")
     print(f"access token: {handler.access_token}")
     print("Pass it as ?token=... or 'Authorization: Bearer ...'. Keep it private.")

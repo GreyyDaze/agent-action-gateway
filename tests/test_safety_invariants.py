@@ -33,7 +33,7 @@ class ReceiptRecoveryTargetTest(unittest.TestCase):
     """An uncertain side effect must be resolvable, never a KeyError.
 
     The resolver previously read `arguments["deployment_id"]`, so any approved
-    payload that did not literally carry an deployment_id crashed crash recovery.
+    payload that did not literally carry a deployment_id crashed crash recovery.
     """
 
     def test_recovery_works_for_payload_without_a_target(self) -> None:
@@ -241,6 +241,18 @@ class DashboardApprovalBoundaryTest(unittest.TestCase):
         self.assertEqual(
             self.approvals.get(self.approval.approval_id).decision, "approved"
         )
+
+    def test_an_allowed_origin_can_approve_and_others_still_cannot(self) -> None:
+        """A container binds 0.0.0.0 but is opened as http://127.0.0.1:PORT.
+
+        Without `allow_origins`, every approval from the browser was refused.
+        """
+        server, handler = build_server(
+            str(self.db), "127.0.0.1", 0, allow_origins=("http://127.0.0.1:8765/",)
+        )
+        self.addCleanup(server.server_close)
+        self.assertIn("http://127.0.0.1:8765", handler.allowed_origins)
+        self.assertNotIn("http://evil.example", handler.allowed_origins)
 
 
 class GateExitContractTest(unittest.TestCase):

@@ -32,7 +32,6 @@ class NoInternalJargonTest(unittest.TestCase):
 
     PUBLIC_FILES = (
         "README.md",
-        "ROADMAP.md",
         "deploy/README.md",
         *sorted(str(p.relative_to(ROOT)) for p in (ROOT / "docs").glob("*.md")),
     )
@@ -275,9 +274,11 @@ class PublicSurfaceTest(unittest.TestCase):
         """Advertising internals invites callers to depend on them."""
         import agent_action_gateway
 
+        # OutcomeUnknown is public because a tool raises it to say "this may
+        # have happened": the one way a caller can keep a claim held.
         self.assertEqual(
             sorted(agent_action_gateway.__all__),
-            ["FuseLimits", "SafetySession", "session"],
+            ["FuseLimits", "OutcomeUnknown", "SafetySession", "session"],
         )
 
     def test_documented_entry_points_are_importable(self) -> None:

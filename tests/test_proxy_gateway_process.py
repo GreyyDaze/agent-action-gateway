@@ -139,7 +139,7 @@ class ProxyToGatewayProcessTest(unittest.TestCase):
             except queue.Empty:
                 continue
             lines.append(line)
-            if "Safety gateway on" in line:
+            if "Agent Action Gateway on" in line:
                 return int(line.rsplit(":", 1)[1].strip().strip("/"))
         raise AssertionError("the gateway did not start: " + "".join(lines))
 

@@ -16,7 +16,7 @@ JOBS   ?= 1000
 
 .PHONY: help proof chaos verify test test-unit test-integration test-evals \
         mutation verify-full lint typecheck wheel clean \
-        verify-boundary doctor
+        verify-boundary verify-proxy-boundary doctor
 
 help:
 	@echo "verify      ruff, mypy and the full test suite"
@@ -34,6 +34,7 @@ help:
 	@echo ""
 	@echo "Adopter deployment (about your setup, not this library):"
 	@echo "  verify-boundary  probe the gateway topology from the agent's position"
+	@echo "  verify-proxy-boundary  the same for the MCP proxy (docker-compose.proxy.yml)"
 	@echo "  doctor          check this host's gateway configuration"
 
 verify: lint typecheck test
@@ -75,6 +76,18 @@ verify-boundary:
 	  exit 2; }
 	@cd deploy && $(COMPOSE) up -d gateway
 	@cd deploy && $(COMPOSE) run --rm probe; status=$$?; \
+	  if [ $$status -eq 2 ]; then echo "INCONCLUSIVE: the probe could not determine the boundary."; fi; \
+	  exit $$status
+
+# The same probe for docker-compose.proxy.yml: from agent_net, the agent must
+# reach the MCP proxy (with its token) and nothing else. Bring the stack up
+# first; the steps are at the top of deploy/docker-compose.proxy.yml.
+verify-proxy-boundary:
+	@command -v docker >/dev/null 2>&1 || { \
+	  echo "INCONCLUSIVE: docker is not available, so the deployment boundary was not tested."; \
+	  echo "  This says nothing about whether your setup is safe."; \
+	  exit 2; }
+	@cd deploy && docker compose -f docker-compose.proxy.yml run --rm probe; status=$$?; \
 	  if [ $$status -eq 2 ]; then echo "INCONCLUSIVE: the probe could not determine the boundary."; fi; \
 	  exit $$status
 

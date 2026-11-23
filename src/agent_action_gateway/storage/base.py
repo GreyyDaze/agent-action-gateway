@@ -56,9 +56,6 @@ class Store:
     connection directly and never branch on the backend.
     """
 
-    #: Bumped whenever a subclass adds a migration step.
-    schema_version: int = 1
-
     def __init__(self, target: str | Path = ":memory:") -> None:
         self.backend, self.path = _resolve(target)
         if self.backend == "sqlite" and self.path != ":memory:":
@@ -160,10 +157,6 @@ class Store:
         return ()
 
     # -- small query helpers --------------------------------------------
-
-    def _execute(self, sql: str, parameters: Sequence[Any] = ()) -> sqlite3.Cursor:
-        with self.connection() as connection:
-            return connection.execute(sql, parameters)
 
     def _columns(self, table: str) -> set[str]:
         """Columns on a table, answered by whichever backend is in use."""

@@ -28,8 +28,8 @@ from typing import Any
 from agent_action_gateway.audit.receipts import (
     TARGET_KEY,
     EffectInFlight,
-    RetryableEffect,
     claim_effect,
+    outcome_is_unknown,
 )
 from agent_action_gateway.guards.capture import suspicious_flags
 from agent_action_gateway.guards.status import honest_status
@@ -275,7 +275,7 @@ def enforce(ctx: EnforcementContext) -> Decision:
             )
             intent_key = receipt.intent_key
             if not owned:
-                if receipt.state == "done":
+                if receipt.state in ("done", "resolved"):
                     # Already happened. Return the recorded outcome rather than
                     # repeating the action.
                     return Decision(
@@ -287,18 +287,17 @@ def enforce(ctx: EnforcementContext) -> Decision:
                         deduplicated=True,
                         evidence_status="ok",
                     )
-                if receipt.state == "failed":
-                    # The previous attempt is known not to have landed, so the
-                    # claim is released and a retry is safe.
-                    ctx.store.mark_failed(receipt.intent_key)
-                    raise RetryableEffect(
-                        f"effect {receipt.intent_key} failed previously; safe to retry"
+                # A `failed` attempt is known not to have landed, so this
+                # caller may take the claim over and try again (only one of
+                # several callers retrying at once wins it). A `pending` one
+                # may have landed, so it is refused until someone settles it.
+                if not (receipt.state == "failed"
+                        and ctx.store.reclaim_failed(receipt.intent_key)):
+                    raise EffectInFlight(
+                        f"effect {receipt.intent_key} is claimed and unfinished; "
+                        "settle it before retrying (agent-gateway receipts)"
                     )
-                raise EffectInFlight(
-                    f"effect {receipt.intent_key} is claimed and unfinished; "
-                    "resolve it before retrying"
-                )
-        except (EffectInFlight, RetryableEffect) as exc:
+        except EffectInFlight as exc:
             _trace(ctx, "enforcement.dispatch", str(exc), "blocked")
             return Decision(
                 BLOCKED, "DEDUPLICATED", error=str(exc), risk=risk,
@@ -309,11 +308,11 @@ def enforce(ctx: EnforcementContext) -> Decision:
     if ctx.provider is not None and ctx.target is not None and ctx.records_receipt:
         try:
             provider_ref = ctx.provider.execute(ctx.target, intent_key or "")
-        except TimeoutError:
-            ctx.store.mark_failed(intent_key or "")
-            raise
-        except Exception:
-            ctx.store.mark_failed(intent_key or "")
+        except BaseException as exc:
+            # A timeout or a 5xx may have landed: leave the claim unfinished
+            # so the same effect is not retried blindly.
+            if not outcome_is_unknown(exc):
+                ctx.store.mark_failed(intent_key or "")
             raise
         ctx.store.mark_done(intent_key or "", provider_ref)
 

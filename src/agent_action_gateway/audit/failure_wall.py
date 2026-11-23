@@ -59,19 +59,6 @@ def config_fingerprint(config: Mapping[str, Any] | None) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def failure_signature(
-    *,
-    error_type: str,
-    failing_step: str,
-    config: Mapping[str, Any] | None,
-) -> FailureSignature:
-    return FailureSignature(
-        error_type=error_type or "unknown",
-        failing_step=failing_step or "unknown",
-        config_fingerprint=config_fingerprint(config),
-    )
-
-
 def _failure_error_type(trace: Mapping[str, Any]) -> str:
     output = trace.get("output")
     if isinstance(output, Mapping):

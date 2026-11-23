@@ -1,6 +1,7 @@
 """Durable receipts, so a retried action cannot happen twice."""
 from __future__ import annotations
 
+import urllib.error
 from typing import Any
 
 from agent_action_gateway.integrations.adapters.base import ExternalActionProvider
@@ -25,16 +26,43 @@ class EffectInFlight(RuntimeError):
     This is the honest state. A crash between claiming and completing leaves
     the receipt `pending`, and whether the action landed is genuinely unknown.
     Raising is correct: executing again risks a duplicate, and reporting
-    success risks a lie. `resolve_unknown()` is how a human settles it.
+    success risks a lie. A person settles it with `agent-gateway receipts
+    settle`, or `resolve_unknown()` asks a provider that can look it up.
     """
 
 
-class RetryableEffect(RuntimeError):
-    """The effect was claimed before and failed, so it may be tried again.
+class OutcomeUnknown(Exception):
+    """Raise this from a tool when the action may or may not have happened.
 
-    Distinct from `EffectInFlight` because the outcome is known: the previous
-    attempt did not land, so a retry is safe.
+    For example: the request was sent and the answer never came. The effect's
+    claim then stays unfinished, so the same action is refused until it is
+    settled (`agent-gateway receipts settle`, or `resolve_unknown()`), instead
+    of being retried blindly.
     """
+
+
+#: Errors that can happen after a request was sent: it may have landed.
+_AMBIGUOUS = (TimeoutError, ConnectionResetError, ConnectionAbortedError, BrokenPipeError)
+
+
+def outcome_is_unknown(exc: BaseException) -> bool:
+    """Whether an error leaves it unknown if the action happened.
+
+    Unknown: `OutcomeUnknown`; a timeout, reset or broken connection (the
+    request may have arrived); an HTTP 5xx; and an interrupt (Ctrl-C, exit)
+    in the middle of the call. Everything else (a refused connection, a 4xx,
+    an error in your own code) means the action did not happen, so a later
+    attempt may run.
+    """
+    if isinstance(exc, OutcomeUnknown):
+        return True
+    if not isinstance(exc, Exception):
+        return True  # KeyboardInterrupt, SystemExit: stopped mid-call
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    if isinstance(exc, urllib.error.URLError):
+        return isinstance(exc.reason, _AMBIGUOUS)
+    return isinstance(exc, _AMBIGUOUS)
 
 
 def claim_effect(
@@ -81,10 +109,9 @@ def execute_side_effect(
         raise RuntimeError(f"unexpected receipt state: {receipt.state}")
     try:
         provider_ref = provider.execute(target, receipt.intent_key)
-    except TimeoutError:
-        raise
-    except Exception:
-        store.mark_failed(receipt.intent_key)
+    except BaseException as exc:
+        if not outcome_is_unknown(exc):
+            store.mark_failed(receipt.intent_key)
         raise
     store.mark_done(receipt.intent_key, provider_ref)
     return provider_ref

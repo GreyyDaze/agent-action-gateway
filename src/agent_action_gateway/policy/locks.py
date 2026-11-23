@@ -1,4 +1,4 @@
-"""Single-writer locks that keep concurrent writers from interleaving."""
+"""Approvals and risk classes: which actions need a person, and the approvals given."""
 import hashlib
 import json
 import sqlite3
@@ -344,16 +344,15 @@ def authorize(
     current_state: Any | None = None,
     now: datetime | None = None,
 ) -> str:
-    """Authorize an action before dispatch; destructive approval is exact and single-use."""
+    """Authorize an action before dispatch. Every risk except `read` needs an
+    approval, bound to the exact arguments and used once."""
     risk = registry.classify(action)
     if risk == "read":
         return risk
 
     approval_store.require_available()
     if approval_id is None:
-        if risk == "destructive":
-            raise ApprovalError("destructive action requires approval")
-        return risk
+        raise ApprovalError(f"{risk} action requires approval")
 
     approval = approval_store.get(approval_id)
     if approval.decision != "approved":

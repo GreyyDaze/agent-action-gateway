@@ -195,7 +195,8 @@ class EffectClaimTest(unittest.TestCase):
         self.assertEqual(len(calls), 3, "tenants shared a namespace")
 
     def test_a_raising_tool_releases_its_claim(self) -> None:
-        """A call that raises did not land, so the next attempt must be allowed."""
+        """An error that proves nothing happened releases the claim, so the next
+        attempt may run. (A timeout keeps it held: see test_unknown_outcomes.py.)"""
         calls: list[str] = []
 
         def flaky(app: str, intent_key: str = "") -> dict:
@@ -214,7 +215,7 @@ class EffectClaimTest(unittest.TestCase):
         self.assertEqual(states, ["failed"], "a failed effect kept a pending claim")
 
     def test_a_changed_argument_is_a_different_effect(self) -> None:
-        """Raising to a different limit is not a duplicate of raising to this one."""
+        """The same check on the key alone: a changed limit gives a new key."""
         args = {"app": "shop-api", "memory_limit": "768Mi"}
         self.assertEqual(
             fingerprint("patch.deployment", args),

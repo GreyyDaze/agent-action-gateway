@@ -1,30 +1,4 @@
 """In-memory test doubles for the verification suites and tests. Not a product API."""
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class Deployment:
-    deployment_id: str
-    owner: str
-    rollback_due: bool
-
-
-class MockProvider:
-    """Reference provider for baseline; no safety guards are applied yet."""
-
-    def __init__(self) -> None:
-        self.deployments = {
-            "DEP-100": Deployment("DEP-100", "Ava", True),
-            "DEP-200": Deployment("DEP-200", "Noah", False),
-        }
-        self.rollbacks: list[dict[str, str]] = []
-
-    def lookup_deployment(self, owner: str) -> Deployment | None:
-        return next((d for d in self.deployments.values() if d.owner.lower() == owner.lower()), None)
-
-    def rollback(self, deployment_id: str) -> dict[str, str]:
-        self.rollbacks.append({"deployment_id": deployment_id, "status": "rolled_back"})
-        return self.rollbacks[-1]
 
 
 class MockEffectProvider:

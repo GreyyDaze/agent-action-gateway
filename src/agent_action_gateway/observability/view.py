@@ -16,9 +16,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-#: Order matters: it is the order a reader works through a run.
-RECEIPT_STATES = ("done", "pending", "failed", "resolved", "unknown")
-
 _STATE_MEANING = {
     "done": "landed",
     "pending": "claimed, outcome unknown",

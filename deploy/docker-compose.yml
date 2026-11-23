@@ -69,7 +69,7 @@ services:
       - upstream_net
 
     # your agent joins agent_net and gets a virtual key:
-    #     client = SafetyClient(base_url="http://gateway:8080", key=VIRTUAL_KEY)
+    #     POST http://gateway:8080/<route>  with  Authorization: Bearer <virtual key>
     #
     # It receives no upstream credential, and it has no route to a provider.
     # agent:

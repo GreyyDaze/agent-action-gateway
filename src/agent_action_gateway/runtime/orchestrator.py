@@ -205,8 +205,8 @@ def execute_tool(
         blocked=result_decision.decision != "CONTINUE",
         suspicious=bool(trace_flags),
     )
-    # Preserve the validation/5 public status contract. observability evidence is
-    # exposed separately so observability does not silently change behavior.
+    # `status` keeps its two values (allowed, stopped) for existing callers. The
+    # evidence status is a separate field, so adding it changed nothing for them.
     status = "allowed" if result_decision.decision == "CONTINUE" else "stopped"
     return {
         "status": status,

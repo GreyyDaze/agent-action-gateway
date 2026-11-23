@@ -103,12 +103,6 @@ def load_calibration_set(
     return tuple(examples)
 
 
-def calibration_case_ids(
-    path: str | Path | None = None,
-) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(example.case_id for example in load_calibration_set(path)))
-
-
 def run_calibration(cases, judge):
     """Compare the configured judge with human-labeled calibration examples."""
     from time import perf_counter

@@ -13,7 +13,7 @@ a restart, or a second worker.
 - [Provider interface](#provider-interface)
 - [Recovery by action type](#recovery-by-action-type)
 - [How this is verified](#how-this-is-verified)
-- [Replay honesty](#replay-honesty)
+- [Replays](#replays)
 
 ## Storage
 
@@ -49,11 +49,11 @@ flowchart TD
     C[Claim the effect<br/>insert receipt: pending] --> O{Who holds it?}
     O -->|this caller| R[Call the provider]
     R -->|succeeds| D[done: result recorded]
-    R -->|raises| F[failed: a later attempt may retry]
-    R -->|process dies mid-call| P[stays pending: outcome unknown]
+    R -->|error: did not land| F[failed: a later attempt may retry]
+    R -->|timeout, 5xx, crash: may have landed| P[stays pending: outcome unknown]
     O -->|someone else| S{Their state}
     S -->|done| DD[return their result: DEDUPLICATED]
-    S -->|failed| RT[the effect did not land: may try again]
+    S -->|failed| RT[did not land: take it over and try again]
     S -->|pending| IF[refuse: EffectInFlight]
 ```
 
@@ -61,7 +61,8 @@ flowchart TD
 |---|---|---|
 | `pending` | claimed; the outcome is not known yet | refused until resolved |
 | `done` | the effect landed | gets the recorded result |
-| `failed` | the effect did not land | may run |
+| `resolved` | settled by `resolve_unknown()`: it had landed | gets the recorded result |
+| `failed` | the effect did not land | may run, reusing this receipt |
 
 A receipt left `pending` is the honest state after a crash: nobody knows
 whether the action landed. Running it again risks a duplicate, and reporting
@@ -104,17 +105,28 @@ part specific to your system.
 
 ### Which failures may be retried
 
-The question is whether the request could have reached the provider.
+The question is whether the request could have reached the provider. Who
+answers it depends on the way in:
 
-| Failure | Classification | Retry allowed |
-|---|---|---|
-| 4xx response | rejected, no effect | yes |
-| Connection never established | request not sent | yes |
-| 5xx response | ambiguous | no, resolve first |
-| Timeout after sending | ambiguous | no, resolve first |
-| Connection dropped after sending | ambiguous | no, resolve first |
+| Failure | Classification | Receipt | Retry allowed |
+|---|---|---|---|
+| Connection refused, 4xx, an error in your own code | did not happen | `failed` | yes, with the same intent key |
+| Timeout, connection reset or dropped, 5xx | may have happened | stays `pending` | no, settle first |
+| `OutcomeUnknown` raised by your tool | may have happened | stays `pending` | no, settle first |
+| Interrupted mid-call (Ctrl-C, exit), or the process dies | may have happened | stays `pending` | no, settle first |
 
-Anything ambiguous leaves the receipt `pending` for `resolve_unknown`.
+The same rules apply to a wrapped tool, a provider's `execute`, and the MCP
+proxy (where a call that was sent and got no answer counts as a timeout). A retry
+of a `failed` effect takes the same receipt over, so the provider sees the same
+idempotency key each time; of several retries at once, exactly one gets it.
+
+A `pending` receipt is settled by `resolve_unknown()` when a provider can look it
+up, or by a person after checking the real system:
+
+```bash
+agent-gateway receipts list --db data/runtime.db
+agent-gateway receipts settle --db data/runtime.db --key KEY --done    # or --failed
+```
 
 ## Recovery by action type
 
@@ -138,8 +150,8 @@ side-effect lifecycle durable and recoverable.
 
 CI runs them on every push, and at the full 1,000 jobs every night.
 
-## Replay honesty
+## Replays
 
-A replay is only comparable when the run recorded the model, prompt and tool
-versions. If a required version is unavailable, the result is `unprovable`, not
-a fabricated green result.
+A replay is stored as a new record linked to the original
+(`replay_of_trace_id`). The original record is never changed, so it stays as
+evidence even when a replay succeeds.

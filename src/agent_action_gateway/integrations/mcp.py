@@ -13,12 +13,12 @@ It is deliberately **not** a transport and **not** an MCP implementation.
 
 Transport is the adopter's MCP library's job. Pair this with it:
 
-    from agent_action_gateway.integrations.mcp import tools_for_policy, MCPToolBridge
+    from agent_action_gateway.integrations.mcp import MCPToolBridge, tool_definitions
     from mcp.server import Server
 
-    bridge = MCPToolBridge(policy, store)
-    server = Server("safety")
-    # register tools_for_policy(policy) with the SDK; dispatch via bridge
+    bridge = MCPToolBridge.from_policy(store, policy)
+    server = Server("agent-action-gateway")
+    # register tool_definitions(policy) with the SDK; dispatch via bridge.call_tool
 """
 
 from __future__ import annotations
@@ -77,10 +77,11 @@ def tool_definitions(policy: GatewayPolicy) -> list[dict[str, Any]]:
 
 
 class MCPToolBridge:
-    """Route MCP tool calls through the shared enforcement pipeline.
+    """Send MCP tool calls through the gateway's checks.
 
-    A single instance owns one `SafetyGateway`, so approval consumption,
-    receipt writing and tracing are the same objects the HTTP path uses.
+    A single instance owns one `SafetyGateway`, so approvals and records are
+    the same objects the HTTP path uses. It does not write once-only receipts
+    or apply limits; the MCP proxy does.
     """
 
     def __init__(self, gateway: SafetyGateway) -> None:

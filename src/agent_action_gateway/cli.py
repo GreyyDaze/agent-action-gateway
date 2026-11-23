@@ -42,7 +42,7 @@ def announce(scope: str) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-gateway",
-        description="Prevention-first safety and evaluation tools for AI agents.",
+        description="Let AI agents change real systems safely: control what they can do, and prove what they did.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -154,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     # stdlib-only MCP transport over the guarded bridge.
     mcp = sub.add_parser(
         "mcp-serve",
-        help="serve guarded tools over MCP stdio (newline-delimited JSON-RPC)",
+        help="serve a route file's routes as MCP tools over stdio (the gateway's checks only)",
     )
     mcp.add_argument("--config", required=True, help="YAML or JSON route table")
     mcp.add_argument("--db", default="data/runtime.db")
@@ -187,6 +187,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="environment variable holding the token (default: AGENT_GATEWAY_PROXY_TOKEN)",
     )
 
+    receipts = sub.add_parser(
+        "receipts",
+        help="list actions whose outcome is unknown (held), and settle them",
+    )
+    receipts.add_argument("action", choices=["list", "settle"])
+    receipts.add_argument("--db", default="data/runtime.db")
+    receipts.add_argument("--key", help="with settle: the intent key from `receipts list`")
+    outcome = receipts.add_mutually_exclusive_group()
+    outcome.add_argument(
+        "--done", action="store_true",
+        help="with settle: it happened; a repeat gets the recorded result",
+    )
+    outcome.add_argument(
+        "--failed", action="store_true",
+        help="with settle: it did not happen; a later attempt may run",
+    )
+    receipts.add_argument("--ref", help="with --done: the provider's reference, if any")
+
     pins = sub.add_parser(
         "mcp-pins",
         help="see and accept MCP tools the proxy is holding back (new or changed definitions)",
@@ -211,6 +229,14 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--db", default="data/runtime.db")
     dashboard.add_argument("--host", default="127.0.0.1")
     dashboard.add_argument("--port", type=int, default=8000)
+    dashboard.add_argument(
+        "--allow-origin",
+        action="append",
+        default=[],
+        help="the address you open it at, when it differs from --host "
+        "(for example http://127.0.0.1:8765 for a container); approvals from "
+        "other origins are refused",
+    )
 
     # Forward proxy: applies host allow-list + credential injection for agents
     # that call vendors directly. HTTPS CONNECT is refused (see module docs).
@@ -403,6 +429,39 @@ def run_mcp_proxy(args: argparse.Namespace) -> int:
     return EXIT_PASS
 
 
+def run_receipts(args: argparse.Namespace) -> int:
+    """List held actions (outcome unknown), or settle one after checking the real system."""
+    from agent_action_gateway.guards.redaction import redact
+    from agent_action_gateway.storage.traces import TraceStore
+
+    store = TraceStore(args.db)
+    held = {r.intent_key: r for r in store.unknown_receipts()}
+    if args.action == "list":
+        if not held:
+            print("No held actions: every claimed action has a known outcome.")
+            return EXIT_PASS
+        print(f"{len(held)} held action(s). Check the real system, then settle each one:")
+        for receipt in held.values():
+            arguments = json.dumps(redact(receipt.arguments), sort_keys=True, default=str)
+            print(f"  {receipt.intent_key}  {receipt.action}  {arguments}")
+        print("  agent-gateway receipts settle --key KEY --done   (it happened)")
+        print("  agent-gateway receipts settle --key KEY --failed (it did not happen)")
+        return EXIT_PASS
+    if not args.key or not (args.done or args.failed):
+        print("receipts settle needs --key and one of --done or --failed", file=sys.stderr)
+        return EXIT_USAGE
+    if args.key not in held:
+        print(f"receipts: {args.key} is not a held action (see `receipts list`)", file=sys.stderr)
+        return EXIT_USAGE
+    if args.done:
+        store.mark_done(args.key, args.ref)
+        print(f"Settled {args.key} as done: a repeat gets the recorded result.")
+    else:
+        store.mark_failed(args.key)
+        print(f"Settled {args.key} as failed: a later attempt may run.")
+    return EXIT_PASS
+
+
 def run_mcp_connect(args: argparse.Namespace) -> int:
     """Forward MCP over stdio to a proxy served with --http."""
     from agent_action_gateway.integrations.mcp_http import Connector
@@ -523,9 +582,9 @@ def run_gateway(args: argparse.Namespace) -> int:
         TraceStore(args.db), policy, args.host, args.port, unix_socket=args.unix_socket
     )
     if args.unix_socket:
-        print(f"Safety gateway on unix://{args.unix_socket}")
+        print(f"Agent Action Gateway on unix://{args.unix_socket}")
     else:
-        print(f"Safety gateway on http://{args.host}:{server.server_address[1]}/")
+        print(f"Agent Action Gateway on http://{args.host}:{server.server_address[1]}/")
     # Flushed explicitly: under a service manager or a container, stdout is a
     # pipe and therefore block-buffered, so an unflushed banner stays in the
     # buffer. The operator would see no output at all and no access token.
@@ -588,7 +647,7 @@ def gateway_issue_key(args: argparse.Namespace) -> int:
     if _master_key_or_fail(policy) is None:
         return EXIT_USAGE
 
-    # Verify the request is authenticated with master key
+    # Every route named for the key must exist in the route file.
     routes = [r.strip() for r in args.routes.split(",") if r.strip()]
     for route in routes:
         if route not in policy.routes:
@@ -931,6 +990,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_mcp_proxy(args)
     if args.command == "mcp-connect":
         return run_mcp_connect(args)
+    if args.command == "receipts":
+        return run_receipts(args)
     if args.command == "mcp-pins":
         return run_mcp_pins(args)
     if args.command == "mcp-login":
@@ -940,7 +1001,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "dashboard":
         from agent_action_gateway.observability.dashboard import serve
 
-        serve(args.db, args.host, args.port)
+        serve(args.db, args.host, args.port, allow_origins=tuple(args.allow_origin))
         return 0
     if args.command == "gateway":
         announce("your route config — the gateway holds the upstream credentials.")

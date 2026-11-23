@@ -12,9 +12,9 @@ What it can and cannot do:
   a real tool server directly, those calls skip the proxy. Removing the direct
   connections is the operator's job; no code here can do it for them.
 * Tools are discovered from `tools/list`. Nobody writes a route by hand.
-* A tool is `read` only when an operator rule says so, or when the server says
-  `readOnlyHint` and the operator trusts that server's hints. Every other tool is
-  destructive and needs an approval.
+* A tool is `read` only when an operator rule says so (fixed, or decided on each
+  call from one argument), or when the server says `readOnlyHint` and the
+  operator trusts that server's hints. Every other call needs an approval.
 * A server's tool definitions are pinned the first time they are seen. A tool
   whose definition later changes, or a new tool on a server that was already
   pinned, is hidden and refused until a person accepts it. A hint is a claim by
@@ -57,6 +57,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, TextIO
 
+from agent_action_gateway.audit.receipts import OutcomeUnknown
 from agent_action_gateway.guards.redaction import redact
 from agent_action_gateway.guards.sql import is_read_only_sql
 from agent_action_gateway.policy.fuses import FuseLimits
@@ -98,7 +99,7 @@ class DownstreamNotRun(DownstreamError):
     """The call is known not to have run (not delivered, or rejected)."""
 
 
-class DownstreamUnknown(DownstreamError):
+class DownstreamUnknown(DownstreamError, OutcomeUnknown):
     """The call was sent and no answer came. It may or may not have run."""
 
 

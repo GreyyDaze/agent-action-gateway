@@ -19,7 +19,7 @@ _ALLOWED_CHECK_TYPES = frozenset({"exact", "field-equality", "regex", "rubric"})
 
 @dataclass(frozen=True)
 class GoldenCasePromotion:
-    """A evaluation golden case promoted from confirmed observability evidence."""
+    """An evaluation golden case promoted from confirmed observability evidence."""
 
     case: GoldenCase
     failure_group_id: str
@@ -155,7 +155,7 @@ def promote_failure_group(
     catastrophic: bool = False,
     rubric: Iterable[str] = (),
 ) -> GoldenCasePromotion:
-    """Promote a confirmed Failure Wall group into a evaluation golden case.
+    """Promote a confirmed Failure Wall group into an evaluation golden case.
 
     The expected result is supplied by the human promoting the case. The
     failure trace is evidence, not the expected answer.

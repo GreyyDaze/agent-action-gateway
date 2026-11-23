@@ -5,13 +5,19 @@
 #
 #   * User=agent-action-gateway  -> the agent's own user cannot read the gateway's
 #     environment through /proc/<pid>/environ, and cannot ptrace it.
-#   * LoadCredential=       -> the secret arrives as a read-only file descriptor
-#     in /run/credentials, mode 0400, owned by the gateway user. It is never in
-#     the environment, so it cannot appear in `ps`, a crash dump or a log line.
+#   * LoadCredential=       -> the secret arrives as a read-only file in
+#     /run/credentials/agent-action-gateway.service/. It is never in the
+#     environment, so it cannot appear in `ps`, a crash dump or a log line.
 #
 # Install:
+#   sudo pip install 'agent-action-gateway[yaml]'   # the YAML route file needs PyYAML
 #   sudo useradd --system --no-create-home --shell /usr/sbin/nologin agent-action-gateway
-#   sudo install -m 0755 <(curl -fsSL $BASE/deploy/routes.example.yaml) /etc/agent-action-gateway/routes.yaml
+#   sudo install -m 0644 <(curl -fsSL $BASE/deploy/routes.example.yaml) /etc/agent-action-gateway/routes.yaml
+#   then set each route's secret_env to the credential path below
+#
+# Not tested on a Linux host yet. The gateway refuses a secret file that is
+# group- or world-readable or not owned by its own user, so check that the
+# credential file systemd provides passes that check on your system.
 #   sudo systemctl edit agent-action-gateway     # set Environment=AGENT_GATEWAY_MASTER_KEY=...
 #   sudo systemctl enable --now agent-action-gateway
 #
@@ -38,8 +44,8 @@ ExecStart=/usr/local/bin/agent-gateway gateway \
 EnvironmentFile=-/etc/agent-action-gateway/gateway.env
 
 # Upstream API credentials, one per route that needs one. Each is mounted
-# read-only at /run/credentials/<name>, mode 0400, owned by agent-action-gateway.
-# A route reads one with  secret_env: "file:/run/credentials/github_token"
+# read-only in /run/credentials/agent-action-gateway.service/<name>. A route reads one with
+#   secret_env: "file:/run/credentials/agent-action-gateway.service/github_token"
 LoadCredential=github_token:/etc/agent-action-gateway/credentials/github_token
 
 StateDirectory=agent-action-gateway

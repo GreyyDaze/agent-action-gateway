@@ -133,18 +133,6 @@ class FailureWallStore(SqliteStore):
             ).fetchall()
         return self._to_group(group, records)
 
-    def list_groups(self) -> list[FailureGroup]:
-        with self.connection() as connection:
-            groups = connection.execute(
-                "SELECT * FROM failure_groups ORDER BY group_id"
-            ).fetchall()
-        result: list[FailureGroup] = []
-        for row in groups:
-            group = self.get_group(row["group_id"])
-            if group is not None:
-                result.append(group)
-        return result
-
     def _record_decision(
         self,
         connection: sqlite3.Connection,

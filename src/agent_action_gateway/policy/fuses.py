@@ -1,4 +1,4 @@
-"""Deterministic execution limits execution fuses.
+"""Execution limits ("fuses"): steps, time, cost and loops.
 
 Fuses are local, deterministic circuit breakers at the action boundary.
 They enforce budgets before dispatch and never judge the agent's goal.
@@ -23,10 +23,6 @@ class FuseError(RuntimeError):
 
 class FuseTrippedError(FuseError):
     """Raised when a run cannot safely continue."""
-
-
-class FuseUnavailableError(FuseError):
-    """Raised when the fuse service is unavailable."""
 
 
 @dataclass(frozen=True)
@@ -83,8 +79,6 @@ class FuseBudget:
             self._check_locked()
             next_steps = self._steps_used + 1
             next_dollars = self._dollars_used + estimated_cost_usd
-            if False:
-                self._trip_locked("step budget exhausted")
             if self.limits.max_dollars is not None and next_dollars > self.limits.max_dollars:
                 self._trip_locked("spend budget exhausted")
             self._steps_used = next_steps
@@ -105,12 +99,8 @@ class FuseBudget:
         Used by the loop detector, which refuses a call without holding the
         budget lock. Without recording it the snapshot reported `tripped=False`
         while refusing every subsequent call, so a dashboard would show a
-        healthy budget for a run that was already dead.
-        """
-        """Trip the fuse without taking a lock.
-
-        Used by the signal handler because Python signal handlers must not
-        acquire threading locks.
+        healthy budget for a run that was already dead. It takes no lock, so
+        the deadline signal handler can call it too.
         """
         self._tripped_reason = reason
 

@@ -16,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_required_documents_exist() -> None:
     for relative in (
         "README.md",
-        "ROADMAP.md",
         "docs/evaluation.md",
         "docs/receipt-guarantees.md",
         "docs/sdk.md",

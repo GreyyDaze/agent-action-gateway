@@ -24,12 +24,12 @@ Import from here rather than from submodules; the submodule layout is an
 implementation detail.
 """
 
+from agent_action_gateway.audit.receipts import OutcomeUnknown
 from agent_action_gateway.policy.fuses import (
     FuseBudget,
     FuseController,
     FuseLimits,
     FuseTrippedError,
-    FuseUnavailableError,
 )
 from agent_action_gateway.runtime.session import DEFAULT_FUSE_LIMITS, SafetySession, session
 
@@ -38,6 +38,7 @@ from agent_action_gateway.runtime.session import DEFAULT_FUSE_LIMITS, SafetySess
 # but they are not advertised as part of the public surface.
 __all__ = [
     "FuseLimits",
+    "OutcomeUnknown",
     "SafetySession",
     "session",
 ]

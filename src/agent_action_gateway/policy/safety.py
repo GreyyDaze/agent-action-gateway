@@ -1,4 +1,4 @@
-"""Shared safety state carried through a run."""
+"""`check_action`: `authorize` that raises `SafetyBlockedError` on any refusal."""
 from datetime import datetime
 from typing import Any
 

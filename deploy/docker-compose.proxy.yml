@@ -1,0 +1,154 @@
+# Reference deployment: the MCP proxy as its own service, with the gateway
+# behind it and the dashboard beside it.
+#
+# The agent reaches the proxy and nothing else. The proxy runs the checks
+# (risk, approval, limits, once-only) and keeps the approvals in its database.
+# The gateway holds the real key. The agent can read none of their files, and
+# it has no network route to the gateway, to the real MCP servers or to the
+# internet.
+#
+#   agent_net    internal. The agent and the proxy. Nothing else.
+#   tools_net    internal. The proxy and the systems its tools change: the
+#                gateway here, and your own MCP servers.
+#   upstream_net the gateway's only way out to the real API.
+#   review_net   the dashboard, published to this machine only (127.0.0.1).
+#
+# Like docker-compose.yml, this file has no `agent` service: your agent is your
+# code. Join it to agent_net only.
+#
+# Bring it up (from this folder):
+#     mkdir -p secrets && printf 'replace_me' > secrets/github_token && chmod 600 secrets/github_token
+#     export AGENT_GATEWAY_MASTER_KEY="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
+#     export AGENT_GATEWAY_PROXY_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
+#     export AGENT_GATEWAY_DASHBOARD_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
+#     export GATEWAY_VIRTUAL_KEY=unset   # replaced in the next two steps
+#     docker compose -f docker-compose.proxy.yml up -d gateway
+#     export GATEWAY_VIRTUAL_KEY="$(docker compose -f docker-compose.proxy.yml exec -T gateway \
+#         agent-gateway gateway --config /etc/agent-action-gateway/routes.json \
+#         --db /var/lib/agent-action-gateway/gateway.db issue-key --name proxy --routes /lookup \
+#         | sed -n 's/^Virtual key issued: //p')"
+#     docker compose -f docker-compose.proxy.yml up -d proxy dashboard
+#
+# Then check it from the agent's side, rather than assuming it:
+#     make verify-proxy-boundary
+#
+# Your agent: URL http://proxy:8090/mcp, header Authorization: Bearer <AGENT_GATEWAY_PROXY_TOKEN>.
+# Approvals: open http://127.0.0.1:8765/?token=<AGENT_GATEWAY_DASHBOARD_TOKEN>.
+
+x-image: &image
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile.gateway
+  # One image runs every service: the command picks gateway, proxy or dashboard.
+  image: agent-action-gateway-gateway:local
+  restart: unless-stopped
+  user: "1001:1001"
+
+services:
+  proxy:
+    <<: *image
+    environment:
+      AGENT_GATEWAY_PROXY_TOKEN: ${AGENT_GATEWAY_PROXY_TOKEN:?set AGENT_GATEWAY_PROXY_TOKEN before starting}
+      GATEWAY_VIRTUAL_KEY: ${GATEWAY_VIRTUAL_KEY:?issue a gateway key first; see the top of this file}
+    volumes:
+      - ./servers.proxy.example.json:/etc/agent-action-gateway/servers.json:ro
+      # Approvals and records. Shared with the dashboard, never with the agent.
+      - proxy-state:/var/lib/agent-action-gateway
+    command:
+      - mcp-proxy
+      - --config
+      - /etc/agent-action-gateway/servers.json
+      - --db
+      - /var/lib/agent-action-gateway/proxy.db
+      - --http
+      # 0.0.0.0 so the agent's container can reach it on agent_net. No `ports:`,
+      # so it is not published on this machine's network.
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8090"
+    depends_on: [gateway]
+    networks: [agent_net, tools_net]
+
+  gateway:
+    <<: *image
+    environment:
+      AGENT_GATEWAY_MASTER_KEY: ${AGENT_GATEWAY_MASTER_KEY:?set AGENT_GATEWAY_MASTER_KEY before starting}
+      AGENT_GATEWAY: "1"
+    volumes:
+      # A `credentials` block: the gateway holds the key and does not ask for
+      # its own approval, because the proxy already did.
+      - ./routes.credentials.example.json:/etc/agent-action-gateway/routes.json:ro
+      - ./secrets:/run/secrets:ro
+      - gateway-state:/var/lib/agent-action-gateway
+    command:
+      - gateway
+      - --config
+      - /etc/agent-action-gateway/routes.json
+      - --db
+      - /var/lib/agent-action-gateway/gateway.db
+      - --host
+      - "0.0.0.0"
+    # tools_net, not agent_net: the agent cannot skip the proxy and call the
+    # gateway itself.
+    networks: [tools_net, upstream_net]
+
+  dashboard:
+    <<: *image
+    environment:
+      # Required: a dashboard bound beyond loopback refuses to start without it.
+      AGENT_GATEWAY_DASHBOARD_TOKEN: ${AGENT_GATEWAY_DASHBOARD_TOKEN:?set AGENT_GATEWAY_DASHBOARD_TOKEN before starting}
+    volumes:
+      - proxy-state:/var/lib/agent-action-gateway
+    command:
+      - dashboard
+      - --db
+      - /var/lib/agent-action-gateway/proxy.db
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8765"
+      # The address a person opens. Approvals from any other origin are refused.
+      - --allow-origin
+      - http://127.0.0.1:8765
+      - --allow-origin
+      - http://localhost:8765
+    # This machine only. To reach it from elsewhere, put a TLS reverse proxy
+    # with its own sign-in in front; do not publish it on 0.0.0.0.
+    ports: ["127.0.0.1:8765:8765"]
+    networks: [review_net]
+
+  # Not a service you run: `make verify-proxy-boundary` starts it on agent_net,
+  # where your agent sits, to try to get around the proxy. It is not an agent.
+  probe:
+    profiles: ["probe"]
+    image: python:3.12-slim
+    restart: "no"
+    volumes:
+      - ./verify_boundary.py:/probe/verify_boundary.py:ro
+    environment:
+      AGENT_GATEWAY_PROXY_TOKEN: ${AGENT_GATEWAY_PROXY_TOKEN:-}
+    command:
+      - python
+      - /probe/verify_boundary.py
+      - --target
+      - proxy
+      - --proxy
+      - http://proxy:8090/mcp
+      - --gateway
+      - http://gateway:8080
+    networks: [agent_net]
+
+volumes:
+  proxy-state:
+  gateway-state:
+
+networks:
+  agent_net:
+    internal: true
+  tools_net:
+    internal: true
+  upstream_net:
+    internal: false
+  review_net:
+    internal: false

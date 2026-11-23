@@ -89,10 +89,42 @@ def drop_table(table: str, intent_key: str = "") -> dict:
     return db_admin.drop(table, idempotency_key=intent_key)
 ```
 
-| Your function | Second call | Crash in the middle of the call |
+| Your function | Second call | Process dies in the middle of the call |
 |---|---|---|
 | accepts `intent_key` | blocked | the provider can say whether it happened |
 | does not | blocked | outcome marked unknown, left for a person |
+
+If your function **raises** an error, what happens next depends on whether the
+action may have landed:
+
+| Error | Meaning | Next attempt |
+|---|---|---|
+| a refused connection, a 4xx, an error in your own code | it did not happen | may run, with the same `intent_key` |
+| a timeout, a reset or broken connection, a 5xx, Ctrl-C mid-call, or `OutcomeUnknown` | it may have happened | refused until settled |
+
+Raise `OutcomeUnknown` yourself when you know the request went out but not what
+became of it:
+
+```python
+from agent_action_gateway import OutcomeUnknown
+
+def deploy(ref: str, intent_key: str = "") -> dict:
+    try:
+        return api.deploy(ref, idempotency_key=intent_key)
+    except api.NoAnswer as exc:
+        raise OutcomeUnknown("deploy was sent, no answer") from exc
+```
+
+Settle a held action after checking the real system:
+
+```bash
+agent-gateway receipts list --db data/runtime.db
+agent-gateway receipts settle --db data/runtime.db --key KEY --done     # it happened
+agent-gateway receipts settle --db data/runtime.db --key KEY --failed   # it did not
+```
+
+`--done` makes a repeat return the recorded result (add `--ref` to record the
+provider's reference); `--failed` lets a later attempt run.
 
 Adjust what counts as "the same effect":
 
@@ -163,13 +195,19 @@ Retrying is the easiest way to turn a limit into a suggestion, so `retrying()`
 is asymmetric on purpose:
 
 ```python
-restart = ctx.retrying(ctx.tool(restart_service, action="service.restart"), attempts=2)
+status = ctx.retrying(ctx.tool(get_status, action="service.status", risk="read"), attempts=3)
 ```
 
 | Outcome | Behaviour |
 |---|---|
-| Allowed, but a transient failure (`transient: true`, or a 5xx in the result) | retried up to `attempts` times |
+| Allowed, but a transient failure (`transient: true`, or a 5xx in the result) | retried up to `attempts` times (for a `ctx.tool` tool, at most the loop limit, 3 by default); the run goes on afterwards |
 | **Blocked** | **never retried** |
+| An error raised by your function | not retried; it reaches your code |
+
+Retrying is for reads. A write or destructive call is not run again: its
+approval was used by the first try, so a retry is refused. To try a write
+again, ask for a new approval; if the first try landed, the call returns its
+result instead of acting twice.
 
 ## What every call goes through
 
@@ -188,7 +226,7 @@ flowchart LR
 | Limit reached, or the same call repeated with no progress | stopped before the action is sent |
 | Different environment | blocked |
 | Destructive action without a valid approval (missing, expired, used, or for other arguments) | blocked |
-| Safety store unavailable for a write | blocked; reads continue |
+| Limits marked unavailable (you call `ctx.fuse.mark_unavailable()`, for example when your shared limit service is down) | writes blocked; up to 10 reads continue; run status `degraded` |
 | Effect already applied | the recorded result is returned; your function is not called again |
 | An earlier attempt's outcome is unknown | blocked until it is resolved |
 | Suspiciously empty result, with a cross-check configured | checked against a second source, then flagged |
@@ -198,13 +236,14 @@ flowchart LR
 
 ### A guarded call
 
-A guarded tool returns a dict rather than raising, so the agent can read what
-happened and adjust:
+A refusal comes back as a dict rather than an exception, so the agent can read
+what happened and adjust. An error raised by your own function is raised to the
+caller as it is (see "Doing an effect once" for what that means for a retry).
 
 | Key | Meaning |
 |---|---|
 | `status` | `allowed` or `blocked` |
-| `decision` | `ALLOW`, `APPROVAL`, `FUSE`, `ENVIRONMENT`, `DISPATCH`, `DEDUPLICATED`, or a result-check name |
+| `decision` | `ALLOW`, `APPROVAL`, `FUSE`, `ENVIRONMENT`, `DEDUPLICATED`, or a result-check name (`REPORT_PARTIAL`, `ASK`, `BLOCK`) |
 | `result` | your function's return value, or `None` when refused |
 | `error` | why it was refused |
 | `missing` | required fields the result did not contain |
@@ -300,10 +339,13 @@ Cursor use works as it is:
 
 - **Tools are discovered.** You do not write routes. At start-up the proxy asks
   each server for its tools and prints each one with its risk class on stderr.
-- **Local and remote servers.** `command` starts a local server over stdio.
+- **Local and remote servers.** `command` starts a local server over stdio
+  (with optional `args`, `env` and `cwd`).
   `url` connects to a remote server over Streamable HTTP, with the `headers` you
   give. `${NAME}` in any value is read from the environment, so a token never
-  sits in the file. A server that cannot start stops the proxy.
+  sits in the file. A server that cannot start stops the proxy. `timeout`
+  (seconds, default 30) is how long a call may take before its result counts as
+  unknown.
 - **OAuth.** For a remote server that wants a token from an authorization server,
   use the client-credentials grant instead of an `Authorization` header:
   `"oauth": { "token_url": "https://auth.example.com/token", "client_id": "...",
@@ -320,7 +362,8 @@ Cursor use works as it is:
   agent-gateway mcp-login --config servers.json --server tickets
   ```
 
-  This opens your browser, waits for the redirect back on `127.0.0.1`, and saves the
+  This opens your browser (or, with `--no-browser`, prints the link), waits for the
+  redirect back on `127.0.0.1`, and saves the
   tokens in `token_file` (mode 0600; a file others can read is refused). The proxy
   then uses them and refreshes them when they expire, or once if the server rejects
   them. If there is no sign-in, or it cannot be refreshed, the proxy says to run
@@ -388,6 +431,7 @@ Cursor use works as it is:
   ```bash
   agent-gateway mcp-pins list --db gateway.db
   agent-gateway mcp-pins accept --db gateway.db --tool db__run_sql   # or no --tool for all
+  # --by NAME records who accepted it
   ```
 
   Pins are kept in the database, so a change made while the proxy was stopped is
@@ -473,7 +517,8 @@ Cursor use works as it is:
       "env": { "AGENT_GATEWAY_PROXY_TOKEN": "..." } } } }
   ```
 
-  `mcp-connect` refuses plain `http` to another machine, never follows a
+  The token is read from `AGENT_GATEWAY_PROXY_TOKEN` (another variable with
+  `--token-env NAME`). `mcp-connect` refuses plain `http` to another machine, never follows a
   redirect, and opens a new session by itself if the proxy restarted. Not built:
   OAuth sign-in for agents (platforms that only connect with OAuth cannot use the
   proxy yet).
@@ -540,12 +585,12 @@ agent-gateway dashboard --db data/runtime.db
 
 | Protection | Detail |
 |---|---|
-| Access token | printed at start-up; needed on every route as `?token=` or `Authorization: Bearer` |
-| Local by default | binds to `127.0.0.1`; any other address needs an explicit token |
-| CSRF and origin checks | on every approval form; a POST from another site is refused |
+| Access token | from `AGENT_GATEWAY_DASHBOARD_TOKEN`, or a new one printed at start-up; needed on every route as `?token=` or `Authorization: Bearer` |
+| Local by default | binds to `127.0.0.1`; any other address needs `AGENT_GATEWAY_DASHBOARD_TOKEN` |
+| CSRF and origin checks | on every approval form; a POST from another site is refused. When you open it at a different address than it binds to (a container bound to `0.0.0.0`, opened as `http://127.0.0.1:8765`), name that address with `--allow-origin` |
 | No scripts | the Content-Security-Policy allows none |
 
-Restarting the dashboard invalidates tokens and open forms on purpose.
+Restarting the dashboard invalidates open forms, and a printed token, on purpose.
 
 ## Limits of the SDK
 

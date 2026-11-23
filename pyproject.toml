@@ -163,7 +163,6 @@ also_copy = [
     "docs/",
     "deploy/",
     "README.md",
-    "ROADMAP.md",
     "LICENSE",
     "Makefile",
     "pyproject.toml",

@@ -92,7 +92,7 @@ _TRACE_COLUMNS = (
 
 
 class TraceStore(SqliteStore):
-    """Durable SQLite store for the self-hosted single-node production path."""
+    """Durable store for traces, receipts, budgets and virtual keys (SQLite or PostgreSQL)."""
 
     store_name = "traces"
 
@@ -399,6 +399,22 @@ class TraceStore(SqliteStore):
                 "WHERE intent_key=? AND state IN ('unknown', 'pending')",
                 (intent_key,),
             )
+
+    def reclaim_failed(self, intent_key: str) -> bool:
+        """Take over a failed claim for a new attempt. True for the one winner.
+
+        The earlier attempt is known not to have landed, so the effect may run
+        again. The row keeps its intent key, so the provider sees the same
+        idempotency key on every attempt. The state check makes it atomic: of
+        several callers retrying at once, exactly one gets the claim.
+        """
+        with self.connection() as connection:
+            cursor = connection.execute(
+                "UPDATE receipts SET state='pending', updated_at=CURRENT_TIMESTAMP "
+                "WHERE intent_key=? AND state='failed'",
+                (intent_key,),
+            )
+            return cursor.rowcount > 0
 
     def mark_outcome_unknown(self, intent_key: str) -> None:
         """Put a failed claim back to unfinished when the outcome is not known.

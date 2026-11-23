@@ -68,9 +68,6 @@ class Route:
     #: Name of the environment variable holding the upstream credential.
     secret_env: str = ""
     environment: str = "prod"
-    #: Extracts the receipt target from the request payload, when the action is
-    #: a real side effect that needs replay.
-    target_field: str | None = None
     #: Destination host this route may reach. Empty means derive it from
     #: `upstream`, so existing route tables keep working unchanged.
     host: str = ""
@@ -133,10 +130,10 @@ class GatewayPolicy:
     #: Destinations the workload may reach. Empty + a vault means "derive from routes".
     allowed_hosts: frozenset[str] = field(default_factory=frozenset)
     egress: EgressPolicy | None = None
-    #: Whether the gateway runs the policy pipeline itself.
+    #: Whether the gateway runs its own risk and approval checks.
     #:
     #: ``True`` is the legacy mode kept for callers that route actions through
-    #: the gateway as their only door — it still checks approval/risk/fuse so
+    #: the gateway as their only door — it still checks risk and approval so
     #: those deployments do not silently become unguarded. Credential-custody
     #: mode sets this ``False``: enforcement belongs to the wrapped tool, and
     #: the gateway only injects credentials. Do not switch a deployment off
@@ -150,13 +147,6 @@ class GatewayPolicy:
 
     def resolve(self, path: str) -> Route | None:
         return self.routes.get(path)
-
-    def resolve_host(self, host: str) -> Route | None:
-        """First route targeting ``host``. Refusal is deny-by-default."""
-        for route in self.routes.values():
-            if route.destination_host() == host:
-                return route
-        return None
 
     def configure_credentials(
         self,
@@ -235,7 +225,12 @@ class GatewayResult:
 
 
 class SafetyGateway:
-    """Applies the shared pipeline to HTTP traffic before it leaves the process."""
+    """Checks HTTP traffic before it leaves: routes, keys, environment, approval.
+
+    It does not call `engine.enforce`: there are no limits or once-only
+    receipts here (it passes the caller's `Idempotency-Key` upstream instead).
+    For those, put the MCP proxy in front of it.
+    """
 
     def __init__(
         self,
@@ -332,9 +327,9 @@ class SafetyGateway:
 
         self._step += 1
         key = idempotency_key or f"{self.run_id}:{self._step}"
-        # The idempotency key is bound into the payload the receipt hashes, so a
-        # retry with a different key is a different action and cannot reuse an
-        # approval.
+        # The idempotency key is part of the arguments the approval is bound to,
+        # so a retry with a different key is a different action and cannot reuse
+        # an approval.
         arguments = {**payload, "_idempotency_key": key}
 
         decision: Decision | None = None

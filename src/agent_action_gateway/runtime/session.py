@@ -12,13 +12,14 @@ The contract is deliberately small:
         result = ctx.run(agent, task, tools={"drop_table": drop})
 
 Everything is on by default. A caller who passes nothing still gets budgets,
-approval on destructive actions, receipts and cross-environment blocking. Opting
+approval on every action except reads, receipts and cross-environment blocking. Opting
 out has to be explicit, because a silent default is the failure this project
 exists to prevent.
 """
 
 from __future__ import annotations
 
+import contextvars
 import functools
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -26,6 +27,7 @@ from datetime import UTC
 from typing import Any
 from uuid import uuid4
 
+from agent_action_gateway.audit.receipts import outcome_is_unknown
 from agent_action_gateway.engine import enforcement
 from agent_action_gateway.engine.enforcement import Decision, EnforcementContext
 from agent_action_gateway.integrations.adapters.base import ExternalActionProvider
@@ -111,11 +113,11 @@ def _is_retryable(result: dict) -> bool:
     return isinstance(status, int) and 500 <= status < 600
 
 
-def _returns_ok(result: dict) -> bool:
-    """Whether a retry produced a usable result."""
-    payload = _payload(result)
-    status = payload.get("status_code") or payload.get("status")
-    return not (isinstance(status, int) and status >= 400)
+#: True while `retrying()` repeats a call. Those repeats are capped at the loop
+#: limit already, so the loop check must not also read them as an agent stuck
+#: in a loop and stop the whole run.
+_RETRYING: contextvars.ContextVar[bool] = contextvars.ContextVar("retrying", default=False)
+
 
 class SafetySession:
     """Holds policy state for one run and mints guarded tools from it."""
@@ -163,7 +165,8 @@ class SafetySession:
         """Create a pending approval bound to this exact payload."""
         from datetime import datetime, timedelta
 
-        self.registry.register(action, "destructive")
+        # The tool's declared risk is kept. An action with none is already
+        # treated as destructive.
         approval = self.approvals.request(
             action,
             arguments,
@@ -249,18 +252,32 @@ class SafetySession:
         the guard being probed rather than obeyed. So a blocked result is
         returned immediately and counted, however many attempts remain.
 
-        Transient-looking errors -- a timeout, a 5xx upstream -- do get retried,
-        because those are the case where retrying is correct. The test is the
-        decision recorded on the result, not the shape of the error.
+        A result that reports a transient failure (`transient: true`, or a
+        5xx status in the payload) is retried. For a tool from `ctx.tool` that
+        is at most `loop_repeat_limit` attempts in all (3 by default), whatever
+        `attempts` says. An exception is not caught here:
+        it goes to the caller. The test is the decision recorded on the result,
+        not the shape of the error.
+
+        Retrying is for reads. A write or destructive call is not run again:
+        its approval was used by the first try, so the retry is refused.
         """
         if attempts < 1:
             raise ValueError("attempts must be at least 1")
+        # A checked tool is capped at the loop limit: a retry loop cannot grind
+        # on a failing call however many attempts it asks for.
+        if getattr(fn, "__safety_action__", None) is not None:
+            attempts = min(attempts, self.fuse.limits.loop_repeat_limit)
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
             last: dict[str, Any] = {}
             for attempt in range(1, attempts + 1):
-                result = fn(*args, **kwargs)
+                token = _RETRYING.set(attempt > 1)
+                try:
+                    result = fn(*args, **kwargs)
+                finally:
+                    _RETRYING.reset(token)
                 if not isinstance(result, dict):
                     return result
                 last = result
@@ -362,6 +379,7 @@ class SafetySession:
                     # identical calls and the loop limit stops the approved one.
                     # Only a valid approval counts: repeating a used or wrong
                     # id is still a loop.
+                    new_information=_RETRYING.get(),
                     state_changed=(
                         approval_id is not None
                         and needs_approval
@@ -404,11 +422,12 @@ class SafetySession:
                 }
             try:
                 payload = call(decision.intent_key)
-            except BaseException:
-                # The effect is known not to have landed, so the claim is
-                # released and a later attempt is allowed to try again. Left
-                # pending it would block every future attempt as in-flight.
-                if decision.intent_key is not None:
+            except BaseException as exc:
+                # An error that proves the action did not happen releases the
+                # claim, so a later attempt may run. One that leaves it unknown
+                # (a timeout, a 5xx, OutcomeUnknown) keeps the claim unfinished:
+                # the same action is refused until someone settles it.
+                if decision.intent_key is not None and not outcome_is_unknown(exc):
                     self.store.mark_failed(decision.intent_key)
                 raise
             if decision.intent_key is not None:

@@ -138,7 +138,7 @@ def run_calibrate(args: argparse.Namespace) -> int:
         result = run_calibration(seed_golden_cases(), judge)
     except JudgeUnavailableError as exc:
         # Unavailability is not a calibration failure. Reporting it as exit 1
-        # would contradict the gate contract documented in docs/sdk.md.
+        # would contradict the exit codes documented in docs/evaluation.md.
         print(f"UNCERTAIN | calibration unavailable: {exc}")
         return EXIT_UNCERTAIN
     status = "ACCEPTED" if result.accepted else "REJECTED"
