@@ -1,22 +1,15 @@
-"""MCP policy layer: the same enforcement, reached through the tool protocol.
+"""MCP tools for a route table, served through the gateway's checks.
 
-Production agents reach tools through MCP rather than by importing a library.
-That means an agent built on LangGraph or the OpenAI Agents SDK cannot be
-protected by wrapping its Python functions -- the function never exists in our
-process. If we offer no MCP surface, we are simply not in the path.
+This is the route-based MCP surface: it turns a `GatewayPolicy` into MCP tool
+definitions and sends every `call_tool` to `SafetyGateway.handle`, the same
+method the HTTP gateway uses.
 
-This module is that surface. It is deliberately **not** a transport and **not**
-an MCP implementation:
+That means it checks what the gateway checks (environment, and approval in the
+default mode) and nothing more. It does **not** apply limits, once-only receipts
+or stop-and-ask. To put the full checks (`engine.enforce`) between an agent and
+its MCP servers, use the MCP proxy in `mcp_proxy.py`.
 
-- It converts a `GatewayPolicy` into MCP-shaped tool definitions, so an adopter
-  can register them with whatever MCP library they already use.
-- It routes every `call_tool` through `SafetyGateway.handle`, the same method
-  the HTTP gateway uses.
-
-That last point is the whole design. An MCP tool and an HTTP request produce
-identical trace rows, identical receipts, identical refusals. There is no second
-policy path, so there is nothing to keep in sync and nothing that can be
-bypassed by arriving over MCP instead of HTTP.
+It is deliberately **not** a transport and **not** an MCP implementation.
 
 Transport is the adopter's MCP library's job. Pair this with it:
 

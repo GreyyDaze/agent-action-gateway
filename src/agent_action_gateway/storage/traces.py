@@ -400,6 +400,20 @@ class TraceStore(SqliteStore):
                 (intent_key,),
             )
 
+    def mark_outcome_unknown(self, intent_key: str) -> None:
+        """Put a failed claim back to unfinished when the outcome is not known.
+
+        A timeout or a crash after the request was sent does not tell us the
+        action did not happen. Leaving the claim unfinished blocks a blind
+        retry and keeps it in the list a person has to settle.
+        """
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE receipts SET state='pending', updated_at=CURRENT_TIMESTAMP "
+                "WHERE intent_key=? AND state='failed'",
+                (intent_key,),
+            )
+
     def mark_resolved(self, intent_key: str, provider_ref: str | None) -> None:
         with self.connection() as connection:
             connection.execute(

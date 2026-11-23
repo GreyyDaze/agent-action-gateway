@@ -142,6 +142,21 @@ def build_parser() -> argparse.ArgumentParser:
     mcp.add_argument("--config", required=True, help="YAML or JSON route table")
     mcp.add_argument("--db", default="data/runtime.db")
 
+    proxy = sub.add_parser(
+        "mcp-proxy",
+        help="one MCP server for your agent that guards every tool of the servers you list",
+    )
+    proxy.add_argument("--config", required=True, help="JSON (or YAML) file listing the servers")
+    proxy.add_argument("--db", default="data/runtime.db")
+
+    dashboard = sub.add_parser(
+        "dashboard",
+        help="serve the local dashboard: runs, receipts and approvals",
+    )
+    dashboard.add_argument("--db", default="data/runtime.db")
+    dashboard.add_argument("--host", default="127.0.0.1")
+    dashboard.add_argument("--port", type=int, default=8000)
+
     # Forward proxy: applies host allow-list + credential injection for agents
     # that call vendors directly. HTTPS CONNECT is refused (see module docs).
     egress = sub.add_parser(
@@ -257,8 +272,46 @@ def run_mcp_server(args: argparse.Namespace) -> int:
     policy = _policy_or_fail(args)
     if policy is None:
         return EXIT_USAGE
-    announce("your route config — every MCP tool call goes through the shared pipeline.")
+    # stdout carries the protocol, so the scope line goes to stderr.
+    print("SCOPE: your route config - MCP tool calls go through the gateway's checks.",
+          file=sys.stderr)
     serve_stdio(MCPToolBridge.from_policy(TraceStore(args.db), policy))
+    return EXIT_PASS
+
+
+def run_mcp_proxy(args: argparse.Namespace) -> int:
+    """Serve an MCP proxy over stdio. Everything we print goes to stderr."""
+    from agent_action_gateway.integrations.mcp_proxy import (
+        ConfigError,
+        DownstreamError,
+        build_proxy,
+        load_proxy_config,
+        serve_proxy,
+    )
+
+    try:
+        config = load_proxy_config(args.config)
+    except (OSError, ConfigError) as exc:
+        print(f"mcp-proxy: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        proxy = build_proxy(config, args.db)
+    except DownstreamError as exc:
+        print(f"mcp-proxy: cannot start: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    # stdout carries the protocol, so the summary goes to stderr.
+    print(
+        "SCOPE: the servers in your config - every tool call goes through the checks.",
+        file=sys.stderr,
+    )
+    for name, risk, why in proxy.describe():
+        print(f"  {name:<40} {risk:<12} ({why})", file=sys.stderr)
+    print(
+        "Tools marked 'default' need an approval. Add rules to change that.",
+        file=sys.stderr,
+        flush=True,
+    )
+    serve_proxy(proxy)
     return EXIT_PASS
 
 
@@ -720,8 +773,15 @@ def main(argv: list[str] | None = None) -> int:
         return run_prune(args)
     if args.command == "mcp-serve":
         return run_mcp_server(args)
+    if args.command == "mcp-proxy":
+        return run_mcp_proxy(args)
     if args.command == "egress-serve":
         return run_egress_proxy(args)
+    if args.command == "dashboard":
+        from agent_action_gateway.observability.dashboard import serve
+
+        serve(args.db, args.host, args.port)
+        return 0
     if args.command == "gateway":
         announce("your route config — the gateway holds the upstream credentials.")
         if args.gateway_cmd == "issue-key":

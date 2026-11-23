@@ -263,19 +263,70 @@ agent-gateway prune --db data/runtime.db --older-than 30 --keep-latest 10 --dry-
 
 ## Other ways in
 
-### MCP
+### MCP proxy
 
-Many agents get tools over the Model Context Protocol instead of importing a
-library. `agent-gateway mcp-serve` serves your configured routes as MCP tools
-over stdio, with no MCP SDK required:
+Many agents get tools from MCP servers instead of importing a library. The MCP
+proxy sits between such an agent and those servers. The agent connects to the
+proxy and to nothing else. The proxy connects, as a client, to the servers you
+list, merges their tools into one list (named `server__tool`), and runs every
+call through the same checks as the library: limits, environment, approval and
+once-only effects. It uses no MCP SDK.
+
+```bash
+agent-gateway mcp-proxy --config servers.json --db gateway.db
+```
+
+`servers.json` lists the servers. The `mcpServers` block that Claude Desktop and
+Cursor use works as it is:
+
+```json
+{
+  "environment": "staging",
+  "servers": {
+    "db": { "command": "npx", "args": ["-y", "some-postgres-mcp"], "environment": "staging" }
+  },
+  "rules": [
+    { "match": "db__list_*", "risk": "read" }
+  ],
+  "limits": { "max_steps": 200 }
+}
+```
+
+- **Tools are discovered.** You do not write routes. At start-up the proxy asks
+  each server for its tools and prints each one with its risk class on stderr.
+- **Risk classes.** The first rule that matches the name wins. With no rule, a
+  tool is `read` only if its server marks it `readOnlyHint` and the server has
+  `trust_hints` on (the default). Everything else is destructive and needs an
+  approval. A server can mislabel its own tools, so set `"trust_hints": false` for
+  a server you do not trust and use rules instead.
+- **Approvals.** A blocked call returns an error with an approval id. Approve it
+  in `agent-gateway dashboard --db gateway.db`, then the agent repeats the same
+  call. The approval covers those exact arguments and works once.
+- **Environment.** `environment` is the session's. A server's own `environment`
+  is where its tools act; a non-production session cannot reach `prod`.
+- **Limits.** One proxy process is one budget. The defaults are 500 steps and
+  one hour; change them under `limits`.
+- **If a call times out or the server dies,** the result is unknown. The attempt
+  stays unfinished and the same call is refused until a person settles it.
+- **Boundary.** The proxy checks only what goes through it. Remove any direct
+  connection from the agent to the real servers.
+- **Not supported yet:** HTTP servers (stdio only), reloading the config while
+  running, and stopping to ask for a missing input. An argument named
+  `approval_id`, `actual_cost_usd` or `intent_key` is refused, because the
+  checks use those names.
+
+### Route-based MCP server
+
+`agent-gateway mcp-serve` serves the routes of a gateway route file as MCP tools
+over stdio. Each call goes through the gateway, so it checks the environment and
+(in the default mode) approval, but not limits or once-only effects. Use the
+proxy above for the full checks.
 
 ```bash
 agent-gateway mcp-serve --config routes.json --db gateway.db
 ```
 
-Every `tools/call` goes through the same policy as the HTTP gateway: the same
-records, receipts and refusals. To register the tools with an MCP library you
-already use:
+To register the tools with an MCP library you already use:
 
 ```python
 from agent_action_gateway.integrations.mcp import MCPToolBridge, tool_definitions
@@ -318,7 +369,7 @@ runs the store checks on both and compares the answers; without
 ### Dashboard security
 
 ```bash
-python -m agent_action_gateway.observability.dashboard --db data/runtime.db
+agent-gateway dashboard --db data/runtime.db
 ```
 
 | Protection | Detail |

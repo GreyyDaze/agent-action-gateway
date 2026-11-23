@@ -356,6 +356,16 @@ class SafetySession:
                     registry=self.registry,
                     approval_store=self.approvals if needs_approval else None,
                     approval_id=approval_id,
+                    # A person's decision is new information. Without this,
+                    # "blocked, blocked, retried after approval" is three
+                    # identical calls and the loop limit stops the approved one.
+                    # Only a valid approval counts: repeating a used or wrong
+                    # id is still a loop.
+                    state_changed=(
+                        approval_id is not None
+                        and needs_approval
+                        and self.approvals.is_usable(approval_id)
+                    ),
                     session_environment=self.environment,
                     target_environment=target_environment,
                     fuse=self.fuse,

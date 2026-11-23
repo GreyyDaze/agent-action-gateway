@@ -229,6 +229,48 @@ class ApprovalStore(SqliteStore):
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
+    def is_usable(self, approval_id: str) -> bool:
+        """Whether this approval is approved, unused and not expired right now."""
+        try:
+            approval = self.get(approval_id)
+        except ApprovalError:
+            return False
+        return (
+            approval.decision == "approved"
+            and approval.consumed_at is None
+            and datetime.now(UTC) < datetime.fromisoformat(approval.expires_at)
+        )
+
+    def find_pending(self, action: str, arguments: dict[str, Any]) -> Approval | None:
+        """The waiting approval for exactly this action and payload, if any."""
+        return self._find(action, arguments, "decision='pending'")
+
+    def find_usable(self, action: str, arguments: dict[str, Any]) -> Approval | None:
+        """An approved, unused, unexpired approval for exactly this payload.
+
+        Lets a caller retry the same call after a human said yes, without
+        having to carry the approval id. The match is the same exact-payload,
+        single-use check `authorize()` makes, so it grants nothing extra.
+        """
+        found = self._find(
+            action, arguments, "decision='approved' AND consumed_at IS NULL"
+        )
+        if found is None:
+            return None
+        if datetime.now(UTC) >= datetime.fromisoformat(found.expires_at):
+            return None
+        return found
+
+    def _find(self, action: str, arguments: dict[str, Any], where: str) -> Approval | None:
+        self._require_available()
+        with self.connection() as connection:
+            row = connection.execute(
+                f"SELECT * FROM approvals WHERE action=? AND payload_hash=? AND {where} "
+                "ORDER BY created_at LIMIT 1",
+                (action, payload_hash(action, arguments)),
+            ).fetchone()
+        return None if row is None else self._from_row(row)
+
     def consume(self, approval_id: str) -> None:
         self._require_available()
         consumed_at = datetime.now(UTC).isoformat()

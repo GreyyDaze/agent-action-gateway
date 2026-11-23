@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class ParserTest(unittest.TestCase):
     def test_every_documented_command_is_registered(self) -> None:
         parser = cli.build_parser()
-        for command in ("check", "gate", "wall", "path", "prune", "gateway", "mcp-serve", "egress-serve"):
+        for command in ("check", "gate", "wall", "path", "prune", "gateway", "mcp-serve", "mcp-proxy", "egress-serve", "dashboard"):
             with self.subTest(command=command):
                 self.assertIn(command, parser.format_help())
 
@@ -56,6 +56,16 @@ class ParserTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised:
             cli.build_parser().parse_args([])
         self.assertEqual(raised.exception.code, EXIT_USAGE)
+
+
+class DashboardCommandTest(unittest.TestCase):
+    def test_dashboard_command_serves_the_given_database(self) -> None:
+        from unittest import mock
+
+        with mock.patch("agent_action_gateway.observability.dashboard.serve") as serve:
+            code = cli.main(["dashboard", "--db", "x.db", "--port", "8123"])
+        self.assertEqual(code, 0)
+        serve.assert_called_once_with("x.db", "127.0.0.1", 8123)
 
 
 class DelegationTest(unittest.TestCase):

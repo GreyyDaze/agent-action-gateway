@@ -26,7 +26,7 @@ flowchart TD
 | Layer | Rule |
 |---|---|
 | `policy/` | pure decision logic, with no I/O |
-| `engine/` | the single checking pipeline; every way in calls it |
+| `engine/` | the checking pipeline; the library and the MCP proxy call it |
 | `credential/` | the only place real secrets are handled |
 | `storage/` | the leaf: imports nothing above it |
 
@@ -39,7 +39,7 @@ flowchart TD
 | `guards/` | redaction, capture policy, honest run status |
 | `runtime/` | `session()`, records, lower-level dispatch helpers |
 | `credential/` | placeholder vault, secret resolvers, outbound proxy, TLS |
-| `integrations/` | HTTP gateway, MCP bridge and server, provider interface |
+| `integrations/` | MCP proxy, HTTP gateway, route-based MCP server, provider interface |
 | `audit/` | receipts, failure grouping, case promotion |
 | `eval/` | cases, judges, verdicts, release gate, run sampling, path scoring |
 | `storage/` | SQLite and PostgreSQL persistence |
@@ -48,13 +48,26 @@ flowchart TD
 
 ## How an action flows
 
-Every way in (a wrapped tool, the HTTP gateway, the MCP server) calls the same
-pipeline, so none of them is a weaker path:
+A wrapped tool (the library) and the MCP proxy both call `engine.enforce()`, so
+they check the same things. The HTTP gateway and the route-based `mcp-serve` do
+not: they check the environment and (in the default mode) approval, and hold the
+key. See the table in the README for what each one checks.
+
+```mermaid
+flowchart LR
+    A1[Agent in code] --> L[Library]
+    A2[Agent on MCP servers] --> P[MCP proxy]
+    L --> E["engine.enforce()"]
+    P --> E
+    E --> T[Your tools / MCP servers]
+```
+
+The flow for the library and the proxy:
 
 ```mermaid
 sequenceDiagram
     participant Agent
-    participant Door as session / gateway / MCP
+    participant Door as session / MCP proxy
     participant Engine as engine.enforce()
     participant Store as audit + storage
     participant Provider
