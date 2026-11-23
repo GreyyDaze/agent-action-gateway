@@ -580,7 +580,7 @@ def serve(path: str, host: str, port: int, token: str | None = None) -> None:
             "explicit AGENT_GATEWAY_DASHBOARD_TOKEN"
         )
     server, handler = build_server(path, host, port, resolved)
-    print(f"Safety dashboard on http://{host}:{server.server_address[1]}/")
+    print(f"Agent Action Gateway dashboard on http://{host}:{server.server_address[1]}/")
     print(f"access token: {handler.access_token}")
     print("Pass it as ?token=... or 'Authorization: Bearer ...'. Keep it private.")
     server.serve_forever()

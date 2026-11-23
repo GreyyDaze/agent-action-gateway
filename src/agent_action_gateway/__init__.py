@@ -4,7 +4,7 @@ The public surface is intentionally small. A user wraps their own agent and
 receives recorded evidence and enforced policy; the safety layer does not own
 the agent loop or the agent's model calls.
 
-Layout (old package names remain as compatibility shims):
+Layout:
 
     policy/        pure decisions: risk, approval, budgets, stop rules, hashes
     engine/        the one enforcement pipeline
@@ -16,7 +16,7 @@ Layout (old package names remain as compatibility shims):
     eval/          golden set, judges, verdict engine, regression gate
     storage/       durable SQLite/Postgres persistence (leaf layer)
     observability/ dashboard and wiring check
-    proofs/        verification scripts, not shipped in the wheel
+    proofs/        verification scripts about this library, not in the CLI
 
 Import from here rather than from submodules; the submodule layout is an
 implementation detail.
