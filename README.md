@@ -55,19 +55,87 @@ tools like `execute_sql`, tool pinning, the bypass scanner) are explained in the
 
 ## 5. Architecture
 
+Every part, and every step an action takes. The agent reaches only the
+checkpoint, never your tools, the real keys or the records. Only a person can
+approve, settle a held action or accept a changed tool.
+
 ```mermaid
-flowchart LR
-    A[Your agent] -->|Python| L["Library: session()"]
-    A -->|MCP| P[MCP proxy]
-    L --> E{{"enforce()"}}
-    P --> E
-    E --> T[Your tools and MCP servers]
-    P -.->|optional| G[Gateway: holds keys]
-    A -->|HTTP| G
-    G --> API[Real APIs]
-    E --> S[(Records)]
-    G --> S
-    S --> D[Dashboard]
+flowchart TD
+    subgraph AG["Agent side"]
+        A["Your agent<br/>(proposes an action)"]
+    end
+
+    subgraph CP["Checkpoint: the only way in"]
+        LIB["Library: session() / ctx.tool<br/>(Python functions)"]
+        PX["MCP proxy<br/>(stdio, or HTTP with a token)"]
+        PIN{"0. Tool definition<br/>same as pinned?"}
+        S1["1. Decide the risk<br/>read / write / destructive<br/>(undeclared = destructive)"]
+        S2{"2. Within limits?<br/>steps, time, cost, loops"}
+        S3{"3. Right environment?"}
+        S4{"4. Not a read:<br/>exact approval?<br/>(same action and arguments,<br/>unused, under 15 min)"}
+        S5{"5. Claim the effect:<br/>claimed before?"}
+        RUN["6. Run it, with the intent key"]
+        OUT{"Result?"}
+    end
+
+    subgraph TL["Your systems"]
+        T["Your tools / MCP servers"]
+        GW["Gateway<br/>virtual key in, real key out;<br/>routes, hosts, private-address check"]
+        API["Real APIs"]
+    end
+
+    subgraph ST["Records (SQLite or PostgreSQL)"]
+        APR[("Approvals")]
+        RCP[("Receipts<br/>pending / done / failed / resolved")]
+        TR[("Run records<br/>secrets hidden")]
+        PN[("Pinned tools")]
+    end
+
+    subgraph HU["Person"]
+        D["Dashboard or CLI<br/>approve or deny, settle held actions,<br/>accept changed tools, see runs"]
+    end
+
+    A -->|Python call| LIB
+    A -->|MCP call| PX
+    PX --> PIN
+    PIN -->|changed: hidden until accepted| PN
+    PIN -->|same| S1
+    LIB --> S1
+    S1 --> S2
+    S2 -->|no| BLK["Blocked, with the reason"]
+    S2 -->|yes| S3
+    S3 -->|no| BLK
+    S3 -->|yes| S4
+    S4 -->|no| REQ["Blocked: approval requested<br/>(agent gets an approval id)"]
+    REQ --> APR
+    S4 -->|yes, now used up| S5
+    S5 -->|done before| PREV["Return the first result<br/>(not run again)"]
+    S5 -->|pending: may have landed| HELD["Held: not run again"]
+    S5 -->|new, or failed before| RUN
+    RUN --> T
+    RUN --> GW
+    GW --> API
+    RUN --> OUT
+    OUT -->|ok| OK["Mark done, return the result"]
+    OUT -->|clear error| FAIL["Mark failed<br/>(safe to try again)"]
+    OUT -->|timeout or no answer| HELD
+
+    OK --> RCP
+    FAIL --> RCP
+    HELD --> RCP
+    BLK --> TR
+    REQ --> TR
+    OK --> TR
+    PREV --> TR
+
+    APR --> D
+    RCP --> D
+    TR --> D
+    PN --> D
+    D -->|approve| APR
+    D -->|settle: landed or not| RCP
+    D -->|accept| PN
+    REQ -.->|agent retries with the approval id| A
 ```
 
 | Part | Use it when your agent calls | Checks | Guide |
@@ -88,19 +156,27 @@ all checks pass, and every outcome is recorded.
 ```mermaid
 flowchart TD
     I{"Required inputs given?"} -->|no| Q[Stop and ask]
-    I -->|yes| L{"Within limits?"}
+    I -->|yes| K["Decide the risk<br/>(undeclared = destructive)"]
+    K --> L{"Within limits?"}
     L -->|yes| E{"Right environment?"}
-    E -->|yes| P{"If risky: exact approval?"}
-    P -->|yes| O{"Already ran?"}
-    O -->|no| R[Run it]
-    O -->|yes| D[Return the earlier result]
+    E -->|yes| P{"Not a read: exact approval?"}
+    P -->|yes| O{"Claimed before?"}
+    O -->|no, or failed before| R[Run it]
+    O -->|done| D[Return the earlier result]
+    O -->|pending| H[Held until a person settles it]
+    R -->|timeout or no answer| H
     L -->|no| B[Block, with the reason]
     E -->|no| B
-    P -->|no| B
+    P -->|no| A[Block, and request an approval]
     R --> REC[(Record)]
     D --> REC
+    H --> REC
     B --> REC
+    A --> REC
 ```
+
+The approval loop and the held path, step by step:
+[architecture](docs/architecture.md#the-approval-loop-step-by-step).
 
 ## 7. Implementation
 
