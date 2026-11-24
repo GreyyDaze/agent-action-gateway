@@ -202,6 +202,54 @@ class ProtocolTest(HttpProxyCase):
         self.assertEqual(status, 404)
 
 
+class UsageTest(HttpProxyCase):
+    """The proxy never sees the model, so the agent reports its usage itself."""
+
+    def usage(self, report: object, **kwargs: object) -> tuple[int, dict, dict]:
+        return self.post(report, url=self.url.replace("/mcp", "/usage"), **kwargs)  # type: ignore[arg-type]
+
+    def model_rows(self) -> list[dict]:
+        traces = self.proxy.session.store.snapshot()["traces"]
+        return [t for t in traces if t["event"] == "model.exchange"]
+
+    def test_a_report_is_recorded_against_the_proxy_run(self) -> None:
+        status, body, _ = self.usage(
+            {"tokens_in": 120, "tokens_out": 30, "cost_usd": 0.0021, "latency_ms": 840}
+        )
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["run_id"], self.proxy.session.run_id)
+        (row,) = self.model_rows()
+        self.assertEqual((row["tokens_in"], row["tokens_out"]), (120, 30))
+        self.assertAlmostEqual(row["cost_usd"], 0.0021)
+        self.assertEqual(row["run_id"], self.proxy.session.run_id)
+
+    def test_no_mcp_session_is_needed(self) -> None:
+        status, _, _ = self.usage({"tokens_in": 5})
+        self.assertEqual(status, 200)
+
+    def test_it_needs_the_token(self) -> None:
+        status, _, _ = self.usage({"tokens_in": 5}, token=None)
+        self.assertEqual(status, 401)
+        status, _, _ = self.usage({"tokens_in": 5}, token="wrong-token-0123456789")
+        self.assertEqual(status, 401)
+        self.assertEqual(self.model_rows(), [])
+
+    def test_a_web_page_cannot_report(self) -> None:
+        status, _, _ = self.usage({"tokens_in": 5}, headers={"Origin": "http://evil.example"})
+        self.assertEqual(status, 403)
+        self.assertEqual(self.model_rows(), [])
+
+    def test_bad_reports_are_refused(self) -> None:
+        for report in (
+            {}, [], {"tokens_in": -1}, {"tokens_in": 1.5}, {"cost_usd": "1"},
+            {"tokens_in": True}, {"prompt": "secret"}, {"cost_usd": float("nan")},
+        ):
+            with self.subTest(report=report):
+                status, body, _ = self.usage(report)
+                self.assertEqual(status, 400, body)
+        self.assertEqual(self.model_rows(), [])
+
+
 class ConnectorTest(HttpProxyCase):
     def run_lines(self, connector: Connector, messages: list[dict]) -> list[dict]:
         out = io.StringIO()

@@ -277,13 +277,17 @@ The SDK does not own your model call, so record the model exchange yourself if
 you want it in the audit:
 
 ```python
-completion = call_your_model(prompt)
+response = client.messages.create(model=..., messages=...)   # your own model call
 ctx.record_model_exchange(
-    prompt, completion.text,
-    tokens_in=usage.prompt_tokens, tokens_out=usage.completion_tokens,
-    cost_usd=usage.cost, latency_ms=usage.elapsed_ms,
+    prompt, response.content[0].text,
+    tokens_in=response.usage.input_tokens,
+    tokens_out=response.usage.output_tokens,
+    cost_usd=0.012,   # optional: from your model's price
 )
 ```
+
+If you report nothing, the dashboard shows Model calls, Tokens and Cost as
+**not reported**, not 0.
 
 Tokens, keys, emails and other personal data are replaced before anything
 reaches disk. A value you did not record stays empty, which means *not
@@ -527,6 +531,18 @@ Cursor use works as it is:
   redirect, and opens a new session by itself if the proxy restarted. Not built:
   OAuth sign-in for agents (platforms that only connect with OAuth cannot use the
   proxy yet).
+
+  The proxy never sees the model, so it cannot count tokens or cost. An agent
+  you write yourself can report them with the same token, no MCP session needed:
+
+  ```bash
+  curl -X POST https://<host>/usage -H "Authorization: Bearer $AGENT_GATEWAY_PROXY_TOKEN" \
+    -d '{"tokens_in": 120, "tokens_out": 30, "cost_usd": 0.0021}'
+  ```
+
+  Fields: `tokens_in`, `tokens_out`, `cost_usd`, `latency_ms` (all optional,
+  numbers 0 or more). Apps such as Claude Desktop or Cursor do not expose their
+  token counts, so with them the dashboard shows **not reported**.
 - **Tested with:** this project's tests, the official Python MCP SDK client (over
   stdio, over HTTP, and through `mcp-connect`), and one run of Claude Code (with a
   stand-in database tool). It has not been run with Claude Desktop or Cursor.

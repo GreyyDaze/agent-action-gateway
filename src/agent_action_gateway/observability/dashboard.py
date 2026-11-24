@@ -23,7 +23,7 @@ import secrets
 from datetime import UTC, datetime
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from agent_action_gateway.guards.redaction import redact
@@ -141,6 +141,9 @@ h2{font-size:17px;font-weight:600;margin:0 0 12px;color:var(--text-main);display
 .metric .label{font-size:14px;font-weight:500;color:#344054}
 .metric .value{font-size:30px;font-weight:700;letter-spacing:-.02em;color:#101828;
   margin-top:8px;font-variant-numeric:tabular-nums;line-height:1.1}
+.metric .value.none{font-size:16px;font-weight:500;color:var(--text-subtle);letter-spacing:0;
+  margin-top:14px}
+.none{color:var(--text-subtle)}
 .stack{display:flex;flex-direction:column;gap:12px}
 .item{border:1px solid var(--border-card);border-radius:14px;background:var(--surface);
   box-shadow:var(--shadow-card);padding:20px 24px}
@@ -332,6 +335,14 @@ def _protection_pill(protected: bool) -> str:
         "<span class='pill wait' title='Steps were recorded, not checked'>"
         f"{_icon('alert', 15)}recorded only</span>"
     )
+
+
+def _spend(value: Any) -> str:
+    """Budget spend. Zero means no step reported a cost, so say that."""
+    amount = float(value or 0.0)
+    if amount == 0:
+        return "<span class='none' title='No step reported a cost (estimated_cost_usd)'>not reported</span>"
+    return f"${amount:.4f}"
 
 
 def _short(text: str, size: int = 12) -> str:
@@ -801,7 +812,7 @@ class Handler(BaseHTTPRequestHandler):
                 "<div class='table-wrap'><table><thead><tr><th>Steps</th><th>Spend</th>"
                 "<th>Elapsed</th><th>Limits</th></tr></thead><tbody><tr>"
                 f"<td>{budget.get('steps_used', 0)}</td>"
-                f"<td>${float(budget.get('dollars_used', 0.0)):.4f}</td>"
+                f"<td>{_spend(budget.get('dollars_used'))}</td>"
                 f"<td>{float(budget.get('elapsed_seconds', 0.0)):.3f}s</td>"
                 f"<td>{_badge(fuse, 'bad' if budget.get('tripped') else 'ok')}</td>"
                 "</tr></tbody></table></div>"
@@ -813,10 +824,15 @@ class Handler(BaseHTTPRequestHandler):
         run_id = str(view["run_id"] or "no run selected")
 
         def metric(label: str, value: object) -> str:
-            return (
-                f"<div class='card metric'><div class='label'>{escape(label)}</div>"
-                f"<div class='value'>{escape(str(value))}</div></div>"
-            )
+            if value is None:
+                shown = "<div class='value none' title='Your agent did not report this. "
+                shown += "See record_model_exchange, or the proxy&#39;s /usage.'>not reported</div>"
+            else:
+                shown = f"<div class='value'>{escape(str(value))}</div>"
+            return f"<div class='card metric'><div class='label'>{escape(label)}</div>{shown}</div>"
+
+        reported = totals["model_calls"] > 0
+        cost = totals["cost_usd"]
 
         return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -865,9 +881,9 @@ class Handler(BaseHTTPRequestHandler):
       {metric('Steps', totals['steps'])}
       {metric('Blocked', totals['blocked'])}
       {metric('Receipts', totals['receipts'])}
-      {metric('Model calls', totals['model_calls'])}
+      {metric('Model calls', totals['model_calls'] if reported else None)}
       {metric('Tokens', totals['tokens'])}
-      {metric('Cost', f"${totals['cost_usd']:.4f}")}
+      {metric('Cost', None if cost is None else f"${cost:.4f}")}
     </div>
     <div class="group" id="timeline"><h2>{_icon('activity')}Timeline</h2>{_render_traces(view)}</div>
     <div class="group" id="receipts"><h2>{_icon('receipt')}Side-effect receipts</h2>{_render_receipts(view)}</div>

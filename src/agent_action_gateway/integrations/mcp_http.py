@@ -20,6 +20,9 @@ container or host, and serves MCP's Streamable HTTP transport at `/mcp`:
 * Replies are plain JSON. There is no server-to-client stream (GET answers 405),
   so the agent is not told when the tool list changes; it sees the change the
   next time it lists tools.
+* `POST /usage` lets an agent report its own model calls (tokens, cost), with
+  the same token. The proxy never sees the model, so this is the only way those
+  numbers reach the dashboard. Apps that do not report show "not reported".
 
 `mcp-connect URL` is the other half, for apps such as Claude Desktop that start
 MCP servers as commands: it reads MCP messages on stdin, posts them to the
@@ -52,6 +55,10 @@ from agent_action_gateway.integrations.mcp_proxy import (
 TOKEN_ENV = "AGENT_GATEWAY_PROXY_TOKEN"
 #: The path the proxy answers on.
 MCP_PATH = "/mcp"
+#: Where an agent reports its model usage.
+USAGE_PATH = "/usage"
+#: The fields `/usage` accepts. Each one is optional, but one must be given.
+_USAGE_FIELDS = {"tokens_in": int, "tokens_out": int, "cost_usd": float, "latency_ms": float}
 #: A token shorter than this is refused: it would be easy to guess.
 MIN_TOKEN_LENGTH = 16
 #: Requests larger than this are refused.
@@ -77,6 +84,34 @@ def parse_tokens(raw: str | None) -> tuple[str, ...]:
     if short:
         raise TokenError(f"every token must be at least {MIN_TOKEN_LENGTH} characters")
     return tokens
+
+
+_BAD = object()
+
+
+def parse_usage(report: object) -> dict[str, Any]:
+    """Check a `/usage` report: known fields only, each a number >= 0."""
+    if not isinstance(report, dict):
+        raise ValueError("send a JSON object, for example {\"tokens_in\": 120}")
+    unknown = sorted(set(report) - set(_USAGE_FIELDS))
+    if unknown:
+        raise ValueError(f"unknown fields: {', '.join(unknown)}; "
+                         f"allowed: {', '.join(_USAGE_FIELDS)}")
+    if not report:
+        raise ValueError(f"give at least one of: {', '.join(_USAGE_FIELDS)}")
+    values: dict[str, Any] = {}
+    for name, kind in _USAGE_FIELDS.items():
+        if name not in report or report[name] is None:
+            continue
+        value = report[name]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{name} must be a number")
+        if kind is int and not float(value).is_integer():
+            raise ValueError(f"{name} must be a whole number")
+        if value < 0 or value != value or value in (float("inf"), float("-inf")):
+            raise ValueError(f"{name} must be 0 or more")
+        values[name] = kind(value)
+    return values
 
 
 def _digest(token: str) -> str:
@@ -150,13 +185,13 @@ class ProxyHttpHandler(BaseHTTPRequestHandler):
         self._send(status, {"jsonrpc": "2.0", "id": request_id,
                             "error": {"code": code, "message": message}})
 
-    def _caller(self) -> str | None:
+    def _caller(self, paths: Collection[str] = (MCP_PATH,)) -> str | None:
         """The digest of the caller's token, or None (and a reply sent)."""
         origin = self.headers.get("Origin")
         if origin is not None and origin not in self.allowed_origins:
             self._send(403, {"error": "origin not allowed"})
             return None
-        if urllib.parse.urlparse(self.path).path != MCP_PATH:
+        if urllib.parse.urlparse(self.path).path not in paths:
             self._send(404, {"error": f"not found; the MCP endpoint is {MCP_PATH}"})
             return None
         header = self.headers.get("Authorization", "")
@@ -171,21 +206,44 @@ class ProxyHttpHandler(BaseHTTPRequestHandler):
 
     # -- methods -------------------------------------------------------------
 
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        caller = self._caller()
-        if caller is None:
-            return
+    def _body(self) -> Any:
+        """The parsed JSON body, or `_BAD` (and a reply sent)."""
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = -1
         if length < 0 or length > MAX_BODY_BYTES:
             self._error(413, -32600, f"the body must be 0 to {MAX_BODY_BYTES} bytes")
-            return
+            return _BAD
         try:
-            message = json.loads(self.rfile.read(length).decode("utf-8") or "null")
+            return json.loads(self.rfile.read(length).decode("utf-8") or "null")
         except (UnicodeDecodeError, json.JSONDecodeError):
             self._error(400, -32700, "parse error")
+            return _BAD
+
+    def _usage(self) -> None:
+        """Record one model call the agent made, against the proxy's run."""
+        report = self._body()
+        if report is _BAD:
+            return
+        try:
+            values = parse_usage(report)
+        except ValueError as exc:
+            self._send(400, {"error": str(exc)})
+            return
+        trace_id = self.proxy.session.record_model_exchange(**values)
+        self._send(200, {"recorded": True, "run_id": self.proxy.session.run_id,
+                         "trace_id": trace_id})
+
+    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        caller = self._caller((MCP_PATH, USAGE_PATH))
+        if caller is None:
+            return
+        if urllib.parse.urlparse(self.path).path == USAGE_PATH:
+            self._usage()
+            return
+        message = self._body()
+        if message is _BAD:
             return
         if not isinstance(message, dict):
             self._error(400, -32600, "send one JSON-RPC message per request")

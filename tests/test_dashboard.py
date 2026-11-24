@@ -171,6 +171,21 @@ class DashboardRenderTest(unittest.TestCase):
         for panel in ("timeline", "side-effect receipts", "budget"):
             self.assertIn(panel, text)
 
+    def test_unreported_model_usage_says_so_instead_of_zero(self) -> None:
+        from agent_action_gateway.observability.view import _spent
+
+        self.assertEqual(_spent([{"event": "tool"}]), (None, None, 0))
+        self.assertEqual(
+            _spent([{"tokens_in": 10, "tokens_out": 5}, {"cost_usd": 0.25}]), (0.25, 15, 2)
+        )
+        db = Path(self.db)
+        db.unlink(missing_ok=True)
+        with session(store=TraceStore(db)) as ctx:
+            ctx.tool(lambda: {"ok": True}, action="t.read", risk="read")()
+        html = self._get()
+        self.assertIn("not reported", html)
+        self.assertNotIn("$0.0000", html)
+
     def test_the_only_script_is_the_refresh_and_the_policy_allows_only_it(self) -> None:
         """One inline script, allowed by its hash; no file, no other script."""
         import base64

@@ -45,21 +45,27 @@ def _group_by_run(rows: Sequence[Mapping[str, Any]]) -> dict[str, list[dict[str,
     return grouped
 
 
-def _spent(traces: Sequence[Mapping[str, Any]]) -> tuple[float, int, int]:
-    """Total cost, tokens and the number of steps that called a model."""
-    cost = 0.0
-    tokens = 0
+def _spent(traces: Sequence[Mapping[str, Any]]) -> tuple[float | None, int | None, int]:
+    """Total cost, tokens and the number of reported model calls.
+
+    Only the agent's own code sees its model calls, so these numbers exist only
+    when it reports them (`record_model_exchange`, or the proxy's `/usage`).
+    `None` means nothing was reported, which is not the same as zero.
+    """
+    cost: float | None = None
+    tokens: int | None = None
     calls = 0
     for trace in traces:
+        reported = False
         if trace.get("cost_usd") is not None:
-            cost += float(trace["cost_usd"])
-        if trace.get("tokens_in") is not None:
-            tokens += int(trace["tokens_in"])
-        if trace.get("tokens_out") is not None:
-            tokens += int(trace["tokens_out"])
-        if trace.get("tokens_in") is not None:
-            calls += 1
-    return round(cost, 6), tokens, calls
+            cost = (cost or 0.0) + float(trace["cost_usd"])
+            reported = True
+        for field in ("tokens_in", "tokens_out"):
+            if trace.get(field) is not None:
+                tokens = (tokens or 0) + int(trace[field])
+                reported = True
+        calls += reported
+    return (None if cost is None else round(cost, 6)), tokens, calls
 
 
 def _enforcement_of(traces: Sequence[Mapping[str, Any]]) -> str:
