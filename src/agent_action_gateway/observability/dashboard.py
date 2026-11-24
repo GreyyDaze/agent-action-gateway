@@ -1,11 +1,17 @@
-"""A local dashboard for recorded evidence, and where a person gives approvals.
+"""A local dashboard for recorded evidence, and where a person acts.
 
 Server-rendered and deliberately script-free. The Content-Security-Policy below
 sets `default-src 'none'` with no `script-src`, so there is no way to run
 JavaScript here even by accident. Every interactive affordance is native HTML:
-`<details>` for expansion, forms for approval. That is a security property and
-also the reason the layout cannot grow a client-side filter later without a
-deliberate decision to relax the policy.
+`<details>` for expansion, forms for the three moments a person is in the loop
+(approve or deny an action, settle a held action, accept a changed tool). That
+is a security property and also the reason the layout cannot grow a client-side
+filter later without a deliberate decision to relax the policy.
+
+The look follows a monochrome, high-density style: grey for structure, blue only
+for the logo mark and links, green for OK, amber for waiting, red for refused or
+urgent. No outside font or file is loaded (the policy allows none), so the font
+falls back from Inter to the system font.
 """
 from __future__ import annotations
 
@@ -13,143 +19,327 @@ import argparse
 import json
 import os
 import secrets
+from datetime import UTC, datetime
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from typing import TYPE_CHECKING
+from urllib.parse import parse_qs, urlencode, urlparse
 
+from agent_action_gateway.guards.redaction import redact
 from agent_action_gateway.observability.view import build_run_view
-from agent_action_gateway.policy.locks import ApprovalError, ApprovalStore
+from agent_action_gateway.policy.locks import Approval, ApprovalError, ApprovalStore
 from agent_action_gateway.storage.traces import TraceStore
+
+if TYPE_CHECKING:
+    from agent_action_gateway.integrations.mcp_proxy import PinStore
+
+#: The session cookie set after the token is presented once. HttpOnly, so a page
+#: cannot read it; SameSite=Strict, so another site's form cannot send it.
+_COOKIE = "agw_session"
 
 _CHALLENGE_PAGE = (
     "<!doctype html><meta charset='utf-8'><title>Dashboard locked</title>"
-    "<body style='font-family:system-ui;max-width:40rem;margin:4rem auto'>"
-    "<h1>Dashboard locked</h1>"
+    "<body style='font-family:-apple-system,system-ui,sans-serif;max-width:40rem;"
+    "margin:4rem auto;color:#111827'>"
+    "<h1 style='font-size:20px'>Dashboard locked</h1>"
     "<p>This dashboard holds run evidence and the approval queue, so every "
     "route requires the token printed when the server started.</p>"
-    "<p>Open <code>/?token=&lt;token&gt;</code>, or send "
+    "<p>Open <code>/?token=&lt;token&gt;</code> once, or send "
     "<code>Authorization: Bearer &lt;token&gt;</code>.</p>"
     "</body>"
 )
 
 _STYLE = """
 :root{
-  --bg:#f6f7f9; --panel:#ffffff; --ink:#1c2128; --muted:#5b6672; --line:#e2e6ea;
-  --accent:#2f5fd0; --ok:#1a7f4b; --warn:#8a5a00; --bad:#b3261e; --warnbg:#fff6e0;
-  --badbg:#fdeceb; --okbg:#e7f6ee; --accentbg:#eaf0fd; --radius:10px;
-}
-@media (prefers-color-scheme:dark){
-  :root{
-    --bg:#12151a; --panel:#1a1f26; --ink:#e6e9ee; --muted:#98a2b0; --line:#2a313a;
-    --accent:#7aa2f7; --ok:#57c98a; --warn:#e0b050; --bad:#f2837c;
-    --warnbg:#2e2513; --badbg:#33191a; --okbg:#142a20; --accentbg:#1b2740;
-  }
+  --primary:#005DFF; --primary-hover:#004AD6;
+  --canvas:#FFFFFF; --surface:#FFFFFF; --subtle:#EEEEF1; --muted-bg:#F4F4F5;
+  --border-layout:#EEEEEE; --border-card:#E5E7EB; --border-control:#E5E5E7;
+  --text-main:#111827; --text-body:#374151; --text-muted:#6B7280; --text-subtle:#9CA3AF;
+  --ok:#027A48; --ok-bg:#ECFDF3;
+  --wait:#785B12; --wait-bg:#FEF9E6; --wait-border:#F3E7BE;
+  --bad:#B42318; --bad-bg:#FEF3F2; --urgent:#EF4444;
+  --shadow-control:0 1px 2px rgba(0,0,0,.02); --shadow-card:0 1px 3px rgba(0,0,0,.03);
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
-a{color:var(--accent)}
-.wrap{max-width:1180px;margin:0 auto;padding:1.75rem 1.25rem 4rem}
-h1{font-size:1.35rem;margin:0}
-h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);
-  margin:2rem 0 .75rem;font-weight:650}
-h3{font-size:.95rem;margin:0 0 .35rem}
-p{margin:.35rem 0}
-code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:.7rem;
-  overflow:auto;max-height:22rem;font-size:.82rem;margin:.5rem 0 0}
-.muted{color:var(--muted)}
-.tiny{font-size:.8rem}
-.topbar{display:flex;flex-wrap:wrap;gap:.75rem;align-items:baseline;
-  justify-content:space-between;padding-bottom:1rem;border-bottom:1px solid var(--line)}
-.runid{font-family:ui-monospace,monospace;font-size:.85rem;color:var(--muted)}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:.75rem}
-.tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:.7rem .85rem}
-.tile dt{margin:0;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
-.tile dd{margin:.2rem 0 0;font-size:1.3rem;font-weight:640;font-variant-numeric:tabular-nums}
-.tile dd.small{font-size:1rem}
-.layout{display:grid;grid-template-columns:220px 1fr;gap:1.5rem;margin-top:.5rem}
-@media(max-width:820px){.layout{grid-template-columns:1fr}}
-.runs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.4rem}
-.runs a{display:block;padding:.5rem .65rem;border-radius:8px;border:1px solid var(--line);
-  background:var(--panel);text-decoration:none;color:inherit;font-size:.85rem}
-.runs a[aria-current="page"]{border-color:var(--accent);background:var(--accentbg)}
-.runs .rid{font-family:ui-monospace,monospace;font-size:.76rem;display:block;
-  overflow:hidden;text-overflow:ellipsis}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
-  padding:.85rem 1rem;margin-bottom:.7rem}
-.card > summary{cursor:pointer;list-style:none;display:flex;flex-wrap:wrap;gap:.5rem;
-  align-items:center;justify-content:space-between}
-.card > summary::-webkit-details-marker{display:none}
-.card > summary::before{content:"▸";color:var(--muted);font-size:.8rem}
-.card[open] > summary::before{content:"▾"}
-.badge{display:inline-block;padding:.1rem .5rem;border-radius:999px;font-size:.72rem;
-  font-weight:640;letter-spacing:.02em;border:1px solid transparent;white-space:nowrap}
-.b-ok{background:var(--okbg);color:var(--ok)}
-.b-bad{background:var(--badbg);color:var(--bad)}
-.b-warn{background:var(--warnbg);color:var(--warn)}
-.b-info{background:var(--accentbg);color:var(--accent)}
-.b-mute{background:var(--bg);color:var(--muted);border-color:var(--line)}
-.meta{display:flex;flex-wrap:wrap;gap:.35rem .9rem;font-size:.78rem;color:var(--muted);
-  margin-top:.4rem}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:.15rem .8rem;font-size:.85rem;margin-top:.5rem}
-.kv dt{color:var(--muted)}
-.kv dd{margin:0;font-family:ui-monospace,monospace;font-size:.8rem;word-break:break-all}
-table{width:100%;border-collapse:collapse;font-size:.86rem;background:var(--panel);
-  border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
-th,td{padding:.5rem .7rem;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:650}
+html,body{height:100%}
+body{margin:0;background:var(--canvas);color:var(--text-main);
+  font:13px/1.5 'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  display:flex;flex-direction:column}
+a{color:var(--primary);text-decoration:none}
+a:hover{color:var(--primary-hover)}
+code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+:focus-visible{outline:2px solid var(--text-main);outline-offset:2px;border-radius:6px}
+
+.topbar{height:46px;flex:none;display:flex;align-items:center;justify-content:space-between;
+  padding:0 16px;border-bottom:1px solid var(--border-layout);background:var(--surface)}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;min-width:0}
+.brand svg{flex:none}
+.slash{color:#E2E4E8;font-weight:300}
+.crumb{color:var(--text-muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.top-right{display:flex;align-items:center;gap:8px;flex:none}
+.pill{background:#F2F2F5;border-radius:8px;padding:3px 10px;font-size:12px;font-weight:600;
+  color:var(--text-body);white-space:nowrap}
+.count{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;
+  padding:0 4px;border-radius:999px;background:var(--urgent);color:#fff;font-size:10px;font-weight:700}
+
+.shell{flex:1;display:flex;min-height:0}
+.sidebar{width:225px;flex:none;border-right:1px solid var(--border-layout);background:var(--surface);
+  overflow-y:auto;padding:12px 10px}
+.super{font-size:11px;font-weight:500;color:var(--text-muted);margin:14px 10px 6px;
+  text-transform:uppercase;letter-spacing:.04em}
+.super:first-child{margin-top:2px}
+.nav{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;justify-content:space-between;gap:8px;height:34px;
+  padding:0 10px;border-radius:8px;color:#2E333D;font-weight:500;font-size:13px}
+.nav a:hover{background:var(--muted-bg)}
+.nav a[aria-current="page"]{background:var(--subtle);color:var(--text-main);font-weight:600}
+.nav .rid{font-family:ui-monospace,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:999px;flex:none;background:var(--text-subtle)}
+.dot.ok{background:#12B76A}.dot.bad{background:var(--urgent)}.dot.wait{background:#E0B43A}
+
+main{flex:1;overflow-y:auto;min-width:0}
+.canvas{max-width:1140px;margin:0 auto;padding:24px 28px 64px}
+.section{margin-top:32px}
+.section:first-child{margin-top:0}
+h1{font-size:20px;font-weight:700;letter-spacing:-.015em;margin:0}
+h2{font-size:14px;font-weight:600;margin:0 0 10px;color:var(--text-main);display:flex;
+  align-items:center;gap:8px}
+.lede{color:var(--text-muted);margin:4px 0 14px}
+.group{margin-top:20px}
+
+.card{border:1px solid var(--border-card);border-radius:18px;background:var(--surface);
+  box-shadow:var(--shadow-card);padding:16px 18px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.metric .label{font-size:12.5px;font-weight:500;color:#344054}
+.metric .value{font-size:24px;font-weight:700;letter-spacing:-.02em;color:#101828;
+  margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.1}
+.stack{display:flex;flex-direction:column;gap:10px}
+.item{border:1px solid var(--border-card);border-radius:14px;background:var(--surface);
+  box-shadow:var(--shadow-card);padding:14px 16px}
+.item-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
+.item-title{font-weight:600;font-size:13.5px}
+.meta{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--text-muted);font-size:12px;margin-top:4px}
+.meta b{color:var(--text-body);font-weight:600}
+
+.badge{display:inline-block;padding:1px 8px;border-radius:6px;font-size:11.5px;font-weight:500;
+  white-space:nowrap;background:var(--muted-bg);color:var(--text-body)}
+.b-ok{background:var(--ok-bg);color:var(--ok)}
+.b-wait{background:var(--wait-bg);color:var(--wait);box-shadow:inset 0 0 0 1px var(--wait-border)}
+.b-bad{background:var(--bad-bg);color:var(--bad)}
+
+pre{background:#FAFAFB;border:1px solid var(--border-layout);border-radius:8px;padding:10px;
+  overflow:auto;max-height:22rem;font-size:12px;margin:8px 0 0;color:var(--text-body)}
+details > summary{cursor:pointer;list-style:none}
+details > summary::-webkit-details-marker{display:none}
+details.step > summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+details.step > summary::before{content:"›";color:var(--text-muted);margin-right:6px}
+details.step[open] > summary::before{content:"⌄"}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12.5px;margin-top:8px}
+.kv dt{color:var(--text-muted)}
+.kv dd{margin:0;min-width:0}
+
+.table-wrap{border:1px solid var(--border-card);border-radius:14px;overflow:auto;background:var(--surface);
+  box-shadow:var(--shadow-card)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--border-layout);vertical-align:top}
+th{font-size:11px;font-weight:500;color:var(--text-muted);background:#FAFAFB}
 tr:last-child td{border-bottom:0}
-table.wrap-table{overflow-x:auto}
-.empty{color:var(--muted);font-size:.86rem;background:var(--panel);border:1px dashed var(--line);
-  border-radius:var(--radius);padding:1rem;text-align:center}
-form.inline{display:inline-flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:.6rem .5rem 0 0}
-input,button{font:inherit;font-size:.85rem;padding:.35rem .6rem;border-radius:7px;
-  border:1px solid var(--line);background:var(--panel);color:inherit}
-button{background:var(--accent);color:#fff;border-color:transparent;cursor:pointer;font-weight:600}
-button.deny{background:transparent;color:var(--bad);border-color:var(--bad)}
-label{font-size:.8rem;color:var(--muted)}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
-.alert{border-radius:var(--radius);padding:.7rem .9rem;margin:.75rem 0;font-size:.88rem;
-  background:var(--warnbg);color:var(--warn);border:1px solid currentColor}
-@media print{.layout{grid-template-columns:1fr}details{open:true}}
+.empty{color:var(--text-subtle);font-size:12.5px;border:1px dashed var(--border-card);border-radius:14px;
+  padding:14px;text-align:center;margin:0}
+.alert{border-radius:14px;padding:12px 14px;font-size:12.5px;background:var(--wait-bg);color:var(--wait);
+  border:1px solid var(--wait-border);margin:0 0 12px}
+
+form.act{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
+input[type=text]{font:inherit;font-size:12.5px;height:30px;padding:0 10px;border-radius:8px;
+  border:1px solid var(--border-control);background:var(--surface);color:var(--text-main);min-width:0}
+input[type=text]::placeholder{color:var(--text-subtle)}
+button{font:inherit;font-size:12px;font-weight:500;height:30px;padding:0 12px;border-radius:8px;
+  border:1px solid var(--border-control);background:var(--surface);color:var(--text-main);
+  cursor:pointer;box-shadow:var(--shadow-control)}
+button:hover{background:var(--muted-bg)}
+button.primary{background:var(--text-main);color:#fff;border-color:var(--text-main)}
+button.primary:hover{background:#1F2937}
+.seg{display:inline-flex;border:1px solid var(--border-control);border-radius:8px;overflow:hidden;
+  box-shadow:var(--shadow-control)}
+.seg button{border:0;border-radius:0;box-shadow:none;height:28px}
+.seg button + button{border-left:1px solid var(--border-control)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+.brand > span{white-space:nowrap}
+@media (max-width:860px){
+  .crumb,.slash{display:none}
+  .shell{flex-direction:column}
+  .sidebar{width:auto;border-right:0;border-bottom:1px solid var(--border-layout);max-height:40vh}
+  .canvas{padding:16px 16px 48px}
+}
+@media print{.sidebar,.topbar,form.act{display:none}}
 """
+
+_LOGO = (
+    "<svg width='15' height='15' viewBox='0 0 15 15' aria-hidden='true'>"
+    "<rect width='15' height='15' rx='4' fill='#005DFF'/>"
+    "<path d='M4 8l2.3 2.3L11 5' fill='none' stroke='#fff' stroke-width='1.8' "
+    "stroke-linecap='round' stroke-linejoin='round'/></svg>"
+)
 
 
 def _json(value: object) -> str:
     return escape(json.dumps(value, indent=2, sort_keys=True, default=str))
 
 
-def _tile(label: str, value: object, *, small: bool = False) -> str:
-    cls = "small" if small else ""
-    return (
-        f"<div class='tile'><dt>{escape(label)}</dt>"
-        f"<dd class='{cls}'>{escape(str(value))}</dd></div>"
-    )
+def _badge(text: str, kind: str = "") -> str:
+    cls = f"badge b-{kind}" if kind else "badge"
+    return f"<span class='{cls}'>{escape(text)}</span>"
 
 
-def _badge(text: str, kind: str) -> str:
-    return f"<span class='badge b-{kind}'>{escape(text)}</span>"
+def _status_kind(status: str) -> str:
+    return {"blocked": "bad", "failed": "bad", "completed": "ok"}.get(status, "")
 
 
 def _status_badge(status: str) -> str:
-    kind = {"blocked": "bad", "failed": "bad", "completed": "ok"}.get(status, "mute")
-    return _badge(status or "unknown", kind)
+    return _badge(status or "unknown", _status_kind(status))
 
 
 def _state_badge(state: str) -> str:
-    kind = {
-        "done": "ok",
-        "resolved": "ok",
-        "pending": "warn",
-        "failed": "bad",
-        "unknown": "warn",
-    }.get(state, "mute")
+    kind = {"done": "ok", "resolved": "ok", "pending": "wait", "failed": "bad",
+            "unknown": "wait"}.get(state, "")
     return _badge(state or "unknown", kind)
 
 
 def _empty(message: str) -> str:
     return f"<p class='empty'>{escape(message)}</p>"
+
+
+def _count(number: int) -> str:
+    return f"<span class='count'>{number}</span>" if number else ""
+
+
+def _short(text: str, size: int = 12) -> str:
+    return text[:size] + ("…" if len(text) > size else "")
+
+
+def _when(value: object) -> str:
+    """ISO time as `YYYY-MM-DD HH:MM UTC`, or the text as given."""
+    text = str(value or "")
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return text or "—"
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(UTC)
+    return moment.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _csrf_field() -> str:
+    return f"<input type='hidden' name='csrf_token' value='{escape(_CSRF[0])}'>"
+
+
+def _name_field(field_id: str, placeholder: str = "Your name") -> str:
+    return (
+        f"<label class='sr' for='{escape(field_id)}'>{escape(placeholder)}</label>"
+        f"<input type='text' id='{escape(field_id)}' name='approver' required "
+        f"placeholder='{escape(placeholder)}' autocomplete='name'>"
+    )
+
+
+# -- the "needs you" panels ---------------------------------------------------
+
+
+def _render_approvals(pending: list[Approval]) -> str:
+    if not pending:
+        return _empty("No approvals are waiting on a human.")
+    cards = []
+    for item in pending:
+        context = item.context or {}
+        risk = str(context.get("risk") or "")
+        run_id = str(context.get("run_id") or "")
+        run_link = (
+            f"<a href='/?{escape(urlencode({'run': run_id}))}'>{escape(_short(run_id))}</a>"
+            if run_id else "—"
+        )
+        aid = escape(item.approval_id)
+        cards.append(
+            "<div class='item'>"
+            "<div class='item-head'>"
+            f"<span class='item-title mono'>{escape(item.action)}</span>"
+            f"<span>{_badge(risk or 'risk not recorded', 'bad' if risk == 'destructive' else '')}</span>"
+            "</div>"
+            "<div class='meta'>"
+            f"<span>environment <b>{escape(str(context.get('environment') or '—'))}</b></span>"
+            f"<span>run {run_link}</span>"
+            f"<span>expires {escape(_when(item.expires_at))}</span>"
+            "</div>"
+            f"<pre>{_json(redact(dict(item.arguments)))}</pre>"
+            "<form class='act' method='post' action='/approvals/approve'>"
+            f"{_csrf_field()}<input type='hidden' name='approval_id' value='{aid}'>"
+            f"{_name_field('ap-' + item.approval_id)}"
+            "<button class='primary' type='submit'>Approve</button>"
+            "<button type='submit' formaction='/approvals/deny'>Deny</button>"
+            "</form></div>"
+        )
+    return f"<div class='stack'>{''.join(cards)}</div>"
+
+
+def _render_held(view: dict) -> str:
+    held = view.get("held") or []
+    if not held:
+        return _empty("No held actions: every claimed action has a known outcome.")
+    rows = []
+    for receipt in held:
+        key = str(receipt.get("intent_key") or "")
+        run_id = str(receipt.get("run_id") or "")
+        rows.append(
+            "<div class='item'>"
+            "<div class='item-head'>"
+            f"<span class='item-title mono'>{escape(str(receipt.get('action') or ''))}</span>"
+            f"{_state_badge(str(receipt.get('state') or ''))}"
+            "</div>"
+            "<div class='meta'>"
+            f"<span>{escape(str(receipt.get('state_meaning') or ''))}</span>"
+            f"<span>run <a href='/?{escape(urlencode({'run': run_id}))}'>{escape(_short(run_id))}</a></span>"
+            f"<span>since {escape(_when(receipt.get('created_at')))}</span>"
+            "</div>"
+            f"<pre>{_json(redact(receipt.get('arguments') or {}))}</pre>"
+            "<p class='meta'>Check the real system first. Then say what happened.</p>"
+            "<form class='act' method='post' action='/receipts/settle'>"
+            f"{_csrf_field()}<input type='hidden' name='intent_key' value='{escape(key)}'>"
+            f"{_name_field('st-' + key)}"
+            f"<label class='sr' for='ref-{escape(key)}'>Reference (optional)</label>"
+            f"<input type='text' id='ref-{escape(key)}' name='ref' placeholder='Reference (optional)'>"
+            "<span class='seg'>"
+            "<button type='submit' name='outcome' value='done'>It happened</button>"
+            "<button type='submit' name='outcome' value='failed'>It did not happen</button>"
+            "</span></form></div>"
+        )
+    return f"<div class='stack'>{''.join(rows)}</div>"
+
+
+def _render_tools(waiting: list[tuple[str, str]] | None) -> str:
+    if waiting is None:
+        return _empty("No MCP proxy data in this database.")
+    if not waiting:
+        return _empty("No tools are waiting: every tool the proxy shows was accepted.")
+    rows = []
+    for tool, why in waiting:
+        rows.append(
+            "<div class='item'>"
+            "<div class='item-head'>"
+            f"<span class='item-title mono'>{escape(tool)}</span>{_badge(why, 'wait')}"
+            "</div>"
+            "<p class='meta'>Hidden from the agent until a person accepts it. Check the "
+            "server's change first; a changed definition can change what the tool does.</p>"
+            "<form class='act' method='post' action='/tools/accept'>"
+            f"{_csrf_field()}<input type='hidden' name='tool' value='{escape(tool)}'>"
+            f"{_name_field('tl-' + tool)}"
+            "<button class='primary' type='submit'>Accept</button>"
+            "</form></div>"
+        )
+    return f"<div class='stack'>{''.join(rows)}</div>"
+
+
+# -- the run ------------------------------------------------------------------
 
 
 def _render_runs(view: dict) -> str:
@@ -158,16 +348,15 @@ def _render_runs(view: dict) -> str:
     items = []
     for run in view["runs"]:
         current = " aria-current='page'" if run["run_id"] == view["run_id"] else ""
-        rid = run["run_id"][:12] + ("…" if len(run["run_id"]) > 12 else "")
+        kind = _status_kind(run["status"])
         items.append(
-            f"<li><a href='/?run={escape(run['run_id'])}'{current}>"
-            f"<span class='rid'>{escape(rid)}</span>"
-            f"<span>{_status_badge(run['status'])}</span>"
-            f"<span class='muted tiny'>{run['steps']} steps"
-            f"{' · ' + str(run['blocked']) + ' blocked' if run['blocked'] else ''}</span>"
-            f"</a></li>"
+            f"<li><a href='/?{escape(urlencode({'run': run['run_id']}))}'{current} "
+            f"title='{escape(run['run_id'])} · {escape(run['status'])} · {run['steps']} steps'>"
+            f"<span class='rid'>{escape(_short(run['run_id'], 14))}</span>"
+            f"<span class='dot {kind}' aria-label='{escape(run['status'])}'></span>"
+            "</a></li>"
         )
-    return f"<ul class='runs'>{''.join(items)}</ul>"
+    return f"<ul class='nav'>{''.join(items)}</ul>"
 
 
 def _render_traces(view: dict) -> str:
@@ -180,11 +369,10 @@ def _render_traces(view: dict) -> str:
         completion = trace.get("completion")
         bits = [
             _status_badge(str(trace.get("status") or "")),
-            _badge(str(trace.get("enforcement") or "unknown"),
-                   "info" if trace.get("enforcement") == "enforced" else "mute"),
+            _badge(str(trace.get("enforcement") or "unknown")),
         ]
         if flags:
-            bits.append(_badge(", ".join(flags), "warn"))
+            bits.append(_badge(", ".join(flags), "wait"))
         meta = [f"step {trace.get('step')}", f"event {trace.get('event')}"]
         if trace.get("cost_usd") is not None:
             meta.append(f"${float(trace['cost_usd']):.4f}")
@@ -203,28 +391,28 @@ def _render_traces(view: dict) -> str:
             }.get(state, state)
             rows.append(f"<dt>Exchange</dt><dd>{escape(label)}</dd>")
             if prompt is not None:
-                rows.append(f"<dt>Prompt</dt><dd>{_json(prompt)}</dd>")
+                rows.append(f"<dt>Prompt</dt><dd><pre>{_json(prompt)}</pre></dd>")
             if completion is not None:
-                rows.append(f"<dt>Completion</dt><dd>{_json(completion)}</dd>")
+                rows.append(f"<dt>Completion</dt><dd><pre>{_json(completion)}</pre></dd>")
         for field in ("provider_metadata", "provider_evidence"):
             value = trace.get(field)
             if value:
-                rows.append(f"<dt>{escape(field.replace('_', ' ').title())}</dt><dd>{_json(value)}</dd>")
+                rows.append(
+                    f"<dt>{escape(field.replace('_', ' ').title())}</dt>"
+                    f"<dd><pre>{_json(value)}</pre></dd>"
+                )
 
-        detail = ""
-        if rows:
-            detail = f"<dl class='kv'>{''.join(rows)}</dl>"
         cards.append(
-            f"<details class='card' id='trace-{trace['id']}'>"
-            f"<summary><span>{escape(str(trace.get('event') or 'step'))} "
-            f"<span class='muted tiny'>#{trace.get('id')}</span></span>"
+            f"<details class='item step' id='trace-{trace['id']}'>"
+            f"<summary><span><b>{escape(str(trace.get('event') or 'step'))}</b> "
+            f"<span class='meta' style='display:inline'>#{trace.get('id')}</span></span>"
             f"<span>{' '.join(bits)}</span></summary>"
             f"<div class='meta'>{escape(' · '.join(meta))}</div>"
-            f"<dl class='kv'><dt>Input</dt><dd>{_json(trace.get('input'))}</dd>"
-            f"<dt>Output</dt><dd>{_json(trace.get('output'))}</dd></dl>"
-            f"{detail}</details>"
+            f"<dl class='kv'><dt>Input</dt><dd><pre>{_json(trace.get('input'))}</pre></dd>"
+            f"<dt>Output</dt><dd><pre>{_json(trace.get('output'))}</pre></dd>"
+            f"{''.join(rows)}</dl></details>"
         )
-    return "".join(cards)
+    return f"<div class='stack'>{''.join(cards)}</div>"
 
 
 def _render_receipts(view: dict) -> str:
@@ -239,60 +427,65 @@ def _render_receipts(view: dict) -> str:
         rows.append(
             "<tr>"
             f"<td><code>{escape(str(receipt.get('action') or ''))}</code>"
-            f"<div class='muted tiny'>{escape(str(receipt.get('step_id') or ''))}</div></td>"
+            f"<div class='meta'>{escape(str(receipt.get('step_id') or ''))}</div></td>"
             f"<td>{_state_badge(state)}"
-            f"<div class='muted tiny'>{escape(receipt['state_meaning'])}</div></td>"
-            f"<td class='tiny'>{escape(str(receipt.get('effect_key') or '—'))}"
-            f"<div class='muted tiny'>{escape(str(receipt.get('provider_ref') or ''))}</div></td>"
-            f"<td><details><summary class='muted tiny'>arguments</summary>"
-            f"<pre>{_json(receipt.get('arguments'))}</pre></details></td>"
+            f"<div class='meta'>{escape(receipt['state_meaning'])}</div></td>"
+            f"<td class='mono'>{escape(str(receipt.get('effect_key') or '—'))}"
+            f"<div class='meta'>{escape(str(receipt.get('provider_ref') or ''))}</div></td>"
+            f"<td><details><summary class='meta'>arguments</summary>"
+            f"<pre>{_json(redact(receipt.get('arguments') or {}))}</pre></details></td>"
             "</tr>"
         )
     return (
-        "<div class='wrap-table'><table><thead><tr><th>Action</th><th>State</th>"
+        "<div class='table-wrap'><table><thead><tr><th>Action</th><th>State</th>"
         "<th>Effect / reference</th><th>Arguments</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table></div>"
     )
 
 
-def _render_approvals(pending: list) -> str:
-    if not pending:
-        return _empty("No approvals are waiting on a human.")
-    cards = []
-    for item in pending:
-        cards.append(
-            f"<div class='card'><h3>{escape(item.action)}</h3>"
-            f"<div class='meta'><span>expires {escape(str(item.expires_at))}</span>"
-            f"<span>id {escape(item.approval_id)}</span></div>"
-            f"<pre>{_json(dict(item.arguments))}</pre>"
-            f"<form class='inline' method='post' action='/approvals/approve'>"
-            f"<input type='hidden' name='csrf_token' value='{escape(_CSRF[0])}'>"
-            f"<input type='hidden' name='approval_id' value='{escape(item.approval_id)}'>"
-            f"<label for='ap-{escape(item.approval_id)}'>Approver</label>"
-            f"<input id='ap-{escape(item.approval_id)}' name='approver' required>"
-            f"<button type='submit'>Approve</button></form>"
-            f"<form class='inline' method='post' action='/approvals/deny'>"
-            f"<input type='hidden' name='csrf_token' value='{escape(_CSRF[0])}'>"
-            f"<input type='hidden' name='approval_id' value='{escape(item.approval_id)}'>"
-            f"<label for='dn-{escape(item.approval_id)}'>Approver</label>"
-            f"<input id='dn-{escape(item.approval_id)}' name='approver' required>"
-            f"<button class='deny' type='submit'>Deny</button></form></div>"
+def _render_history(decided: list[Approval]) -> str:
+    if not decided:
+        return _empty("No approval has been given or denied yet.")
+    rows = []
+    for item in decided:
+        context = item.context or {}
+        kind = "ok" if item.decision == "approved" else "bad"
+        used = "used" if item.consumed_at else ("not used" if item.decision == "approved" else "—")
+        rows.append(
+            "<tr>"
+            f"<td><code>{escape(item.action)}</code>"
+            f"<div class='meta'>{escape(str(context.get('risk') or ''))}"
+            f"{' · ' + escape(str(context.get('environment'))) if context.get('environment') else ''}"
+            "</div></td>"
+            f"<td>{_badge(item.decision, kind)}</td>"
+            f"<td>{escape(str(item.approver or '—'))}</td>"
+            f"<td>{escape(_when(item.decided_at))}</td>"
+            f"<td>{escape(used)}</td>"
+            "</tr>"
         )
-    return "".join(cards)
+    return (
+        "<div class='table-wrap'><table><thead><tr><th>Action</th><th>Decision</th>"
+        "<th>By (as typed)</th><th>When</th><th>Approval</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
 
 
 #: Per-process CSRF token, injected at build time. A one-element list so the
 #: handler can read it without threading it through every render function.
 _CSRF = [""]
 
+#: The POST endpoints. Every one is a person's decision, so every one needs the
+#: token, a trusted origin and the CSRF token.
+_ACTIONS = frozenset({"/approvals/approve", "/approvals/deny", "/receipts/settle", "/tools/accept"})
+
 
 class Handler(BaseHTTPRequestHandler):
-    """Read-only evidence viewer with an explicit approval write boundary.
+    """Evidence viewer with an explicit write boundary for a person's decisions.
 
-    The approval queue is the human trust boundary of the whole product, so a
-    POST must not be forgeable by another web page. Every approval form carries
-    a per-process CSRF token, and POSTs are additionally required to come from a
-    local origin.
+    Approving, settling a held action and accepting a tool are the human trust
+    boundary of the whole product, so a POST must not be forgeable by another
+    web page. Every form carries a per-process CSRF token, POSTs must come from
+    a trusted origin, and the session cookie is SameSite=Strict.
     """
 
     store: TraceStore
@@ -306,7 +499,11 @@ class Handler(BaseHTTPRequestHandler):
     def _security_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Referrer-Policy", "no-referrer")
+        # same-origin, not no-referrer: with no-referrer a browser sends
+        # `Origin: null` on our own form posts, and the origin check then
+        # refuses every real approval. Other sites still receive nothing.
+        self.send_header("Referrer-Policy", "same-origin")
+        self.send_header("Cache-Control", "no-store")
         self.send_header(
             "Content-Security-Policy",
             "default-src 'none'; style-src 'unsafe-inline'; form-action 'self';"
@@ -346,16 +543,38 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def _redirect(self, location: str, *, set_session: bool = False) -> None:
+        self.send_response(303)
+        self.send_header("Location", location)
+        if set_session:
+            self.send_header(
+                "Set-Cookie",
+                f"{_COOKIE}={self.access_token}; HttpOnly; SameSite=Strict; Path=/",
+            )
+        self._security_headers()
+        self.end_headers()
+
+    def _cookie_token(self) -> str | None:
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == _COOKIE and value:
+                return value
+        return None
+
     def _authorized(self, query: dict[str, list[str]] | None = None) -> bool:
         """Every route needs the per-process token.
 
-        CSRF stops another site driving the browser. This stops any local
-        process or user on the machine, which CSRF does not.
+        Accepted as a bearer header, the session cookie, or `?token=` (which
+        the GET handler swaps for the cookie straight away). CSRF stops another
+        site driving the browser. This stops any local process or user on the
+        machine, which CSRF does not.
         """
         header = self.headers.get("Authorization", "")
         presented = header[7:] if header.startswith("Bearer ") else None
         if presented is None:
             presented = self.headers.get("X-Safety-Token") or None
+        if presented is None:
+            presented = self._cookie_token()
         if presented is None and query:
             candidates = query.get("token") or [""]
             presented = candidates[0]
@@ -364,7 +583,7 @@ class Handler(BaseHTTPRequestHandler):
         return secrets.compare_digest(presented, self.access_token)
 
     def _origin_is_trusted(self) -> bool:
-        """Reject approval writes that were initiated by another site.
+        """Reject writes that were initiated by another site.
 
         A cross-site form POST carries the attacker's Origin. Requests with no
         Origin header at all are same-origin navigations from our own forms.
@@ -373,6 +592,14 @@ class Handler(BaseHTTPRequestHandler):
         if origin is None:
             return True
         return origin in self.allowed_origins
+
+    def _pins(self) -> PinStore | None:
+        """The proxy's pin store, when this database is a proxy's. None otherwise."""
+        if not self.store._table_exists("mcp_tool_pins"):
+            return None
+        from agent_action_gateway.integrations.mcp_proxy import PinStore
+
+        return PinStore(self.store.path)
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -385,34 +612,57 @@ class Handler(BaseHTTPRequestHandler):
             self._send_auth_challenge()
             return
 
+        if "token" in query and parsed.path == "/":
+            # Swap the token in the address bar for an HttpOnly cookie, so it
+            # leaves the URL (history, screenshots) and the forms work.
+            rest = {k: v[0] for k, v in query.items() if k != "token" and v}
+            self._redirect("/" + (f"?{urlencode(rest)}" if rest else ""), set_session=True)
+            return
+
         snapshot = self.store.dashboard_snapshot()
         if parsed.path == "/api/state":
             self._send_json(snapshot)
             return
 
         view = build_run_view(snapshot, query.get("run", [None])[0])
-        pending = self.approvals.pending()
-        body = self._render(view, pending)
+        pins = self._pins()
+        body = self._render(
+            view,
+            self.approvals.waiting(),
+            decided=self.approvals.decided(),
+            tools=None if pins is None else pins.waiting(),
+        )
         self._send_html(body)
 
-    def _render(self, view: dict, pending: list) -> str:
+    def _render(
+        self,
+        view: dict,
+        pending: list,
+        *,
+        decided: list | None = None,
+        tools: list[tuple[str, str]] | None = None,
+    ) -> str:
         totals = view["totals"]
         budget = view.get("budget") or {}
-        fuse = "TRIPPED" if budget.get("tripped") else "OK"
+        held = view.get("held") or []
+        needs_you = len(pending) + len(held) + len(tools or [])
 
-        banner = ""
-        if totals["pending"]:
-            banner = (
-                f"<p class='alert'>{totals['pending']} effect "
-                f"{'is' if totals['pending'] == 1 else 'are'} claimed with an unknown "
-                "outcome. A retry is refused until each is resolved, because "
-                "repeating an uncertain action is how a duplicate happens.</p>"
-            )
         if not view["has_run"]:
-            banner = _empty(
+            run_intro = _empty(
                 "Nothing recorded yet. Run an agent through a session, "
                 "then open this page again."
             )
+        else:
+            run_intro = ""
+        if held:
+            held_note = (
+                f"<p class='alert'>{len(held)} action{'' if len(held) == 1 else 's'} "
+                f"{'has' if len(held) == 1 else 'have'} an unknown outcome. The same "
+                "action is refused until a person settles it, because repeating an "
+                "uncertain action is how a duplicate happens.</p>"
+            )
+        else:
+            held_note = ""
 
         gates = view["gates"]
         if gates:
@@ -422,77 +672,113 @@ class Handler(BaseHTTPRequestHandler):
                 for g in gates
             )
             gate_block = (
-                "<div class='wrap-table'><table><thead><tr><th>Verdict</th>"
+                "<div class='table-wrap'><table><thead><tr><th>Verdict</th>"
                 "<th>Score</th><th>Threshold</th></tr></thead>"
                 f"<tbody>{gate_rows}</tbody></table></div>"
             )
         else:
             gate_block = _empty("No gate verdicts for this run.")
 
-        approval_block = _render_approvals(pending)
-        budget_block = (
-            "<div class='wrap-table'><table><thead><tr><th>Steps</th><th>Spend</th>"
-            "<th>Elapsed</th><th>Fuse</th></tr></thead><tbody><tr>"
-            f"<td>{budget.get('steps_used', 0)}</td>"
-            f"<td>${float(budget.get('dollars_used', 0.0)):.4f}</td>"
-            f"<td>{float(budget.get('elapsed_seconds', 0.0)):.3f}s</td>"
-            f"<td>{_badge(fuse, 'bad' if budget.get('tripped') else 'ok')}</td>"
-            "</tr></tbody></table></div>"
-            if budget
-            else _empty("No budget recorded for this run.")
-        )
+        if budget:
+            fuse = "tripped" if budget.get("tripped") else "ok"
+            budget_block = (
+                "<div class='table-wrap'><table><thead><tr><th>Steps</th><th>Spend</th>"
+                "<th>Elapsed</th><th>Limits</th></tr></thead><tbody><tr>"
+                f"<td>{budget.get('steps_used', 0)}</td>"
+                f"<td>${float(budget.get('dollars_used', 0.0)):.4f}</td>"
+                f"<td>{float(budget.get('elapsed_seconds', 0.0)):.3f}s</td>"
+                f"<td>{_badge(fuse, 'bad' if budget.get('tripped') else 'ok')}</td>"
+                "</tr></tbody></table></div>"
+            )
+        else:
+            budget_block = _empty("No budget recorded for this run.")
+
+        protected = view["enforcement"] == "enforced"
+        run_id = str(view["run_id"] or "no run selected")
+
+        def metric(label: str, value: object) -> str:
+            return (
+                f"<div class='card metric'><div class='label'>{escape(label)}</div>"
+                f"<div class='value'>{escape(str(value))}</div></div>"
+            )
 
         return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Agent Action Gateway — evidence</title><style>{_STYLE}</style></head>
-<body><div class="wrap">
-<div class="topbar">
-  <h1>Agent Action Gateway</h1>
-  <span class="runid">{escape(str(view['run_id'] or 'no run selected'))}</span>
-</div>
-<p class="muted">What the agent was allowed to do, what it tried, what a human approved,
-and what landed. <span class="badge b-{'info' if view['enforcement'] == 'enforced' else 'mute'}">{escape(view['enforcement'])}</span></p>
-{banner}
-<div class="layout">
-  <aside><h2>Runs</h2>{_render_runs(view)}</aside>
-  <main>
-    <h2>This run</h2>
-    <dl class="tiles">
-      {_tile('Steps', totals['steps'])}
-      {_tile('Blocked', totals['blocked'])}
-      {_tile('Receipts', totals['receipts'])}
-      {_tile('Model calls', totals['model_calls'])}
-      {_tile('Tokens', totals['tokens'])}
-      {_tile('Cost', f"${totals['cost_usd']:.4f}")}
-    </dl>
+<meta name="color-scheme" content="light">
+<title>Agent Action Gateway</title><style>{_STYLE}</style></head>
+<body>
+<header class="topbar">
+  <div class="brand">{_LOGO}<span>Agent Action Gateway</span>
+    <span class="slash">/</span><span class="crumb mono">{escape(_short(run_id, 24))}</span></div>
+  <div class="top-right">
+    <a href="#needs-you" class="pill">Needs you {_count(needs_you)}</a>
+    <span class="pill">{'protected' if protected else 'recorded only'}</span>
+  </div>
+</header>
+<div class="shell">
+  <nav class="sidebar" aria-label="Sections and runs">
+    <div class="super">Sections</div>
+    <ul class="nav">
+      <li><a href="#needs-you">Needs you {_count(needs_you)}</a></li>
+      <li><a href="#this-run">This run</a></li>
+      <li><a href="#timeline">Timeline</a></li>
+      <li><a href="#receipts">Receipts</a></li>
+      <li><a href="#history">Approval history</a></li>
+    </ul>
+    <div class="super">Runs</div>
+    {_render_runs(view)}
+  </nav>
+  <main><div class="canvas">
 
-    <h2>Timeline</h2>
-    {_render_traces(view)}
+  <section class="section" id="needs-you">
+    <h1>Needs you</h1>
+    <p class="lede">The three moments a person is in the loop. Nothing here runs until you act.</p>
+    <div class="group"><h2>Approvals waiting {_count(len(pending))}</h2>{_render_approvals(pending)}</div>
+    <div class="group"><h2>Held actions {_count(len(held))}</h2>{held_note}{_render_held(view)}</div>
+    <div class="group"><h2>Tools waiting {_count(len(tools or []))}</h2>{_render_tools(tools)}</div>
+  </section>
 
-    <h2>Side-effect receipts</h2>
-    {_render_receipts(view)}
+  <section class="section" id="this-run">
+    <h1>This run</h1>
+    <p class="lede"><span class="mono">{escape(run_id)}</span> ·
+      {'every step went through the checks' if protected else 'steps were recorded, not checked'}
+      {_badge(view['enforcement'])}</p>
+    {run_intro}
+    <div class="cards">
+      {metric('Steps', totals['steps'])}
+      {metric('Blocked', totals['blocked'])}
+      {metric('Receipts', totals['receipts'])}
+      {metric('Model calls', totals['model_calls'])}
+      {metric('Tokens', totals['tokens'])}
+      {metric('Cost', f"${totals['cost_usd']:.4f}")}
+    </div>
+    <div class="group" id="timeline"><h2>Timeline</h2>{_render_traces(view)}</div>
+    <div class="group" id="receipts"><h2>Side-effect receipts</h2>{_render_receipts(view)}</div>
+    <div class="group"><h2>Budget</h2>{budget_block}</div>
+    <div class="group"><h2>Gate history</h2>{gate_block}</div>
+  </section>
 
-    <h2>Approvals waiting</h2>
-    {approval_block}
+  <section class="section" id="history">
+    <h1>Approval history</h1>
+    <p class="lede">Who let what run, across every run. Names are as typed: anyone with
+      the dashboard token can type any name.</p>
+    {_render_history(decided or [])}
+  </section>
 
-    <h2>Budget</h2>
-    {budget_block}
-
-    <h2>Gate history</h2>
-    {gate_block}
-  </main>
-</div></div></body></html>"""
+  </div></main>
+</div></body></html>"""
 
     def do_POST(self) -> None:
-        if self.path not in {"/approvals/approve", "/approvals/deny"}:
+        path = urlparse(self.path).path
+        if path not in _ACTIONS:
             self.send_error(404)
             return
         if not self._authorized(parse_qs(self.path.partition("?")[2])):
             self.send_error(401, "dashboard token required")
             return
         if not self._origin_is_trusted():
-            self.send_error(403, "cross-origin approval request rejected")
+            self.send_error(403, "cross-origin request rejected")
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -505,24 +791,44 @@ and what landed. <span class="badge b-{'info' if view['enforcement'] == 'enforce
         ):
             self.send_error(403, "missing or invalid CSRF token")
             return
-        approval_id = form.get("approval_id", [None])[0]
-        approver = form.get("approver", [None])[0]
-        if not approval_id or not approver:
-            self.send_error(400, "approval_id and approver are required")
+
+        def field(name: str) -> str:
+            return (form.get(name, [""])[0] or "").strip()
+
+        name = field("approver")
+        if not name:
+            self.send_error(400, "a name is required")
             return
         try:
-            if self.path.endswith("/approve"):
-                self.approvals.approve(approval_id, approver)
+            if path in {"/approvals/approve", "/approvals/deny"}:
+                approval_id = field("approval_id")
+                if not approval_id:
+                    self.send_error(400, "approval_id is required")
+                    return
+                if path.endswith("/approve"):
+                    self.approvals.approve(approval_id, name)
+                else:
+                    self.approvals.deny(approval_id, name)
+            elif path == "/receipts/settle":
+                outcome = field("outcome")
+                if outcome not in {"done", "failed"}:
+                    self.send_error(400, "outcome must be done or failed")
+                    return
+                self.store.settle_receipt(
+                    field("intent_key"), landed=outcome == "done", by=name,
+                    ref=field("ref") or None,
+                )
             else:
-                self.approvals.deny(approval_id, approver)
-        except ApprovalError as exc:
-            # Surface the approval-policy message, never an internal traceback.
+                pins = self._pins()
+                tool = field("tool")
+                if pins is None or not tool or not pins.accept(name, tool):
+                    self.send_error(400, "that tool is not waiting")
+                    return
+        except (ApprovalError, ValueError) as exc:
+            # Surface the policy message, never an internal traceback.
             self.send_error(400, str(exc))
             return
-        self.send_response(303)
-        self.send_header("Location", "/")
-        self._security_headers()
-        self.end_headers()
+        self._redirect("/#needs-you")
 
 
 def build_server(
@@ -596,7 +902,8 @@ def serve(
     server, handler = build_server(path, host, port, resolved, allow_origins)
     print(f"Agent Action Gateway dashboard on http://{host}:{server.server_address[1]}/")
     print(f"access token: {handler.access_token}")
-    print("Pass it as ?token=... or 'Authorization: Bearer ...'. Keep it private.")
+    print("Open /?token=... once (it becomes a cookie), or send "
+          "'Authorization: Bearer ...'. Keep it private.")
     server.serve_forever()
 
 

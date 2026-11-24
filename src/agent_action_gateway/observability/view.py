@@ -25,6 +25,10 @@ _STATE_MEANING = {
 }
 
 
+#: Receipt states whose outcome is not known. A person settles them.
+HELD_STATES = frozenset({"pending", "unknown"})
+
+
 def state_meaning(state: str) -> str:
     """One-line gloss for a receipt state, shown beside it.
 
@@ -89,8 +93,10 @@ def build_run_view(snapshot: Mapping[str, Any], run_id: str | None) -> dict[str,
     gates = [dict(g) for g in snapshot.get("gate_verdicts", [])]
 
     run_index: list[dict[str, Any]] = []
+    last_id: dict[str, int] = {}
     for trace in all_traces:
         rid = str(trace.get("run_id") or "")
+        last_id[rid] = max(last_id.get(rid, 0), int(trace.get("id", 0)))
         if not any(r["run_id"] == rid for r in run_index):
             run_index.append({"run_id": rid, "status": str(trace.get("status") or "")})
 
@@ -109,7 +115,8 @@ def build_run_view(snapshot: Mapping[str, Any], run_id: str | None) -> dict[str,
         entry["steps"] = len(steps)
         entry["blocked"] = sum(1 for s in steps if s.get("status") == "blocked")
 
-    run_index.sort(key=lambda r: (-r["steps"], r["run_id"]))
+    # Newest first: the run a person most likely came to look at.
+    run_index.sort(key=lambda r: (-last_id.get(r["run_id"], 0), r["run_id"]))
 
     selected = run_id or (run_index[0]["run_id"] if run_index else None)
     traces = sorted(by_run.get(selected or "", []), key=lambda t: int(t.get("id", 0)))
@@ -130,7 +137,7 @@ def build_run_view(snapshot: Mapping[str, Any], run_id: str | None) -> dict[str,
             {
                 **receipt,
                 "state_meaning": state_meaning(str(receipt.get("state") or "")),
-                "needs_review": str(receipt.get("state")) in {"pending", "unknown"},
+                "needs_review": str(receipt.get("state")) in HELD_STATES,
             }
             for receipt in run_receipts
         ],
@@ -151,4 +158,13 @@ def build_run_view(snapshot: Mapping[str, Any], run_id: str | None) -> dict[str,
         },
         "enforcement": _enforcement_of(traces),
         "pending_approvals": [],
+        # Held actions from every run, not only this one: a held action blocks
+        # its retries everywhere, so it has to be visible from any page.
+        "held": [
+            {**dict(receipt), "state_meaning": state_meaning(str(receipt.get("state") or ""))}
+            for receipt in sorted(
+                snapshot.get("receipts", []), key=lambda r: int(r.get("id", 0))
+            )
+            if str(receipt.get("state")) in HELD_STATES
+        ],
     }

@@ -171,6 +171,11 @@ class SafetySession:
             action,
             arguments,
             datetime.now(UTC) + timedelta(seconds=expires_in_seconds),
+            context={
+                "risk": self.registry.classify(action),
+                "environment": self.environment,
+                "run_id": self.run_id,
+            },
         )
         if approver != "pending":
             return self.approvals.approve(approval.approval_id, approver)

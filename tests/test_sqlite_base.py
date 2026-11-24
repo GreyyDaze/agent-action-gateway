@@ -141,7 +141,7 @@ class MigrationTest(unittest.TestCase):
             traces = TraceStore(path)
             approvals = ApprovalStore(traces)
             self.assertEqual(traces.applied_migrations(), (1, 2, 3, 4, 5, 6, 7))
-            self.assertEqual(approvals.applied_migrations(), (1, 2))
+            self.assertEqual(approvals.applied_migrations(), (1, 2, 3))
             with approvals.connection() as connection:
                 names = {
                     row["name"]
@@ -155,7 +155,7 @@ class MigrationTest(unittest.TestCase):
     def test_approval_store_accepts_a_bare_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             approvals = ApprovalStore(Path(directory) / "approvals.db")
-            self.assertEqual(approvals.applied_migrations(), (1, 2))
+            self.assertEqual(approvals.applied_migrations(), (1, 2, 3))
 
 
 class ConcurrencyTest(unittest.TestCase):

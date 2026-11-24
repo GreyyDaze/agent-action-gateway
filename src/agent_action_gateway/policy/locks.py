@@ -2,7 +2,7 @@
 import hashlib
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -41,6 +41,10 @@ class Approval:
     decision: str
     decided_at: str | None
     consumed_at: str | None
+    #: What a person needs to decide: the risk class, the session's
+    #: environment and the run that asked. Empty for approvals made before
+    #: this was recorded.
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 def payload_hash(action: str, arguments: dict[str, Any]) -> str:
@@ -51,6 +55,18 @@ def payload_hash(action: str, arguments: dict[str, Any]) -> str:
 def state_hash(state: Any) -> str:
     canonical = json.dumps(state, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _decode_context(row: Any) -> dict[str, Any]:
+    try:
+        raw = row["context_json"]
+    except (IndexError, KeyError):
+        return {}
+    try:
+        value = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 class ApprovalStore(SqliteStore):
@@ -110,6 +126,8 @@ class ApprovalStore(SqliteStore):
                     "UPDATE approvals SET arguments_json = json_object('_unverifiable_legacy', payload_hash)"
                 )
             yield 2, additions
+        # v3: the context a person needs to decide (risk, environment, run).
+        yield 3, ["ALTER TABLE approvals ADD COLUMN context_json TEXT"]
 
     def request(
         self,
@@ -117,6 +135,7 @@ class ApprovalStore(SqliteStore):
         arguments: dict[str, Any],
         expires_at: datetime,
         current_state: Any | None = None,
+        context: dict[str, Any] | None = None,
     ) -> Approval:
         self._require_available()
         now = datetime.now(UTC)
@@ -134,14 +153,16 @@ class ApprovalStore(SqliteStore):
             decision="pending",
             decided_at=None,
             consumed_at=None,
+            context=dict(context or {}),
         )
         with self.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO approvals(
                     approval_id, action, arguments_json, payload_hash, approver,
-                    created_at, expires_at, state_hash, decision, decided_at, consumed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, expires_at, state_hash, decision, decided_at, consumed_at,
+                    context_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval.approval_id,
@@ -155,6 +176,7 @@ class ApprovalStore(SqliteStore):
                     approval.decision,
                     approval.decided_at,
                     approval.consumed_at,
+                    json.dumps(approval.context, sort_keys=True) if approval.context else None,
                 ),
             )
         return approval
@@ -226,6 +248,22 @@ class ApprovalStore(SqliteStore):
         with self.connection() as connection:
             rows = connection.execute(
                 "SELECT * FROM approvals WHERE decision='pending' ORDER BY created_at"
+            ).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def waiting(self) -> list[Approval]:
+        """Pending approvals that can still be given: not expired."""
+        now = datetime.now(UTC)
+        return [a for a in self.pending() if now < datetime.fromisoformat(a.expires_at)]
+
+    def decided(self, limit: int = 50) -> list[Approval]:
+        """Approvals a person approved or denied, newest first: who let what run."""
+        self._require_available()
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM approvals WHERE decision IN ('approved', 'denied') "
+                "ORDER BY decided_at DESC LIMIT ?",
+                (int(limit),),
             ).fetchall()
         return [self._from_row(row) for row in rows]
 
@@ -301,6 +339,7 @@ class ApprovalStore(SqliteStore):
             decision=row["decision"],
             decided_at=row["decided_at"],
             consumed_at=row["consumed_at"],
+            context=_decode_context(row),
         )
 
     def require_available(self) -> None:

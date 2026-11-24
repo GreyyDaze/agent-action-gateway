@@ -180,7 +180,12 @@ class DashboardRenderTest(unittest.TestCase):
     def test_the_page_is_responsive(self) -> None:
         html = self._get()
         self.assertIn('name="viewport"', html)
-        self.assertIn("prefers-color-scheme", html)
+        self.assertIn("@media (max-width:860px)", html)
+
+    def test_blue_is_kept_for_the_logo_and_links(self) -> None:
+        """The style guide: blue only for the logo mark and links."""
+        html = self._get()
+        self.assertEqual(html.count("#005DFF"), 2)  # the token, and the logo mark
 
 
 class ViewModelTest(unittest.TestCase):

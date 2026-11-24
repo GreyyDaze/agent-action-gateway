@@ -392,6 +392,38 @@ class TraceStore(SqliteStore):
                 (provider_ref, intent_key),
             )
 
+    def settle_receipt(
+        self, intent_key: str, *, landed: bool, by: str, ref: str | None = None
+    ) -> Receipt:
+        """Settle a held action after a person checked the real system.
+
+        `landed=True`: it happened, so a repeat gets the recorded result.
+        `landed=False`: it did not, so a later attempt may run. Who settled it,
+        and how, is recorded in the run's timeline.
+        """
+        held = {r.intent_key: r for r in self.unknown_receipts()}
+        receipt = held.get(intent_key)
+        if receipt is None:
+            raise ValueError(f"{intent_key} is not a held action")
+        if not by.strip():
+            raise ValueError("a name is required to settle a held action")
+        if landed:
+            self.mark_done(intent_key, ref or None)
+        else:
+            self.mark_failed(intent_key)
+        self.append_trace(
+            TraceEvent(
+                receipt.run_id,
+                0,
+                "receipt.settled",
+                {"intent_key": intent_key, "action": receipt.action,
+                 "landed": landed, "ref": ref or None, "by": by},
+                "settled as done" if landed else "settled as failed",
+                "completed",
+            )
+        )
+        return receipt
+
     def mark_failed(self, intent_key: str) -> None:
         with self.connection() as connection:
             connection.execute(

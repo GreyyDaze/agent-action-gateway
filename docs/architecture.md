@@ -6,7 +6,7 @@ How the package is organized, and how one action flows through it.
 
 - [Layers](#layers)
 - [Package map](#package-map)
-- [How an action flows](#how-an-action-flows)
+- [How it works](#how-it-works)
 - [Configuration](#configuration)
 - [Testing](#testing)
 
@@ -46,43 +46,135 @@ flowchart TD
 | `observability/` | dashboard and bypass detection |
 | `proofs/` | verification suites about this library, and their test doubles |
 
-## How an action flows
+## How it works
 
-A wrapped tool (the library) and the MCP proxy both call `engine.enforce()`, so
-they check the same things. The HTTP gateway and its MCP endpoint (`/mcp`) do
-not: they check the environment and (in the default mode) approval, and hold the
-key. See the table in the README for what each one checks.
+One picture of the whole system: every part, and every step an action takes.
+The numbers are the order of the checks. The agent reaches only the checkpoint,
+never your tools, the real keys or the records.
 
 ```mermaid
-flowchart LR
-    A1[Agent in code] --> L[Library]
-    A2[Agent on MCP servers] --> P[MCP proxy]
-    L --> E["engine.enforce()"]
-    P --> E
-    E --> T[Your tools / MCP servers]
+flowchart TD
+    subgraph AG["Agent side"]
+        A["Your agent<br/>(proposes an action)"]
+    end
+
+    subgraph CP["Checkpoint: the only way in"]
+        LIB["Library: session() / ctx.tool<br/>(Python functions)"]
+        PX["MCP proxy<br/>(stdio, or HTTP with a token)"]
+        PIN{"0. Tool definition<br/>same as pinned?"}
+        S1["1. Decide the risk<br/>read / write / destructive<br/>(undeclared = destructive)"]
+        S2{"2. Within limits?<br/>steps, time, cost, loops"}
+        S3{"3. Right environment?"}
+        S4{"4. Not a read:<br/>exact approval?<br/>(same action and arguments,<br/>unused, under 15 min)"}
+        S5{"5. Claim the effect:<br/>claimed before?"}
+        RUN["6. Run it, with the intent key"]
+        OUT{"Result?"}
+    end
+
+    subgraph TL["Your systems"]
+        T["Your tools / MCP servers"]
+        GW["Gateway<br/>virtual key in, real key out;<br/>routes, hosts, private-address check"]
+        API["Real APIs"]
+    end
+
+    subgraph ST["Records (SQLite or PostgreSQL)"]
+        APR[("Approvals")]
+        RCP[("Receipts<br/>pending / done / failed / resolved")]
+        TR[("Run records<br/>secrets hidden")]
+        PN[("Pinned tools")]
+    end
+
+    subgraph HU["Person"]
+        D["Dashboard or CLI<br/>approve or deny, settle held actions,<br/>accept changed tools, see runs"]
+    end
+
+    A -->|Python call| LIB
+    A -->|MCP call| PX
+    PX --> PIN
+    PIN -->|changed: hidden until accepted| PN
+    PIN -->|same| S1
+    LIB --> S1
+    S1 --> S2
+    S2 -->|no| BLK["Blocked, with the reason"]
+    S2 -->|yes| S3
+    S3 -->|no| BLK
+    S3 -->|yes| S4
+    S4 -->|no| REQ["Blocked: approval requested<br/>(agent gets an approval id)"]
+    REQ --> APR
+    S4 -->|yes, now used up| S5
+    S5 -->|done before| PREV["Return the first result<br/>(not run again)"]
+    S5 -->|pending: may have landed| HELD["Held: not run again"]
+    S5 -->|new, or failed before| RUN
+    RUN --> T
+    RUN --> GW
+    GW --> API
+    RUN --> OUT
+    OUT -->|ok| OK["Mark done, return the result"]
+    OUT -->|clear error| FAIL["Mark failed<br/>(safe to try again)"]
+    OUT -->|timeout or no answer| HELD
+
+    OK --> RCP
+    FAIL --> RCP
+    HELD --> RCP
+    BLK --> TR
+    REQ --> TR
+    OK --> TR
+    PREV --> TR
+
+    APR --> D
+    RCP --> D
+    TR --> D
+    PN --> D
+    D -->|approve| APR
+    D -->|settle: landed or not| RCP
+    D -->|accept| PN
+    REQ -.->|agent retries with the approval id| A
 ```
 
-The flow for the library and the proxy:
+What each part does:
+
+| Part | Job |
+|---|---|
+| **Agent** | proposes actions. It holds no real key and cannot write approvals or records. |
+| **Library** | wraps your Python tools; each call goes through the checks. |
+| **MCP proxy** | sits between the agent and MCP servers; pins tool definitions, then runs the same checks. |
+| **Checks 1 to 6** | one code path, `engine.enforce()`, used by both the library and the proxy. |
+| **Gateway** | holds the real API key. The agent gets a virtual key that works only for its routes. Behind the proxy, it does not ask for a second approval. |
+| **Records** | approvals, receipts (the claim made *before* running), run records with secrets hidden, and pinned tools. |
+| **Person** | decides in the dashboard or CLI. Only a person can approve, settle a held action or accept a changed tool. |
+
+Used **directly** (agent → gateway, no proxy), the gateway and its `/mcp`
+endpoint check routes, environment, key custody and approval, but not limits or
+the effect claim. For all checks and key custody, put it behind the proxy.
+
+### The approval loop, step by step
 
 ```mermaid
 sequenceDiagram
     participant Agent
-    participant Door as session / MCP proxy
-    participant Engine as engine.enforce()
-    participant Store as audit + storage
-    participant Provider
-    Agent->>Door: proposed action
-    Door->>Engine: action, arguments, context
-    Engine->>Engine: risk, limits, environment, approval
-    alt refused
-        Engine->>Store: record the refusal
-        Engine-->>Agent: blocked, with the reason
-    else allowed
-        Engine->>Store: claim the effect (receipt)
-        Engine->>Provider: call, with the intent key
-        Provider-->>Engine: result
-        Engine->>Store: mark done, record the call
-        Engine-->>Agent: allowed, with the result
+    participant CP as Checkpoint (library or proxy)
+    participant Store as Records
+    participant Person as Person (dashboard or CLI)
+    participant Tool as Tool or gateway
+
+    Agent->>CP: delete_branch(name="old")
+    CP->>CP: 1-3. risk destructive, limits ok, environment ok
+    CP->>Store: 4. no approval: save a request for this exact call
+    CP-->>Agent: blocked, approval id A1
+    Person->>Store: read the request (action, arguments, risk, run)
+    Person->>Store: approve A1
+    Agent->>CP: same call again, with A1
+    CP->>Store: 4. A1 matches the exact arguments: use it up
+    CP->>Store: 5. claim the effect (receipt pending)
+    CP->>Tool: 6. run, with the intent key
+    alt ok
+        Tool-->>CP: result
+        CP->>Store: receipt done, record the call
+        CP-->>Agent: allowed, with the result
+    else timeout or no answer
+        CP->>Store: receipt stays pending (held)
+        CP-->>Agent: error; a retry is refused, not run twice
+        Person->>Store: check the real system, settle: landed or not
     end
 ```
 
@@ -97,7 +189,7 @@ alone (median of 400 calls; run it yourself, the numbers move from run to run):
 | Library, read tool | under 0.01 ms | about 3 to 4 ms |
 | Library, destructive tool, approved (claim, receipt, record) | under 0.01 ms | about 13 to 17 ms |
 | MCP proxy, read tool | about 0.04 ms (straight to the server) | about 3 to 4 ms |
-| MCP proxy, destructive tool, approved | about 0.04 ms | about 14 to 15 ms |
+| MCP proxy, destructive tool, approved | about 0.04 ms | about 13 to 15 ms |
 
 Nearly all of it is SQLite writes (the trace, the receipt, the approval). A real
 tool call (a network request, a database query) is usually far slower than this,

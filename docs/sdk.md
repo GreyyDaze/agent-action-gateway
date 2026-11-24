@@ -124,7 +124,9 @@ agent-gateway receipts settle --db data/runtime.db --key KEY --failed   # it did
 ```
 
 `--done` makes a repeat return the recorded result (add `--ref` to record the
-provider's reference); `--failed` lets a later attempt run.
+provider's reference); `--failed` lets a later attempt run. The dashboard has the
+same choice on each held action ("It happened" / "It did not happen"). Either
+way, the run's timeline records who settled it and how.
 
 Adjust what counts as "the same effect":
 
@@ -434,6 +436,9 @@ Cursor use works as it is:
   # --by NAME records who accepted it
   ```
 
+  The dashboard lists the same tools under **Tools waiting**, with an Accept
+  button, when it is pointed at the proxy's database.
+
   Pins are kept in the database, so a change made while the proxy was stopped is
   caught at the next start. Set `"trust_hints": false` for a server you do not
   trust at all, and use rules instead.
@@ -572,20 +577,34 @@ Both run the same schema and migrations. `tests/test_backend_agreement.py`
 runs the store checks on both and compares the answers; without
 `AGENT_GATEWAY_TEST_POSTGRES` set, the PostgreSQL half skips visibly.
 
-### Dashboard security
+### Dashboard
 
 ```bash
 agent-gateway dashboard --db data/runtime.db
 ```
 
+Open the printed address with `?token=...` once. Point it at the database the
+proxy or your sessions write to.
+
+| Section | Shows | A person can |
+|---|---|---|
+| **Needs you** | approvals waiting (action, exact arguments, risk, environment, the run that asked); held actions from every run; MCP tools waiting to be accepted | approve or deny; settle a held action ("it happened", with an optional reference, or "it did not happen"); accept a tool |
+| **This run** | the newest run by default (pick another in the sidebar): steps, blocked steps, receipts, model calls, tokens, cost, the timeline, receipts, limits, gate verdicts | read the evidence |
+| **Approval history** | every approval given or denied, across runs: action, risk, environment, decision, who, when, and whether it was used | prove who let what run |
+
+Names are typed, not verified: anyone with the dashboard token can type any
+name. With more than one operator, put sign-in in front of it (below).
+
 | Protection | Detail |
 |---|---|
-| Access token | from `AGENT_GATEWAY_DASHBOARD_TOKEN`, or a new one printed at start-up; needed on every route as `?token=` or `Authorization: Bearer` |
+| Access token | from `AGENT_GATEWAY_DASHBOARD_TOKEN`, or a new one printed at start-up. `?token=` is swapped for an HttpOnly, SameSite=Strict cookie and removed from the address; `Authorization: Bearer` also works |
 | Local by default | binds to `127.0.0.1`; any other address needs `AGENT_GATEWAY_DASHBOARD_TOKEN` |
-| CSRF and origin checks | on every approval form; a POST from another site is refused. When you open it at a different address than it binds to (a container bound to `0.0.0.0`, opened as `http://127.0.0.1:8765`), name that address with `--allow-origin` |
-| No scripts | the Content-Security-Policy allows none |
+| CSRF and origin checks | on every form; a POST from another site is refused. When you open it at a different address than it binds to (a container bound to `0.0.0.0`, opened as `http://127.0.0.1:8765`), name that address with `--allow-origin` |
+| No scripts | the Content-Security-Policy allows none, and no outside file is loaded |
 
 Restarting the dashboard invalidates open forms, and a printed token, on purpose.
+To share it beyond one machine, put a TLS reverse proxy with its own sign-in in
+front of it.
 
 ## Limits of the SDK
 

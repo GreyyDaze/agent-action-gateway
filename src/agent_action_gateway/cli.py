@@ -425,11 +425,12 @@ def run_receipts(args: argparse.Namespace) -> int:
     if args.key not in held:
         print(f"receipts: {args.key} is not a held action (see `receipts list`)", file=sys.stderr)
         return EXIT_USAGE
+    import getpass
+
+    store.settle_receipt(args.key, landed=bool(args.done), by=getpass.getuser(), ref=args.ref)
     if args.done:
-        store.mark_done(args.key, args.ref)
         print(f"Settled {args.key} as done: a repeat gets the recorded result.")
     else:
-        store.mark_failed(args.key)
         print(f"Settled {args.key} as failed: a later attempt may run.")
     return EXIT_PASS
 

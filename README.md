@@ -24,7 +24,7 @@ decides what to do. The checkpoint decides if it runs, and records it either way
 | | A retry repeats the action | The same action does not run twice, even after a crash. |
 | | The agent loops or runs too long | Limits on steps, time and cost stop the run. |
 | | The agent holds the real API key | With the gateway, it never sees the key. |
-| **Prove** | No record of what happened | Every checked action is recorded, with secrets hidden, and shown in a dashboard. |
+| **Prove** | No record of what happened | Every checked action is recorded, with secrets hidden. A dashboard shows it, and is where a person approves, settles held actions and accepts changed tools. |
 | | A new version may be less safe | A release gate tests it on your cases and fails if it got worse. |
 
 Smaller features (stop and ask for a missing value, risk decided per call for
@@ -168,8 +168,9 @@ More: [SDK guide](docs/sdk.md).
   agent cannot change its config or approvals; agents need a token
   ([details](docs/sdk.md#mcp-proxy)).
 - **Secrets:** records are redacted before they are written.
-- **Dashboard:** needs the token printed at start; refuses non-local addresses
-  without one.
+- **Dashboard:** needs the token printed at start (then a strict cookie);
+  refuses non-local addresses without one; every form has CSRF and origin checks.
+  Approver names are typed, not verified.
 - **Gateway:** refuses unregistered routes, hosts not on the allow-list, and
   names that resolve to private addresses.
 
@@ -199,7 +200,7 @@ pip install agent-action-gateway
 | check MCP tool calls | `agent-gateway mcp-proxy --config servers.json` |
 | run the proxy as its own service | `agent-gateway mcp-proxy --config servers.json --http` |
 | run the key-holding gateway | `agent-gateway gateway --config routes.json --db gateway.db` |
-| see runs and approve | `agent-gateway dashboard` |
+| approve, settle held actions, accept tools, see runs | `agent-gateway dashboard` |
 | settle actions held with an unknown outcome | `agent-gateway receipts list` |
 | find calls that skip the checkpoint | `agent-gateway check --app your_agent.py` (`--format json` for CI) |
 | test a new agent version | `agent-gateway gate check --cases your-cases.json ...` ([guide](docs/evaluation.md)) |

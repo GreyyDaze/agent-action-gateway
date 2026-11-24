@@ -128,6 +128,10 @@ agent-gateway receipts list --db data/runtime.db
 agent-gateway receipts settle --db data/runtime.db --key KEY --done    # or --failed
 ```
 
+The dashboard offers the same, under **Needs you → Held actions**. The settlement,
+who made it and any reference are recorded in the run's timeline
+(`receipt.settled`).
+
 ## Recovery by action type
 
 | Action type | Recovery |
