@@ -55,9 +55,22 @@ tools like `execute_sql`, tool pinning, the bypass scanner) are explained in the
 
 ## 5. Architecture
 
-Every part, and every step an action takes. The agent reaches only the
-checkpoint, never your tools, the real keys or the records. Only a person can
-approve, settle a held action or accept a changed tool.
+The agent reaches only the checkpoint, never your tools, the real keys or the
+records. Only a person can approve, settle a held action or accept a changed tool.
+
+```mermaid
+flowchart LR
+    A[Your agent] --> C["Checkpoint<br/>library or MCP proxy<br/>(checks every call)"]
+    C -->|allowed| T[Your tools / MCP servers]
+    C -->|allowed| G["Gateway<br/>(holds the real key)"]
+    G --> API[Real APIs]
+    C --> R[(Records)]
+    R --> P["Person<br/>(dashboard or CLI)"]
+    P -->|approve, settle, accept| R
+```
+
+<details>
+<summary><b>Show every part and step</b></summary>
 
 ```mermaid
 flowchart TD
@@ -137,6 +150,8 @@ flowchart TD
     D -->|accept| PN
     REQ -.->|agent retries with the approval id| A
 ```
+
+</details>
 
 | Part | Use it when your agent calls | Checks | Guide |
 |---|---|---|---|
