@@ -302,6 +302,15 @@ Not independently audited. ([full list](docs/gateway-deployment.md#known-limitat
 
 ## 11. Setup
 
+There is no hosted version. Everything runs on your machines, and nothing is sent to us.
+
+| Part | How it runs |
+|---|---|
+| Library | inside your agent's Python code; no server |
+| MCP proxy | started by your MCP client (stdio), or as a service you run (`--http`) |
+| Gateway | a server you run; it holds the real keys |
+| Dashboard | a local web page (127.0.0.1); to share it, put it behind your own sign-in |
+
 ```bash
 pip install agent-action-gateway
 ```
