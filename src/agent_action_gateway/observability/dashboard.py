@@ -1,12 +1,11 @@
 """A local dashboard for recorded evidence, and where a person acts.
 
-Server-rendered and deliberately script-free. The Content-Security-Policy below
-sets `default-src 'none'` with no `script-src`, so there is no way to run
-JavaScript here even by accident. Every interactive affordance is native HTML:
-`<details>` for expansion, forms for the three moments a person is in the loop
-(approve or deny an action, settle a held action, accept a changed tool). That
-is a security property and also the reason the layout cannot grow a client-side
-filter later without a deliberate decision to relax the policy.
+Server-rendered. The only script is the short auto-refresh below; the
+Content-Security-Policy allows that one script by its hash and nothing else, so
+no other JavaScript can run here, not even an injected inline one. Every
+interactive affordance is native HTML: `<details>` for expansion, forms for the
+three moments a person is in the loop (approve or deny an action, settle a held
+action, accept a changed tool).
 
 The look follows a monochrome, high-density style: grey for structure, blue only
 for the logo mark and links, green for OK, amber for waiting, red for refused or
@@ -16,6 +15,8 @@ falls back from Inter to the system font.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import os
 import secrets
@@ -49,6 +50,24 @@ _CHALLENGE_PAGE = (
     "</body>"
 )
 
+#: Reload every 10 seconds so new approvals show up, but never while a person is
+#: in the middle of something: typing, a field filled in, a step opened, or the
+#: tab hidden. The scroll position is kept across the reload.
+_REFRESH_JS = (
+    "(function(){var m=document.querySelector('main'),k='agw-scroll';"
+    "try{var y=sessionStorage.getItem(k);if(m&&y){m.scrollTop=+y;}"
+    "sessionStorage.removeItem(k);}catch(e){}"
+    "function busy(){var a=document.activeElement;"
+    "if(a&&/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(a.tagName))return true;"
+    "if(document.querySelector('details[open]'))return true;"
+    "var f=document.querySelectorAll('input[type=text]');"
+    "for(var i=0;i<f.length;i++){if(f[i].value)return true;}return false;}"
+    "setInterval(function(){if(document.hidden||busy())return;"
+    "try{if(m)sessionStorage.setItem(k,String(m.scrollTop));}catch(e){}"
+    "location.reload();},10000);})();"
+)
+_REFRESH_HASH = base64.b64encode(hashlib.sha256(_REFRESH_JS.encode()).digest()).decode()
+
 _STYLE = """
 :root{
   --primary:#005DFF; --primary-hover:#004AD6;
@@ -62,8 +81,11 @@ _STYLE = """
 }
 *{box-sizing:border-box}
 html,body{height:100%}
+/* Only the content area and the sidebar scroll, so a sidebar link never moves the topbar. */
+@media (min-width:861px){html,body{overflow:hidden}}
+.group,.section{scroll-margin-top:16px}
 body{margin:0;background:var(--canvas);color:var(--text-main);
-  font:13px/1.5 'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  font:15px/1.55 'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
   display:flex;flex-direction:column}
 a{color:var(--primary);text-decoration:none}
@@ -71,103 +93,114 @@ a:hover{color:var(--primary-hover)}
 code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 :focus-visible{outline:2px solid var(--text-main);outline-offset:2px;border-radius:6px}
 
-.topbar{height:46px;flex:none;display:flex;align-items:center;justify-content:space-between;
-  padding:0 16px;border-bottom:1px solid var(--border-layout);background:var(--surface)}
-.brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;min-width:0}
+.topbar{height:56px;flex:none;display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;border-bottom:1px solid var(--border-layout);background:var(--surface)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:16px;min-width:0}
 .brand svg{flex:none}
 .slash{color:#E2E4E8;font-weight:300}
-.crumb{color:var(--text-muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crumb{color:var(--text-muted);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .top-right{display:flex;align-items:center;gap:8px;flex:none}
-.pill{background:#F2F2F5;border-radius:8px;padding:3px 10px;font-size:12px;font-weight:600;
-  color:var(--text-body);white-space:nowrap}
-.count{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;
-  padding:0 4px;border-radius:999px;background:var(--urgent);color:#fff;font-size:10px;font-weight:700}
+.pill{display:inline-flex;align-items:center;gap:6px;height:30px;background:#F2F2F5;
+  border-radius:8px;padding:0 12px;font-size:13px;font-weight:600;color:var(--text-body);
+  white-space:nowrap}
+a.pill:hover{background:var(--subtle);color:var(--text-main)}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}
+.pill.wait{background:var(--wait-bg);color:var(--wait);box-shadow:inset 0 0 0 1px var(--wait-border)}
+.count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;
+  padding:0 6px;border-radius:999px;background:var(--urgent);color:#fff;font-size:12px;font-weight:700}
 
 .shell{flex:1;display:flex;min-height:0}
-.sidebar{width:225px;flex:none;border-right:1px solid var(--border-layout);background:var(--surface);
-  overflow-y:auto;padding:12px 10px}
-.super{font-size:11px;font-weight:500;color:var(--text-muted);margin:14px 10px 6px;
+.sidebar{width:256px;flex:none;border-right:1px solid var(--border-layout);background:var(--surface);
+  overflow-y:auto;padding:16px 12px}
+.super{font-size:12px;font-weight:500;color:var(--text-muted);margin:16px 12px 8px;
   text-transform:uppercase;letter-spacing:.04em}
 .super:first-child{margin-top:2px}
 .nav{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
-.nav a{display:flex;align-items:center;justify-content:space-between;gap:8px;height:34px;
-  padding:0 10px;border-radius:8px;color:#2E333D;font-weight:500;font-size:13px}
+.nav a{display:flex;align-items:center;justify-content:space-between;gap:8px;height:40px;
+  padding:0 12px;border-radius:8px;color:#2E333D;font-weight:500;font-size:15px}
 .nav a:hover{background:var(--muted-bg)}
 .nav a[aria-current="page"]{background:var(--subtle);color:var(--text-main);font-weight:600}
-.nav .rid{font-family:ui-monospace,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;
+.nav .rid{font-family:ui-monospace,monospace;font-size:13px;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap}
-.dot{width:7px;height:7px;border-radius:999px;flex:none;background:var(--text-subtle)}
+.dot{width:8px;height:8px;border-radius:999px;flex:none;background:var(--text-subtle)}
 .dot.ok{background:#12B76A}.dot.bad{background:var(--urgent)}.dot.wait{background:#E0B43A}
 
-main{flex:1;overflow-y:auto;min-width:0}
-.canvas{max-width:1140px;margin:0 auto;padding:24px 28px 64px}
-.section{margin-top:32px}
+main{flex:1;overflow-y:auto;min-width:0;position:relative}
+.canvas{max-width:1140px;margin:0 auto;padding:32px 32px 64px}
+.section{margin-top:40px}
 .section:first-child{margin-top:0}
-h1{font-size:20px;font-weight:700;letter-spacing:-.015em;margin:0}
-h2{font-size:14px;font-weight:600;margin:0 0 10px;color:var(--text-main);display:flex;
+h1{font-size:24px;font-weight:700;letter-spacing:-.015em;margin:0}
+h2{font-size:17px;font-weight:600;margin:0 0 12px;color:var(--text-main);display:flex;
   align-items:center;gap:8px}
-.lede{color:var(--text-muted);margin:4px 0 14px}
+.lede{color:var(--text-muted);margin:4px 0 16px}
 .group{margin-top:20px}
 
 .card{border:1px solid var(--border-card);border-radius:18px;background:var(--surface);
-  box-shadow:var(--shadow-card);padding:16px 18px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-.metric .label{font-size:12.5px;font-weight:500;color:#344054}
-.metric .value{font-size:24px;font-weight:700;letter-spacing:-.02em;color:#101828;
-  margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.1}
-.stack{display:flex;flex-direction:column;gap:10px}
+  box-shadow:var(--shadow-card);padding:20px 24px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}
+.metric .label{font-size:14px;font-weight:500;color:#344054}
+.metric .value{font-size:30px;font-weight:700;letter-spacing:-.02em;color:#101828;
+  margin-top:8px;font-variant-numeric:tabular-nums;line-height:1.1}
+.stack{display:flex;flex-direction:column;gap:12px}
 .item{border:1px solid var(--border-card);border-radius:14px;background:var(--surface);
-  box-shadow:var(--shadow-card);padding:14px 16px}
+  box-shadow:var(--shadow-card);padding:20px 24px}
 .item-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
-.item-title{font-weight:600;font-size:13.5px}
-.meta{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--text-muted);font-size:12px;margin-top:4px}
+.item-title{font-weight:600;font-size:16px}
+.meta{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--text-muted);font-size:14px;margin-top:6px}
 .meta b{color:var(--text-body);font-weight:600}
+.mi{display:inline-flex;align-items:center;gap:6px}
+.mi .icon{color:var(--text-subtle)}
 
-.badge{display:inline-block;padding:1px 8px;border-radius:6px;font-size:11.5px;font-weight:500;
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:6px;font-size:13px;font-weight:500;
   white-space:nowrap;background:var(--muted-bg);color:var(--text-body)}
 .b-ok{background:var(--ok-bg);color:var(--ok)}
 .b-wait{background:var(--wait-bg);color:var(--wait);box-shadow:inset 0 0 0 1px var(--wait-border)}
 .b-bad{background:var(--bad-bg);color:var(--bad)}
 
-pre{background:#FAFAFB;border:1px solid var(--border-layout);border-radius:8px;padding:10px;
-  overflow:auto;max-height:22rem;font-size:12px;margin:8px 0 0;color:var(--text-body)}
+pre{background:#FAFAFB;border:1px solid var(--border-layout);border-radius:8px;padding:12px;
+  overflow:auto;max-height:22rem;font-size:13px;margin:8px 0 0;color:var(--text-body)}
 details > summary{cursor:pointer;list-style:none}
 details > summary::-webkit-details-marker{display:none}
 details.step > summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
-details.step > summary::before{content:"›";color:var(--text-muted);margin-right:6px}
-details.step[open] > summary::before{content:"⌄"}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12.5px;margin-top:8px}
+details.step > summary > .icon{color:var(--text-muted);transition:transform .15s}
+details.step[open] > summary > .icon{transform:rotate(90deg)}
+details.step > summary > .step-title{margin-right:auto}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:14px;margin-top:8px}
 .kv dt{color:var(--text-muted)}
 .kv dd{margin:0;min-width:0}
 
 .table-wrap{border:1px solid var(--border-card);border-radius:14px;overflow:auto;background:var(--surface);
   box-shadow:var(--shadow-card)}
-table{width:100%;border-collapse:collapse;font-size:12.5px}
-th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--border-layout);vertical-align:top}
-th{font-size:11px;font-weight:500;color:var(--text-muted);background:#FAFAFB}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:12px 16px;text-align:left;border-bottom:1px solid var(--border-layout);vertical-align:top}
+th{font-size:13px;font-weight:500;color:var(--text-muted);background:#FAFAFB}
 tr:last-child td{border-bottom:0}
-.empty{color:var(--text-subtle);font-size:12.5px;border:1px dashed var(--border-card);border-radius:14px;
-  padding:14px;text-align:center;margin:0}
-.alert{border-radius:14px;padding:12px 14px;font-size:12.5px;background:var(--wait-bg);color:var(--wait);
+.empty{display:flex;align-items:center;justify-content:center;gap:8px;
+  min-height:120px;color:var(--text-subtle);font-size:14px;border:1px dashed var(--border-card);border-radius:14px;
+  padding:12px 20px;text-align:center;margin:0}
+.alert{border-radius:14px;padding:12px 16px;font-size:14px;background:var(--wait-bg);color:var(--wait);
   border:1px solid var(--wait-border);margin:0 0 12px}
 
-form.act{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
-input[type=text]{font:inherit;font-size:12.5px;height:30px;padding:0 10px;border-radius:8px;
+form.act{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:16px}
+input[type=text]{font:inherit;font-size:14px;height:40px;padding:0 12px;border-radius:8px;
   border:1px solid var(--border-control);background:var(--surface);color:var(--text-main);min-width:0}
 input[type=text]::placeholder{color:var(--text-subtle)}
-button{font:inherit;font-size:12px;font-weight:500;height:30px;padding:0 12px;border-radius:8px;
+button{font:inherit;font-size:14px;font-weight:500;height:40px;padding:0 16px;border-radius:8px;
   border:1px solid var(--border-control);background:var(--surface);color:var(--text-main);
   cursor:pointer;box-shadow:var(--shadow-control)}
+button{display:inline-flex;align-items:center;gap:6px}
 button:hover{background:var(--muted-bg)}
+.icon{flex:none}
+h2 .icon{color:var(--text-muted)}
 button.primary{background:var(--text-main);color:#fff;border-color:var(--text-main)}
 button.primary:hover{background:#1F2937}
 .seg{display:inline-flex;border:1px solid var(--border-control);border-radius:8px;overflow:hidden;
   box-shadow:var(--shadow-control)}
-.seg button{border:0;border-radius:0;box-shadow:none;height:28px}
+.seg button{border:0;border-radius:0;box-shadow:none;height:38px}
 .seg button + button{border-left:1px solid var(--border-control)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
-.brand > span{white-space:nowrap}
+.brand > span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:860px){
   .crumb,.slash{display:none}
   .shell{flex-direction:column}
@@ -178,20 +211,64 @@ button.primary:hover{background:#1F2937}
 """
 
 _LOGO = (
-    "<svg width='15' height='15' viewBox='0 0 15 15' aria-hidden='true'>"
+    "<svg width='20' height='20' viewBox='0 0 15 15' aria-hidden='true'>"
     "<rect width='15' height='15' rx='4' fill='#005DFF'/>"
     "<path d='M4 8l2.3 2.3L11 5' fill='none' stroke='#fff' stroke-width='1.8' "
     "stroke-linecap='round' stroke-linejoin='round'/></svg>"
 )
 
 
+#: Icons from Lucide (lucide.dev, ISC license), inline so the page loads no
+#: outside files. They use currentColor, so they stay monochrome.
+_ICONS = {
+    "shield": "<path d='M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 "
+    "1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z'/>"
+    "<path d='m9 12 2 2 4-4'/>",
+    "alert": "<path d='m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3'/>"
+    "<path d='M12 9v4'/><path d='M12 17h.01'/>",
+    "wrench": "<path d='M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 "
+    "7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'/>",
+    "activity": "<path d='M22 12h-4l-3 9L9 3l-3 9H2'/>",
+    "receipt": "<path d='M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z'/>"
+    "<path d='M16 8h-6'/><path d='M16 12h-6'/><path d='M12 16h-2'/>",
+    "gauge": "<path d='m12 14 4-4'/><path d='M3.34 19a10 10 0 1 1 17.32 0'/>",
+    "flag": "<path d='M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z'/>"
+    "<path d='M4 22v-7'/>",
+    "history": "<path d='M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8'/><path d='M3 3v5h5'/>"
+    "<path d='M12 7v5l4 2'/>",
+    "check": "<path d='M20 6 9 17l-5-5'/>",
+    "chevron": "<path d='m9 18 6-6-6-6'/>",
+    "server": "<rect width='20' height='8' x='2' y='2' rx='2'/><rect width='20' height='8' x='2' "
+    "y='14' rx='2'/><path d='M6 6h.01'/><path d='M6 18h.01'/>",
+    "hash": "<path d='M4 9h16'/><path d='M4 15h16'/><path d='M10 3 8 21'/><path d='M16 3l-2 18'/>",
+    "clock": "<circle cx='12' cy='12' r='10'/><path d='M12 6v6l4 2'/>",
+    "inbox": "<path d='M22 12h-6l-2 3h-4l-2-3H2'/><path d='M5.45 5.11 2 12v6a2 2 0 0 0 2 "
+    "2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z'/>",
+    "x": "<path d='M18 6 6 18'/><path d='m6 6 12 12'/>",
+}
+
+
+def _icon(name: str, size: int = 18) -> str:
+    return (
+        f"<svg class='icon' width='{size}' height='{size}' viewBox='0 0 24 24' fill='none' "
+        "stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' "
+        f"aria-hidden='true'>{_ICONS[name]}</svg>"
+    )
+
+
 def _json(value: object) -> str:
     return escape(json.dumps(value, indent=2, sort_keys=True, default=str))
 
 
-def _badge(text: str, kind: str = "") -> str:
+#: The icon follows the state, so a badge reads the same without colour.
+_BADGE_ICONS = {"ok": "check", "wait": "clock", "bad": "x"}
+
+
+def _badge(text: str, kind: str = "", icon: str | None = None) -> str:
     cls = f"badge b-{kind}" if kind else "badge"
-    return f"<span class='{cls}'>{escape(text)}</span>"
+    name = icon or _BADGE_ICONS.get(kind)
+    mark = _icon(name, 13) if name else ""
+    return f"<span class='{cls}'>{mark}{escape(text)}</span>"
 
 
 def _status_kind(status: str) -> str:
@@ -209,11 +286,52 @@ def _state_badge(state: str) -> str:
 
 
 def _empty(message: str) -> str:
-    return f"<p class='empty'>{escape(message)}</p>"
+    return f"<p class='empty'>{_icon('inbox', 16)}{escape(message)}</p>"
 
 
 def _count(number: int) -> str:
     return f"<span class='count'>{number}</span>" if number else ""
+
+
+def _meta_item(icon: str, body: str, title: str = "") -> str:
+    """One fact in a card's meta line: an icon, then the value."""
+    tip = f" title='{escape(title)}'" if title else ""
+    return f"<span class='mi'{tip}>{_icon(icon, 15)}{body}</span>"
+
+
+def _run_link(run_id: str) -> str:
+    if not run_id:
+        return "—"
+    return (
+        f"<a class='mono' href='/?{escape(urlencode({'run': run_id}))}' title='{escape(run_id)}'>"
+        f"run {escape(run_id[:8])}</a>"
+    )
+
+
+def _expires(value: object) -> str:
+    """`expires in 14 min`; the exact time goes in the tooltip."""
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except ValueError:
+        return f"expires {_when(value)}"
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    minutes = int((moment - datetime.now(UTC)).total_seconds() // 60)
+    if minutes < 1:
+        return "expires in under a minute"
+    return f"expires in {minutes} min"
+
+
+def _protection_pill(protected: bool) -> str:
+    if protected:
+        return (
+            "<span class='pill ok' title='Every step went through the checks'>"
+            f"{_icon('shield', 15)}protected</span>"
+        )
+    return (
+        "<span class='pill wait' title='Steps were recorded, not checked'>"
+        f"{_icon('alert', 15)}recorded only</span>"
+    )
 
 
 def _short(text: str, size: int = 12) -> str:
@@ -255,28 +373,25 @@ def _render_approvals(pending: list[Approval]) -> str:
         context = item.context or {}
         risk = str(context.get("risk") or "")
         run_id = str(context.get("run_id") or "")
-        run_link = (
-            f"<a href='/?{escape(urlencode({'run': run_id}))}'>{escape(_short(run_id))}</a>"
-            if run_id else "—"
-        )
         aid = escape(item.approval_id)
         cards.append(
             "<div class='item'>"
             "<div class='item-head'>"
             f"<span class='item-title mono'>{escape(item.action)}</span>"
-            f"<span>{_badge(risk or 'risk not recorded', 'bad' if risk == 'destructive' else '')}</span>"
+            f"<span>{_badge(risk or 'risk not recorded', 'bad' if risk == 'destructive' else '', 'alert' if risk == 'destructive' else None)}</span>"
             "</div>"
             "<div class='meta'>"
-            f"<span>environment <b>{escape(str(context.get('environment') or '—'))}</b></span>"
-            f"<span>run {run_link}</span>"
-            f"<span>expires {escape(_when(item.expires_at))}</span>"
-            "</div>"
+            + _meta_item("server", f"<b>{escape(str(context.get('environment') or '—'))}</b>",
+                         "environment")
+            + _meta_item("hash", _run_link(run_id))
+            + _meta_item("clock", escape(_expires(item.expires_at)), _when(item.expires_at))
+            + "</div>"
             f"<pre>{_json(redact(dict(item.arguments)))}</pre>"
             "<form class='act' method='post' action='/approvals/approve'>"
             f"{_csrf_field()}<input type='hidden' name='approval_id' value='{aid}'>"
             f"{_name_field('ap-' + item.approval_id)}"
-            "<button class='primary' type='submit'>Approve</button>"
-            "<button type='submit' formaction='/approvals/deny'>Deny</button>"
+            f"<button class='primary' type='submit'>{_icon('check', 16)}Approve</button>"
+            f"<button type='submit' formaction='/approvals/deny'>{_icon('x', 16)}Deny</button>"
             "</form></div>"
         )
     return f"<div class='stack'>{''.join(cards)}</div>"
@@ -297,10 +412,10 @@ def _render_held(view: dict) -> str:
             f"{_state_badge(str(receipt.get('state') or ''))}"
             "</div>"
             "<div class='meta'>"
-            f"<span>{escape(str(receipt.get('state_meaning') or ''))}</span>"
-            f"<span>run <a href='/?{escape(urlencode({'run': run_id}))}'>{escape(_short(run_id))}</a></span>"
-            f"<span>since {escape(_when(receipt.get('created_at')))}</span>"
-            "</div>"
+            + _meta_item("alert", escape(str(receipt.get('state_meaning') or '')))
+            + _meta_item("hash", _run_link(run_id))
+            + _meta_item("clock", "since " + escape(_when(receipt.get('created_at'))))
+            + "</div>"
             f"<pre>{_json(redact(receipt.get('arguments') or {}))}</pre>"
             "<p class='meta'>Check the real system first. Then say what happened.</p>"
             "<form class='act' method='post' action='/receipts/settle'>"
@@ -309,8 +424,8 @@ def _render_held(view: dict) -> str:
             f"<label class='sr' for='ref-{escape(key)}'>Reference (optional)</label>"
             f"<input type='text' id='ref-{escape(key)}' name='ref' placeholder='Reference (optional)'>"
             "<span class='seg'>"
-            "<button type='submit' name='outcome' value='done'>It happened</button>"
-            "<button type='submit' name='outcome' value='failed'>It did not happen</button>"
+            f"<button type='submit' name='outcome' value='done'>{_icon('check', 16)}It happened</button>"
+            f"<button type='submit' name='outcome' value='failed'>{_icon('x', 16)}It did not happen</button>"
             "</span></form></div>"
         )
     return f"<div class='stack'>{''.join(rows)}</div>"
@@ -333,7 +448,7 @@ def _render_tools(waiting: list[tuple[str, str]] | None) -> str:
             "<form class='act' method='post' action='/tools/accept'>"
             f"{_csrf_field()}<input type='hidden' name='tool' value='{escape(tool)}'>"
             f"{_name_field('tl-' + tool)}"
-            "<button class='primary' type='submit'>Accept</button>"
+            f"<button class='primary' type='submit'>{_icon('check', 16)}Accept</button>"
             "</form></div>"
         )
     return f"<div class='stack'>{''.join(rows)}</div>"
@@ -404,7 +519,7 @@ def _render_traces(view: dict) -> str:
 
         cards.append(
             f"<details class='item step' id='trace-{trace['id']}'>"
-            f"<summary><span><b>{escape(str(trace.get('event') or 'step'))}</b> "
+            f"<summary>{_icon('chevron', 16)}<span class='step-title'><b>{escape(str(trace.get('event') or 'step'))}</b> "
             f"<span class='meta' style='display:inline'>#{trace.get('id')}</span></span>"
             f"<span>{' '.join(bits)}</span></summary>"
             f"<div class='meta'>{escape(' · '.join(meta))}</div>"
@@ -506,7 +621,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self';"
+            f"default-src 'none'; script-src 'sha256-{_REFRESH_HASH}';"
+            " style-src 'unsafe-inline'; form-action 'self';"
             " base-uri 'none'; frame-ancestors 'none'",
         )
 
@@ -713,7 +829,7 @@ class Handler(BaseHTTPRequestHandler):
     <span class="slash">/</span><span class="crumb mono">{escape(_short(run_id, 24))}</span></div>
   <div class="top-right">
     <a href="#needs-you" class="pill">Needs you {_count(needs_you)}</a>
-    <span class="pill">{'protected' if protected else 'recorded only'}</span>
+    {_protection_pill(protected)}
   </div>
 </header>
 <div class="shell">
@@ -734,9 +850,9 @@ class Handler(BaseHTTPRequestHandler):
   <section class="section" id="needs-you">
     <h1>Needs you</h1>
     <p class="lede">The three moments a person is in the loop. Nothing here runs until you act.</p>
-    <div class="group"><h2>Approvals waiting {_count(len(pending))}</h2>{_render_approvals(pending)}</div>
-    <div class="group"><h2>Held actions {_count(len(held))}</h2>{held_note}{_render_held(view)}</div>
-    <div class="group"><h2>Tools waiting {_count(len(tools or []))}</h2>{_render_tools(tools)}</div>
+    <div class="group"><h2>{_icon('shield')}Approvals waiting {_count(len(pending))}</h2>{_render_approvals(pending)}</div>
+    <div class="group"><h2>{_icon('alert')}Held actions {_count(len(held))}</h2>{held_note}{_render_held(view)}</div>
+    <div class="group"><h2>{_icon('wrench')}Tools waiting {_count(len(tools or []))}</h2>{_render_tools(tools)}</div>
   </section>
 
   <section class="section" id="this-run">
@@ -753,10 +869,10 @@ class Handler(BaseHTTPRequestHandler):
       {metric('Tokens', totals['tokens'])}
       {metric('Cost', f"${totals['cost_usd']:.4f}")}
     </div>
-    <div class="group" id="timeline"><h2>Timeline</h2>{_render_traces(view)}</div>
-    <div class="group" id="receipts"><h2>Side-effect receipts</h2>{_render_receipts(view)}</div>
-    <div class="group"><h2>Budget</h2>{budget_block}</div>
-    <div class="group"><h2>Gate history</h2>{gate_block}</div>
+    <div class="group" id="timeline"><h2>{_icon('activity')}Timeline</h2>{_render_traces(view)}</div>
+    <div class="group" id="receipts"><h2>{_icon('receipt')}Side-effect receipts</h2>{_render_receipts(view)}</div>
+    <div class="group"><h2>{_icon('gauge')}Budget</h2>{budget_block}</div>
+    <div class="group"><h2>{_icon('flag')}Gate history</h2>{gate_block}</div>
   </section>
 
   <section class="section" id="history">
@@ -767,7 +883,7 @@ class Handler(BaseHTTPRequestHandler):
   </section>
 
   </div></main>
-</div></body></html>"""
+</div><script>{_REFRESH_JS}</script></body></html>"""
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path

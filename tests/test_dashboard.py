@@ -171,11 +171,41 @@ class DashboardRenderTest(unittest.TestCase):
         for panel in ("timeline", "side-effect receipts", "budget"):
             self.assertIn(panel, text)
 
-    def test_the_page_never_loads_a_script(self) -> None:
-        """The CSP forbids scripts, so nothing may even reference one."""
-        html = self._get()
-        self.assertNotIn("<script", html.lower())
+    def test_the_only_script_is_the_refresh_and_the_policy_allows_only_it(self) -> None:
+        """One inline script, allowed by its hash; no file, no other script."""
+        import base64
+        import hashlib
+        import re
+
+        server, _ = build_server(str(self.db), "127.0.0.1", 0, "test-token")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/",
+                headers={"Authorization": "Bearer test-token"},
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                policy = response.headers["Content-Security-Policy"]
+                html = response.read().decode()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+        self.assertEqual(len(scripts), 1)
+        self.assertEqual(html.lower().count("<script"), 1)
         self.assertNotIn("javascript:", html.lower())
+        digest = base64.b64encode(hashlib.sha256(scripts[0].encode()).digest()).decode()
+        self.assertIn(f"script-src 'sha256-{digest}'", policy)
+        self.assertNotIn("unsafe-inline';", policy.split("script-src", 1)[1].split(";", 1)[0])
+        self.assertIn("default-src 'none'", policy)
+        # It waits while a person is busy, and reloads only this page.
+        self.assertIn("document.activeElement", scripts[0])
+        self.assertIn("details[open]", scripts[0])
+        self.assertIn("location.reload()", scripts[0])
+        self.assertNotIn("fetch(", scripts[0])
 
     def test_the_page_is_responsive(self) -> None:
         html = self._get()

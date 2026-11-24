@@ -600,7 +600,7 @@ name. With more than one operator, put sign-in in front of it (below).
 | Access token | from `AGENT_GATEWAY_DASHBOARD_TOKEN`, or a new one printed at start-up. `?token=` is swapped for an HttpOnly, SameSite=Strict cookie and removed from the address; `Authorization: Bearer` also works |
 | Local by default | binds to `127.0.0.1`; any other address needs `AGENT_GATEWAY_DASHBOARD_TOKEN` |
 | CSRF and origin checks | on every form; a POST from another site is refused. When you open it at a different address than it binds to (a container bound to `0.0.0.0`, opened as `http://127.0.0.1:8765`), name that address with `--allow-origin` |
-| No scripts | the Content-Security-Policy allows none, and no outside file is loaded |
+| One script only | the Content-Security-Policy allows one short script, by its hash: it reloads the page every 10 seconds, and waits while you type, fill a field or open a step. No other script can run, and no outside file is loaded |
 
 Restarting the dashboard invalidates open forms, and a printed token, on purpose.
 To share it beyond one machine, put a TLS reverse proxy with its own sign-in in
