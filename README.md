@@ -294,7 +294,7 @@ Not independently audited. ([full list](docs/gateway-deployment.md#known-limitat
 
 ## 10. Testing
 
-- About 675 automated tests, plus lint and type checks, in CI.
+- About 730 automated tests, plus lint and type checks, in CI.
 - `make proof`: 1,000 crashed retries cause **1** side effect; **0** destructive
   actions run without a valid approval.
 - Tried once with Claude Code against the MCP proxy (test tools); not yet with
@@ -305,6 +305,8 @@ Not independently audited. ([full list](docs/gateway-deployment.md#known-limitat
 ```bash
 pip install agent-action-gateway
 ```
+
+Or the Docker image (amd64 and arm64): `docker pull ghcr.io/greyydaze/agent-action-gateway:0.2.0`.
 
 | To | Run |
 |---|---|
