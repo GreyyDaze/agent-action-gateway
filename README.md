@@ -55,18 +55,38 @@ tools like `execute_sql`, tool pinning, the bypass scanner) are explained in the
 
 ## 5. Architecture
 
-The agent reaches only the checkpoint, never your tools, the real keys or the
-records. Only a person can approve, settle a held action or accept a changed tool.
+How it works, in four steps:
+
+1. **The agent asks.** Every tool call goes to the checkpoint (the library in
+   Python, or the MCP proxy). The agent cannot reach your tools, the real keys or
+   the records any other way.
+2. **The checkpoint checks.** Limits, environment, and for anything that is not
+   a read, an approval from a person for that exact call.
+3. **It runs once.** The action is claimed before it runs, so a retry or crash
+   never runs it twice. With the gateway, the real key is added there and the
+   agent never sees it.
+4. **Everything is recorded.** A person sees it in the dashboard, approves calls,
+   settles actions with no clear result, and accepts changed tools.
 
 ```mermaid
 flowchart LR
-    A[Your agent] --> C["Checkpoint<br/>library or MCP proxy<br/>(checks every call)"]
-    C -->|allowed| T[Your tools / MCP servers]
-    C -->|allowed| G["Gateway<br/>(holds the real key)"]
+    A["1. Your agent<br/>asks to run a tool"] --> C
+
+    subgraph C["2. Checkpoint: library or MCP proxy"]
+        direction TB
+        K["Check limits<br/>and environment"] --> AP{"Not a read:<br/>approved by<br/>a person?"}
+    end
+
+    AP -->|no: blocked,<br/>approval requested| P
+    AP -->|yes| O["3. Run once<br/>(claimed first,<br/>never twice)"]
+    O --> T[Your tools /<br/>MCP servers]
+    O --> G["Gateway<br/>adds the real key"]
     G --> API[Real APIs]
-    C --> R[(Records)]
-    R --> P["Person<br/>(dashboard or CLI)"]
-    P -->|approve, settle, accept| R
+
+    C --> R[("4. Records<br/>secrets hidden")]
+    O --> R
+    R --> P["Person<br/>dashboard or CLI"]
+    P -->|approves; agent<br/>tries again| A
 ```
 
 <details>
