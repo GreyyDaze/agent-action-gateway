@@ -13,7 +13,7 @@ import pytest
 LIVE = {"test_backend_agreement.py"}
 INTEGRATION = {
     "test_gateway.py", "test_gateway_boundary.py", "test_gateway_modes.py",
-    "test_egress_gateway.py", "test_egress_proxy.py", "test_tls.py",
+    "test_egress_gateway.py",
     "test_mcp.py", "test_mcp_server.py", "test_dashboard.py",
     "test_sqlite_base.py", "test_trace.py", "test_trace_capture.py",
     "test_effect_claims.py", "test_receipts.py", "test_guarded_receipts.py",

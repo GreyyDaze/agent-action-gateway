@@ -526,18 +526,13 @@ Cursor use works as it is:
   stdio, over HTTP, and through `mcp-connect`), and one run of Claude Code (with a
   stand-in database tool). It has not been run with Claude Desktop or Cursor.
 
-### Route-based MCP server
+### Gateway routes as MCP tools
 
-`agent-gateway mcp-serve` serves the routes of a gateway route file as MCP tools
-over stdio. Each call goes through the gateway, so it checks the environment and
-(in the default mode) approval, but not limits or once-only effects. Use the
-proxy above for the full checks.
+The gateway serves its routes as MCP tools at `/mcp`. On its own, that checks
+only what the gateway checks (environment, and approval in the default mode), so
+point the MCP proxy at it (above) for the full checks.
 
-```bash
-agent-gateway mcp-serve --config routes.json --db gateway.db
-```
-
-To register the tools with an MCP library you already use:
+To register the routes' tools with an MCP library you already use:
 
 ```python
 from agent_action_gateway.integrations.mcp import MCPToolBridge, tool_definitions

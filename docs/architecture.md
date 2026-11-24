@@ -38,7 +38,7 @@ flowchart TD
 | `engine/` | `enforce()`, the checking pipeline |
 | `guards/` | redaction, capture policy, honest run status, the SQL read check |
 | `runtime/` | `session()`, records, lower-level dispatch helpers |
-| `credential/` | placeholder vault, secret resolvers, outbound proxy, TLS |
+| `credential/` | placeholder vault, secret resolvers, outbound host checks |
 | `integrations/` | MCP proxy (stdio, or HTTP with `mcp-connect`), HTTP gateway, route-based MCP server, provider interface |
 | `audit/` | receipts, failure grouping, case promotion |
 | `eval/` | cases, judges, verdicts, release gate, run sampling, path scoring |
@@ -49,7 +49,7 @@ flowchart TD
 ## How an action flows
 
 A wrapped tool (the library) and the MCP proxy both call `engine.enforce()`, so
-they check the same things. The HTTP gateway and the route-based `mcp-serve` do
+they check the same things. The HTTP gateway and its MCP endpoint (`/mcp`) do
 not: they check the environment and (in the default mode) approval, and hold the
 key. See the table in the README for what each one checks.
 

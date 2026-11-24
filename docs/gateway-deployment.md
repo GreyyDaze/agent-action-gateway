@@ -202,20 +202,6 @@ adds the real credential and makes the call.
   cloud-metadata range (`169.254.0.0/16`) stays blocked.
 - `/mcp` is reserved: a route cannot use that path.
 
-### An agent that calls the API itself (egress proxy)
-
-`agent-gateway egress-serve --config routes.credentials.example.json --port 8888`
-is for an agent you cannot change to call the gateway. Point its HTTP client at
-the proxy (`HTTP_PROXY`). The agent keeps addressing the real API, holding only a
-placeholder in place of the key. The proxy checks the host against each
-credential's `allowed_hosts`, swaps the placeholder for the real key, and
-forwards. A placeholder sent to any other host is refused.
-
-It needs a `credentials` block in the route file. It does not terminate TLS, so
-it injects keys into plain `http` requests only; an HTTPS tunnel (`CONNECT`) is
-refused. For HTTPS, terminate TLS at your network egress layer with the same
-policy, or use the gateway's routes instead.
-
 ### Unix socket mode (Linux)
 
 `--unix-socket PATH` is the one mode where the kernel backs the custody claim
@@ -319,7 +305,7 @@ Two commands, answering different questions:
 
 | Command | Runs from | Checks | Cannot check |
 |---|---|---|---|
-| `agent-gateway gateway doctor --config routes.json` | the gateway host | its user, secret file owner and mode, master key, bind address | whether the agent can reach a provider |
+| `agent-gateway gateway doctor --config routes.json` | the gateway host | its user, the owner and mode of every secret file (routes and the `credentials` block), master key, bind address (beyond this machine is a warning) | whether the agent can reach a provider; the MCP proxy |
 | `make verify-boundary` | the agent's network | can it reach a provider, read the secret, or call without a key? | whether the agent behaves correctly |
 | `make verify-proxy-boundary` | the agent's network | the same for the proxy: can it skip the proxy, call it without a token, or read its config and database? | whether the agent behaves correctly |
 

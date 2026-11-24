@@ -1,9 +1,7 @@
-"""The MCP stdio server is a transport only; policy stays in the bridge."""
+"""The gateway's MCP handler holds no policy; every call goes through the bridge."""
 
 from __future__ import annotations
 
-import io
-import json
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -74,16 +72,6 @@ class MCPServerTest(unittest.TestCase):
         result = self.server.handle({"method": "nope", "id": 5})
         assert result is not None
         self.assertEqual(result["error"]["code"], -32601)
-
-    def test_serve_reads_newline_delimited_json(self) -> None:
-        lines = [
-            json.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 1, "params": {}}),
-        ]
-        out = io.StringIO()
-        self.server.serve(lines, out=out)
-        responses = [json.loads(line) for line in out.getvalue().splitlines()]
-        self.assertEqual(len(responses), 1)
-        self.assertIn("tools", responses[0]["result"])
 
 
 if __name__ == "__main__":

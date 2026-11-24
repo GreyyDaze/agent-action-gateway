@@ -104,8 +104,8 @@ class ParserTest(unittest.TestCase):
     def test_every_documented_command_is_registered(self) -> None:
         parser = cli.build_parser()
         commands = (
-            "check", "gate", "wall", "path", "prune", "gateway", "mcp-serve", "mcp-proxy",
-            "mcp-pins", "mcp-login", "egress-serve", "dashboard", "mcp-connect", "receipts",
+            "check", "gate", "wall", "path", "prune", "gateway", "mcp-proxy",
+            "mcp-pins", "mcp-login", "dashboard", "mcp-connect", "receipts",
         )
         for command in commands:
             with self.subTest(command=command):

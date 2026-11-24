@@ -99,8 +99,6 @@ ignore = [
 "src/agent_action_gateway/eval/judge.py" = ["ARG002"]
 "src/agent_action_gateway/policy/stop_rules.py" = ["ARG002"]
 "src/agent_action_gateway/integrations/gateway.py" = ["ARG002"]
-"src/agent_action_gateway/credential/egress_proxy.py" = ["ARG002"]
-"src/agent_action_gateway/credential/tls.py" = ["ARG002"]
 # Deliberate re-exports kept reachable for backwards compatibility; only the
 # names in __all__ are advertised.
 "src/agent_action_gateway/__init__.py" = ["F401"]

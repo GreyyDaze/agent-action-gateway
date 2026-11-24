@@ -1,8 +1,8 @@
 """Egress policy: the decision made on an outbound request before it leaves.
 
-This module is transport-agnostic. It does not care whether the request arrived
-through a reverse proxy, a forward proxy or an MCP tool call — it answers one
-question: may this request go out, and with which credential substituted?
+The gateway uses it for every request it forwards, whether the call arrived on
+an HTTP route or through its MCP endpoint. It answers one question: may this
+request go out, and with which credential substituted?
 
 Keeping the decision separate from the socket handling is what makes it
 testable without a live proxy, and what lets the same rules be enforced by

@@ -1,7 +1,7 @@
 """The ``agent-gateway`` command."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent_action_gateway.integrations.gateway import GatewayPolicy
@@ -151,14 +151,6 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--config", required=True, help="YAML or JSON route table")
     doctor.add_argument("--db", default="data/runtime.db")
 
-    # stdlib-only MCP transport over the guarded bridge.
-    mcp = sub.add_parser(
-        "mcp-serve",
-        help="serve a route file's routes as MCP tools over stdio (the gateway's checks only)",
-    )
-    mcp.add_argument("--config", required=True, help="YAML or JSON route table")
-    mcp.add_argument("--db", default="data/runtime.db")
-
     proxy = sub.add_parser(
         "mcp-proxy",
         help="one MCP server for your agent that guards every tool of the servers you list",
@@ -238,28 +230,12 @@ def build_parser() -> argparse.ArgumentParser:
         "other origins are refused",
     )
 
-    # Forward proxy: applies host allow-list + credential injection for agents
-    # that call vendors directly. HTTPS CONNECT is refused (see module docs).
-    egress = sub.add_parser(
-        "egress-serve",
-        help="serve the HTTP egress proxy (host allow-list + credential swap)",
-    )
-    egress.add_argument("--config", required=True, help="YAML or JSON route table")
-    egress.add_argument("--host", default="127.0.0.1")
-    egress.add_argument("--port", type=int, default=8888)
-
     return parser
 
 
-def load_route_policy(path: str) -> GatewayPolicy:
-    """Build a gateway policy from a route table.
-
-    Kept here rather than in the gateway so the file format is a CLI concern
-    and the gateway stays a plain object.
-    """
+def _read_route_document(path: str) -> dict[str, Any]:
+    """The route file as a mapping (JSON, or YAML when PyYAML is installed)."""
     import json
-
-    from agent_action_gateway.integrations.gateway import GatewayPolicy, Route
 
     text = Path(path).read_text(encoding="utf-8")
     try:
@@ -270,6 +246,18 @@ def load_route_policy(path: str) -> GatewayPolicy:
         document = json.loads(text)
     if not isinstance(document, dict):
         raise ValueError("gateway config must be a mapping with a 'routes' list")
+    return document
+
+
+def load_route_policy(path: str) -> GatewayPolicy:
+    """Build a gateway policy from a route table.
+
+    Kept here rather than in the gateway so the file format is a CLI concern
+    and the gateway stays a plain object.
+    """
+    from agent_action_gateway.integrations.gateway import GatewayPolicy, Route
+
+    document = _read_route_document(path)
     policy = GatewayPolicy(
         session_environment=str(document.get("session_environment", "dev")),
         master_key_env=str(document.get("master_key_env", "")),
@@ -343,22 +331,6 @@ def load_route_policy(path: str) -> GatewayPolicy:
             )
         )
     return policy
-
-
-def run_mcp_server(args: argparse.Namespace) -> int:
-    """Serve the guarded tool bridge over MCP stdio."""
-    from agent_action_gateway.integrations.mcp import MCPToolBridge
-    from agent_action_gateway.integrations.mcp_server import serve_stdio
-    from agent_action_gateway.storage.traces import TraceStore
-
-    policy = _policy_or_fail(args)
-    if policy is None:
-        return EXIT_USAGE
-    # stdout carries the protocol, so the scope line goes to stderr.
-    print("SCOPE: your route config - MCP tool calls go through the gateway's checks.",
-          file=sys.stderr)
-    serve_stdio(MCPToolBridge.from_policy(TraceStore(args.db), policy))
-    return EXIT_PASS
 
 
 def run_mcp_proxy(args: argparse.Namespace) -> int:
@@ -525,26 +497,6 @@ def run_mcp_pins(args: argparse.Namespace) -> int:
         return EXIT_USAGE if args.tool else EXIT_PASS
     for tool in accepted:
         print(f"accepted {tool}")
-    return EXIT_PASS
-
-
-def run_egress_proxy(args: argparse.Namespace) -> int:
-    """Serve the HTTP forward proxy with host allow-list + credential injection."""
-    from agent_action_gateway.credential.egress_proxy import ForwardProxy, build_proxy_server
-
-    policy = load_route_policy(args.config)
-    if policy.egress is None:
-        print(
-            "egress-serve requires a 'credentials' block in the route table; "
-            "without one there is no vault and no allow-list to enforce.",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
-    announce("your route config — the proxy injects credentials for allowed hosts only.")
-    server, _ = build_proxy_server(ForwardProxy(policy.egress), args.host, args.port)
-    print(f"Egress proxy on http://{args.host}:{server.server_address[1]}/", flush=True)
-    print("HTTPS CONNECT is refused: terminate TLS at your network egress layer.", flush=True)
-    server.serve_forever()
     return EXIT_PASS
 
 
@@ -746,12 +698,15 @@ def gateway_doctor(args: argparse.Namespace) -> int:
     on it from here would be inventing evidence. Run `make verify-boundary` for
     that half -- it attaches to the agent's network and tries to escape.
     """
-    import grp
+    import pwd
     import stat
 
-    print("SCOPE: this host's gateway configuration only.")
+    from agent_action_gateway.credential.credentials import CredentialError
+
+    print("SCOPE: this host's gateway configuration only (not the MCP proxy).")
     print("Does NOT report whether your agent can reach a provider -- that needs")
-    print("`make verify-boundary`, which runs from the agent's position.\n")
+    print("`make verify-boundary` (or `make verify-proxy-boundary` for the proxy),")
+    print("which runs from the agent's position.\n")
 
     findings: list[tuple[str, str, str]] = []  # (status, label, detail)
 
@@ -759,7 +714,7 @@ def gateway_doctor(args: argparse.Namespace) -> int:
         findings.append((status, label, detail))
 
     try:
-        policy = load_route_policy(args.config)
+        document = _read_route_document(args.config)
     except (OSError, ValueError) as exc:
         print(f"could not read {args.config}: {exc}", file=sys.stderr)
         return EXIT_FAIL
@@ -770,66 +725,86 @@ def gateway_doctor(args: argparse.Namespace) -> int:
         check("WARN", "running as root", "every local user can reach this process's secret")
     else:
         try:
-            name = grp.getgrgid(euid).gr_name
+            name = pwd.getpwuid(euid).pw_name
         except KeyError:
             name = f"uid {euid}"
         check("OK", f"running as {name}", "not root")
 
     # 2. Secret files. Mode and owner are the whole boundary for a file secret.
-    for route in policy.routes.values():
-        reference = route.secret_env
-        if not reference:
-            continue
+    # Read from the file as written, from routes and the `credentials` block
+    # alike, so a broken secret is reported here instead of stopping the load.
+    secrets_in_file: list[tuple[str, str]] = [
+        (str(route.get("path", "?")), str(route["secret_env"]))
+        for route in document.get("routes") or []
+        if isinstance(route, dict) and route.get("secret_env")
+    ] + [
+        (f"credential {cred.get('secret_name', '?')}", str(cred["secret_env"]))
+        for cred in document.get("credentials") or []
+        if isinstance(cred, dict) and cred.get("secret_env")
+    ]
+    for label, reference in secrets_in_file:
+        route_label = f"{label} secret"
         if reference.startswith("file:"):
             path = reference[5:]
             try:
                 info = os.stat(path)
             except OSError as exc:
-                check("FAIL", f"{route.path} secret", f"cannot read {path}: {exc.strerror}")
+                check("FAIL", route_label, f"cannot read {path}: {exc.strerror}")
                 continue
             mode = stat.S_IMODE(info.st_mode)
             if mode & 0o077:
                 check(
                     "FAIL",
-                    f"{route.path} secret",
+                    route_label,
                     f"{path} is mode {mode:04o}; the gateway will refuse to read it "
                     "until it is 0600",
                 )
             elif info.st_uid != euid:
                 check(
                     "FAIL",
-                    f"{route.path} secret",
+                    route_label,
                     f"{path} is owned by uid {info.st_uid}, not the gateway's {euid}",
                 )
             else:
-                check("OK", f"{route.path} secret", f"{path} mode {mode:04o}, owned by this user")
+                check("OK", route_label, f"{path} mode {mode:04o}, owned by this user")
+        elif not os.environ.get(reference):
+            check("FAIL", route_label, f"{reference} is not set in the environment")
         else:
             check(
                 "WARN",
-                f"{route.path} secret",
+                route_label,
                 f"{reference} is an environment variable, so any process sharing this "
                 "user can read it; prefer secret_env: \"file:/path\"",
             )
 
     # 3. Master key. Virtual keys are meaningless without one.
-    if not policy.master_key_env:
+    master_key_env = str(document.get("master_key_env", ""))
+    if not master_key_env:
         check("WARN", "no master key configured", "callers can only use the startup token")
-    elif not os.environ.get(policy.master_key_env):
-        check("FAIL", "master key", f"{policy.master_key_env} is set in the config but not in the environment")
+    elif not os.environ.get(master_key_env):
+        check("FAIL", "master key", f"{master_key_env} is set in the config but not in the environment")
     else:
-        check("OK", "master key", f"{policy.master_key_env} is set")
+        check("OK", "master key", f"{master_key_env} is set")
 
     # 4. Bind address. Loopback is the only safe default for a local gateway.
-    check(
-        "OK",
-        "bind address",
-        f"{args.host}:{args.port}"
-        + (
-            ""
-            if args.host in {"127.0.0.1", "localhost", "::1"}
-            else "  <- off-host: reachable beyond this machine"
-        ),
-    )
+    if args.host in {"127.0.0.1", "localhost", "::1"}:
+        check("OK", "bind address", f"{args.host}:{args.port} (this machine only)")
+    else:
+        check(
+            "WARN",
+            "bind address",
+            f"{args.host}:{args.port} is reachable beyond this machine; keep it on a "
+            "network only your agents can reach (see deploy/docker-compose.yml)",
+        )
+
+    # 5. The rest of the file (routes, hosts, methods). A secret problem is
+    # already reported above, so only other errors are added here.
+    try:
+        load_route_policy(args.config)
+    except CredentialError:
+        pass
+    except (OSError, ValueError) as exc:
+        check("FAIL", "route file", str(exc))
 
     for status, label, detail in findings:
         print(f"[{status}] {label}: {detail}")
@@ -984,8 +959,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "prune":
         announce("your recorded prompts and completions — the rows stay.")
         return run_prune(args)
-    if args.command == "mcp-serve":
-        return run_mcp_server(args)
     if args.command == "mcp-proxy":
         return run_mcp_proxy(args)
     if args.command == "mcp-connect":
@@ -996,8 +969,6 @@ def main(argv: list[str] | None = None) -> int:
         return run_mcp_pins(args)
     if args.command == "mcp-login":
         return run_mcp_login(args)
-    if args.command == "egress-serve":
-        return run_egress_proxy(args)
     if args.command == "dashboard":
         from agent_action_gateway.observability.dashboard import serve
 

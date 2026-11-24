@@ -1,21 +1,18 @@
-"""A minimal, stdlib-only MCP server over the guarded tool bridge.
+"""The MCP message handler behind the gateway's `/mcp` endpoint.
 
-MCP is JSON-RPC 2.0. The stdio transport is newline-delimited JSON: one request
-per line, one response per line on stdout. This module is deliberately small —
-it is a transport, not policy. Every ``tools/call`` is dispatched through
-:class:`~agent_action_gateway.integrations.mcp.MCPToolBridge`, so an MCP client cannot skip
-a rule the HTTP door enforces.
+MCP is JSON-RPC 2.0. `MCPServer.handle` answers one message: `initialize`,
+`tools/list` and `tools/call`. It holds no policy of its own. Every `tools/call`
+goes through :class:`~agent_action_gateway.integrations.mcp.MCPToolBridge`, so
+arriving over MCP skips no rule the HTTP routes enforce.
 
-No MCP SDK is needed, keeping the package stdlib-only. Adopters who already use
-an MCP library can register the same bridge's tools with it instead.
+The MCP proxy points at this endpoint, so the proxy runs the full checks and the
+gateway holds the key. No MCP SDK is needed, keeping the package stdlib-only.
 """
 
 from __future__ import annotations
 
-import json
-import sys
-from collections.abc import Collection, Iterable, Mapping
-from typing import Any, TextIO
+from collections.abc import Collection, Mapping
+from typing import Any
 
 from agent_action_gateway.integrations.mcp import (
     MCPToolBridge,
@@ -100,30 +97,5 @@ class MCPServer:
     def _result(request_id: Any, result: Any) -> dict[str, Any]:
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
-    def serve(self, lines: Iterable[str], out: TextIO | None = None) -> None:
-        out = out or sys.stdout
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                message = json.loads(line)
-            except json.JSONDecodeError:
-                out.write(json.dumps({
-                    "jsonrpc": "2.0", "id": None,
-                    "error": {"code": -32700, "message": "parse error"},
-                }) + "\n")
-                out.flush()
-                continue
-            response = self.handle(message)
-            if response is not None:
-                out.write(json.dumps(response) + "\n")
-                out.flush()
 
-
-def serve_stdio(bridge: MCPToolBridge) -> None:
-    """Run the newline-delimited stdio transport until stdin closes."""
-    MCPServer(bridge).serve(sys.stdin)
-
-
-__all__ = ["MCPServer", "serve_stdio"]
+__all__ = ["MCPServer"]

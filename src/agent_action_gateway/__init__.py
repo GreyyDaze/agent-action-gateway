@@ -12,7 +12,7 @@ Layout:
     engine/        the one enforcement pipeline
     guards/        redaction, capture policy, honest status
     runtime/       run orchestration
-    credential/    key custody, egress policy, proxy, TLS
+    credential/    key custody and outbound host checks
     integrations/  MCP proxy, HTTP gateway, in-process adapters
     audit/         receipts, failure grouping, lifecycle stores
     eval/          golden set, judges, verdict engine, regression gate

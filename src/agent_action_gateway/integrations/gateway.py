@@ -165,10 +165,9 @@ class GatewayPolicy:
         agent is handed only the vault's placeholders; the real values never
         enter any config file, trace or request the agent can see.
 
-        ``inject_headers=True`` is the reverse-proxy (gateway) mode: the gateway
-        adds the real credential to the named header. ``False`` is the forward
-        proxy mode: the agent placed the placeholder itself and the proxy swaps
-        it in place.
+        ``inject_headers=True`` (the default): the gateway adds the real
+        credential to the named header. ``False``: the agent placed the
+        placeholder itself, and the gateway swaps it in place.
 
         ``enforce_policy`` defaults to ``False``: credential custody is not a
         policy path. Set it ``True`` only for a legacy deployment whose tools

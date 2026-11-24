@@ -293,6 +293,72 @@ class DoctorScopeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("could not read", (result.stderr + result.stdout))
 
+    def test_it_says_it_does_not_cover_the_proxy(self) -> None:
+        result = self._run("--config", str(DEPLOY / "routes.example.json"))
+        self.assertIn("not the MCP proxy", result.stdout)
+        self.assertIn("verify-proxy-boundary", result.stdout)
+
+
+class DoctorCredentialsBlockTest(unittest.TestCase):
+    """A secret in the `credentials` block is checked like a route's secret.
+
+    Before, doctor crashed with a traceback when that secret was missing or had
+    the wrong mode, and never reported on it when it was fine.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        self.secret = self.dir / "token"
+        example = (DEPLOY / "routes.credentials.example.json").read_text(encoding="utf-8")
+        self.config = self.dir / "routes.json"
+        self.config.write_text(
+            example.replace("/run/secrets/github_token", str(self.secret)), encoding="utf-8"
+        )
+
+    def _run(self, *before: str) -> subprocess.CompletedProcess[str]:
+        env = {**os.environ, "AGENT_GATEWAY_MASTER_KEY": "test-master-key"}
+        return subprocess.run(
+            [sys.executable, "-m", "agent_action_gateway.cli", "gateway", *before,
+             "doctor", "--config", str(self.config)],
+            cwd=ROOT, capture_output=True, text=True, env=env,
+        )
+
+    def test_a_missing_secret_is_a_failure_not_a_traceback(self) -> None:
+        result = self._run()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("[FAIL] credential GITHUB_TOKEN secret", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_a_readable_by_others_secret_is_a_failure(self) -> None:
+        self.secret.write_text("t", encoding="utf-8")
+        self.secret.chmod(0o644)
+        result = self._run()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("mode 0644", result.stdout)
+
+    def test_a_good_secret_is_reported_as_checked(self) -> None:
+        self.secret.write_text("t", encoding="utf-8")
+        self.secret.chmod(0o600)
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("[OK] credential GITHUB_TOKEN secret", result.stdout)
+
+    def test_the_user_name_comes_from_the_user_list(self) -> None:
+        import pwd
+
+        self.secret.write_text("t", encoding="utf-8")
+        self.secret.chmod(0o600)
+        result = self._run()
+        self.assertIn(f"running as {pwd.getpwuid(os.geteuid()).pw_name}", result.stdout)
+
+    def test_a_bind_beyond_this_machine_is_a_warning(self) -> None:
+        self.secret.write_text("t", encoding="utf-8")
+        self.secret.chmod(0o600)
+        result = self._run("--host", "0.0.0.0")
+        self.assertIn("[WARN] bind address", result.stdout)
+
 
 class MethodGuardTest(unittest.TestCase):
     """A route the gateway can never serve must fail loudly at load time."""
