@@ -235,3 +235,98 @@ class EvidenceTest(unittest.TestCase):
                 [{"label": "https://a.example/diff", "url": "https://a.example/diff"}],
             )
             self.assertNotIn("evidence", ApprovalStore(store).get(plain.approval_id).context)
+
+
+class FrozenEvidenceTest(unittest.TestCase):
+    """Evidence frozen at approval time: a copy and a fingerprint, not a link that can move."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+
+    def test_text_is_copied_with_its_fingerprint(self) -> None:
+        import hashlib
+
+        from agent_action_gateway.policy.locks import evidence_copy_matches, normalize_evidence
+
+        diff = "-dirty = true\n+dirty = false\n"
+        (item,) = normalize_evidence([{"label": "0042 diff", "text": diff}])
+        self.assertEqual(item["text"], diff)
+        self.assertEqual(item["sha256"], hashlib.sha256(diff.encode()).hexdigest())
+        self.assertEqual(item["size"], len(diff.encode()))
+        self.assertIs(evidence_copy_matches(item), True)
+
+    def test_a_file_is_frozen_when_the_approval_is_asked_for(self) -> None:
+        import hashlib
+
+        from agent_action_gateway.policy.locks import normalize_evidence
+
+        path = self.dir / "0042.diff"
+        path.write_text("+dirty = false\n")
+        (item,) = normalize_evidence([{"label": "diff", "file": path}])
+        path.write_text("changed later\n")
+        self.assertEqual(item["file"], "0042.diff")
+        self.assertEqual(item["text"], "+dirty = false\n")
+        self.assertNotEqual(item["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def test_a_large_or_binary_file_keeps_only_its_fingerprint(self) -> None:
+        import hashlib
+
+        from agent_action_gateway.policy.locks import (
+            MAX_FROZEN_COPY,
+            evidence_copy_matches,
+            normalize_evidence,
+        )
+
+        big = self.dir / "replay.webm"
+        big.write_bytes(b"x" * (MAX_FROZEN_COPY + 1))
+        binary = self.dir / "shot.png"
+        binary.write_bytes(b"\x89PNG\xff\xfe")
+        replay, shot = normalize_evidence(
+            [{"label": "replay", "file": str(big)}, {"label": "shot", "file": binary}]
+        )
+        self.assertNotIn("text", replay)
+        self.assertEqual(replay["size"], MAX_FROZEN_COPY + 1)
+        self.assertEqual(replay["sha256"], hashlib.sha256(big.read_bytes()).hexdigest())
+        self.assertNotIn("text", shot)
+        self.assertIsNone(evidence_copy_matches(replay))
+
+    def test_secrets_are_hidden_in_the_copy_and_the_fingerprint_is_the_originals(self) -> None:
+        import hashlib
+
+        from agent_action_gateway.policy.locks import evidence_copy_matches, normalize_evidence
+
+        text = "curl -H 'Authorization: Bearer abcdefghijklmnopqrstuvwx' https://api"
+        (item,) = normalize_evidence([{"label": "log", "text": text}])
+        self.assertNotIn("abcdefghijklmnopqrstuvwx", item["text"])
+        self.assertTrue(item["redacted"])
+        self.assertEqual(item["sha256"], hashlib.sha256(text.encode()).hexdigest())
+        self.assertIsNone(evidence_copy_matches(item))
+
+    def test_a_copy_changed_after_approval_no_longer_matches(self) -> None:
+        from agent_action_gateway.policy.locks import evidence_copy_matches, normalize_evidence
+
+        (item,) = normalize_evidence([{"label": "diff", "text": "+a"}])
+        self.assertIs(evidence_copy_matches({**item, "text": "+b"}), False)
+
+    def test_bad_frozen_evidence_is_refused(self) -> None:
+        from agent_action_gateway.policy.locks import (
+            MAX_FROZEN_COPY,
+            MAX_FROZEN_TOTAL,
+            normalize_evidence,
+        )
+
+        for bad in (
+            [{"label": "x", "text": "a", "file": "b"}],
+            [{"label": "x", "text": 5}],
+            [{"label": "x", "file": 5}],
+            [{"label": "x", "file": str(self.dir / "missing.diff")}],
+            [{"label": "x", "file": str(self.dir)}],
+            [{"label": "x", "text": "a" * (MAX_FROZEN_COPY + 1)}],
+            [{"label": f"x{i}", "text": "a" * MAX_FROZEN_COPY}
+             for i in range(MAX_FROZEN_TOTAL // MAX_FROZEN_COPY + 1)],
+            [{"label": "x", "comment": "unknown field"}],
+        ):
+            with self.subTest(bad=str(bad)[:60]), self.assertRaises(ValueError):
+                normalize_evidence(bad)

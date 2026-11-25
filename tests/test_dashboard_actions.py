@@ -220,7 +220,7 @@ class DashboardActionsTest(unittest.TestCase):
                 ],
             )
         page = self.serve().open()
-        self.assertIn("Evidence:", page)
+        self.assertIn("<b>Evidence</b>", page)
         self.assertIn("href='https://example.com/diff/42'", page)
         self.assertIn("rel='noopener noreferrer'", page)
         self.assertIn("Checked on staging first", page)
@@ -236,6 +236,38 @@ class DashboardActionsTest(unittest.TestCase):
         page = self.serve().open()
         self.assertIn("<th>Evidence</th>", page)
         self.assertEqual(page.count("href='https://example.com/diff/7'"), 2)
+
+    def test_a_held_action_shows_the_frozen_copy_and_fingerprint(self) -> None:
+        replay = self.db.parent / "replay.webm"
+        replay.write_bytes(b"\x00" * 200_000)
+        self.held_action(
+            evidence=[
+                {"label": "0042 diff", "text": "+dirty = false\n<script>x</script>"},
+                {"label": "Replay", "file": str(replay)},
+            ]
+        )
+        page = self.serve().open()
+        held = page[page.index("Held actions"):page.index("Tools waiting")]
+        self.assertIn("frozen", held)
+        self.assertIn("copy matches", held)
+        self.assertIn("+dirty = false", held)
+        self.assertIn("&lt;script&gt;x&lt;/script&gt;", held)
+        self.assertNotIn("<script>x", page)
+        self.assertIn("replay.webm", held)
+        self.assertIn("195.3 KB", held)
+        self.assertIn("fingerprint only", held)
+
+    def test_a_frozen_copy_edited_in_the_database_is_flagged(self) -> None:
+        self.held_action(evidence=[{"label": "0042 diff", "text": "+dirty = false"}])
+        store = ApprovalStore(TraceStore(self.db))
+        with store.connection() as connection:
+            (raw,) = connection.execute("SELECT context_json FROM approvals").fetchone()
+            connection.execute(
+                "UPDATE approvals SET context_json=?",
+                (raw.replace("+dirty = false", "+dirty = true"),),
+            )
+        page = self.serve().open()
+        self.assertIn("copy changed since approval", page)
 
     def test_a_script_link_in_stored_evidence_is_never_made_clickable(self) -> None:
         approval_id = self.pending_approval()

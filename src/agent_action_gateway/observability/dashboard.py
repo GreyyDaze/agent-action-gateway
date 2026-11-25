@@ -28,7 +28,12 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from agent_action_gateway.guards.redaction import redact
 from agent_action_gateway.observability.view import build_run_view
-from agent_action_gateway.policy.locks import Approval, ApprovalError, ApprovalStore
+from agent_action_gateway.policy.locks import (
+    Approval,
+    ApprovalError,
+    ApprovalStore,
+    evidence_copy_matches,
+)
 from agent_action_gateway.storage.traces import TraceStore
 
 if TYPE_CHECKING:
@@ -392,24 +397,68 @@ def _name_field(field_id: str, placeholder: str = "Your name") -> str:
 # -- the "needs you" panels ---------------------------------------------------
 
 
-def _evidence_html(evidence: Any) -> str:
-    """Links and notes a person looked at. Only http(s) links become anchors."""
+def _size(n: Any) -> str:
+    if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+        return ""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
+
+
+def _evidence_html(evidence: Any, *, compact: bool = False) -> str:
+    """Links, notes and frozen copies a person looked at.
+
+    Only http(s) links become anchors. A frozen item shows its size and SHA-256
+    fingerprint, whether the stored copy still matches it, and the copy itself
+    (folded) unless `compact`.
+    """
     if not isinstance(evidence, list):
         return ""
-    parts = []
+    lines = []
     for item in evidence[:10]:
         if not isinstance(item, dict):
             continue
         label = escape(str(item.get("label") or "")[:300])
+        if not label:
+            continue
         url = str(item.get("url") or "")
-        if url.lower().startswith(("http://", "https://")) and label:
-            parts.append(
-                f"<a href='{escape(url, quote=True)}' target='_blank' "
-                f"rel='noopener noreferrer'>{label}</a>"
+        name = (
+            f"<a href='{escape(url, quote=True)}' target='_blank' "
+            f"rel='noopener noreferrer'>{label}</a>"
+            if url.lower().startswith(("http://", "https://"))
+            else f"<span>{label}</span>"
+        )
+        digest = str(item.get("sha256") or "")
+        if not digest:
+            lines.append(name)
+            continue
+        facts = [p for p in (escape(str(item.get("file") or "")), _size(item.get("size"))) if p]
+        facts.append(f"<span class='mono' title='sha256 {escape(digest)}'>sha256 {escape(digest[:12])}</span>")
+        matches = evidence_copy_matches(item)
+        if item.get("redacted"):
+            facts.append("secrets hidden in the copy")
+        elif matches is True:
+            facts.append(_badge("copy matches", "ok"))
+        elif matches is False:
+            facts.append(_badge("copy changed since approval", "bad"))
+        elif "text" not in item:
+            facts.append("fingerprint only")
+        line = f"{name} · frozen · {' · '.join(facts)}"
+        if compact or not isinstance(item.get("text"), str):
+            lines.append(line)
+        else:
+            lines.append(
+                f"<details><summary class='meta'>{line} · <u>show copy</u></summary>"
+                f"<pre>{escape(item['text'])}</pre></details>"
             )
-        elif label:
-            parts.append(f"<span>{label}</span>")
-    return " · ".join(parts)
+    if not lines:
+        return ""
+    if compact:
+        return "<br>".join(lines)
+    rows = [line if line.startswith("<details") else f"<div class='meta'>{line}</div>" for line in lines]
+    return "<div class='meta'><b>Evidence</b></div>" + "".join(rows)
 
 
 def _approved_with(receipt: dict, decided: list[Approval]) -> str:
@@ -426,12 +475,7 @@ def _approved_with(receipt: dict, decided: list[Approval]) -> str:
                 f"Approved by {escape(str(item.approver or '—'))} "
                 f"{escape(_when(item.decided_at))}"
             )
-            evidence = _evidence_html(context.get("evidence"))
-            return (
-                f"<p class='meta'>{line}"
-                + (f" · Evidence: {evidence}" if evidence else "")
-                + "</p>"
-            )
+            return f"<p class='meta'>{line}</p>" + _evidence_html(context.get("evidence"))
     return ""
 
 
@@ -457,11 +501,7 @@ def _render_approvals(pending: list[Approval]) -> str:
             + _meta_item("clock", escape(_expires(item.expires_at)), _when(item.expires_at))
             + "</div>"
             f"<pre>{_args(redact(dict(item.arguments)))}</pre>"
-            + (
-                f"<p class='meta'>Evidence: {_evidence_html(context.get('evidence'))}</p>"
-                if context.get("evidence")
-                else ""
-            )
+            + _evidence_html(context.get("evidence"))
             + "<form class='act' method='post' action='/approvals/approve'>"
             f"{_csrf_field()}<input type='hidden' name='approval_id' value='{aid}'>"
             f"{_name_field('ap-' + item.approval_id)}"
@@ -652,7 +692,7 @@ def _render_history(decided: list[Approval]) -> str:
             f"<td>{escape(str(item.approver or '—'))}</td>"
             f"<td>{escape(_when(item.decided_at))}</td>"
             f"<td>{escape(used)}</td>"
-            f"<td>{_evidence_html(context.get('evidence')) or '—'}</td>"
+            f"<td>{_evidence_html(context.get('evidence'), compact=True) or '—'}</td>"
             "</tr>"
         )
     return (

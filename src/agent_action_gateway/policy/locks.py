@@ -5,10 +5,12 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from os import PathLike
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from agent_action_gateway.guards.redaction import redact
 from agent_action_gateway.storage.base import SqliteStore
 from agent_action_gateway.storage.traces import TraceStore
 
@@ -50,32 +52,87 @@ class Approval:
 
 MAX_EVIDENCE = 10
 MAX_EVIDENCE_TEXT = 300
+#: A frozen copy is kept up to this size (UTF-8 bytes). A larger or binary file
+#: is fingerprinted only: its SHA-256 and size are kept, not its content.
+MAX_FROZEN_COPY = 64 * 1024
+#: All frozen copies of one approval together.
+MAX_FROZEN_TOTAL = 256 * 1024
 
 
-def normalize_evidence(items: Any) -> list[dict[str, str]]:
-    """Check the evidence a person should see before approving.
+def _fingerprint_file(path: Path) -> tuple[str, int, bytes | None]:
+    """SHA-256 and size of a file, plus its bytes when small enough to copy."""
+    if not path.is_file():
+        raise ValueError(f"evidence file not found or not a regular file: {path.name}")
+    digest = hashlib.sha256()
+    size = 0
+    head = bytearray()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+            if len(head) <= MAX_FROZEN_COPY:
+                head.extend(chunk[: MAX_FROZEN_COPY + 1 - len(head)])
+    return digest.hexdigest(), size, bytes(head) if size <= MAX_FROZEN_COPY else None
 
-    Each item is a link (`"https://..."`), a note (`"migration 0042 diff"`) or
-    `{"label": ..., "url": ...}`. A URL must be http or https. The product keeps
-    the reference, not the file, so a reviewer can open it later.
+
+def _freeze(content: bytes | None, digest: str, size: int) -> dict[str, Any]:
+    """Keep what the approver saw: a fingerprint always, a copy when it is text."""
+    frozen: dict[str, Any] = {"sha256": digest, "size": size}
+    if content is not None:
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return frozen
+        copy = redact(text)
+        frozen["text"] = copy
+        if copy != text:
+            # The fingerprint is of the original; the stored copy hides secrets.
+            frozen["redacted"] = True
+    return frozen
+
+
+def normalize_evidence(items: Any) -> list[dict[str, Any]]:
+    """Check, and freeze, the evidence a person should see before approving.
+
+    Each item is a link (`"https://..."`), a note (`"migration 0042 diff"`) or a
+    mapping with a `label` and any of:
+
+    - `url`: a link (http or https). Only the link is kept.
+    - `text`: content such as a diff. Frozen: a copy and its SHA-256 are kept.
+    - `file`: a local file, such as a replay. Frozen when the approval is asked
+      for: its SHA-256, size and name are kept, and a copy too when it is text of
+      at most 64 KB. A later edit to the file no longer matches the fingerprint.
     """
     if items is None:
         return []
     if isinstance(items, (str, bytes, Mapping)) or not isinstance(items, Sequence):
-        raise ValueError("evidence must be a list of links, notes or {label, url} items")
+        raise ValueError("evidence must be a list of links, notes or {label, ...} items")
     if len(items) > MAX_EVIDENCE:
         raise ValueError(f"at most {MAX_EVIDENCE} evidence items")
-    result: list[dict[str, str]] = []
+    result: list[dict[str, Any]] = []
+    copied = 0
     for item in items:
+        text: Any = None
+        file: Any = None
         if isinstance(item, str):
             label, url = item, item if item.lower().startswith(("http://", "https://")) else ""
         elif isinstance(item, Mapping):
+            unknown = set(item) - {"label", "url", "text", "file"}
+            if unknown:
+                raise ValueError(f"unknown evidence field(s): {', '.join(sorted(map(str, unknown)))}")
             raw_label, raw_url = item.get("label"), item.get("url") or ""
             if not isinstance(raw_label, str) or not isinstance(raw_url, str):
                 raise ValueError("an evidence item needs a text label and an optional text url")
             label, url = raw_label, raw_url
+            text, file = item.get("text"), item.get("file")
+            if text is not None and file is not None:
+                raise ValueError("an evidence item takes text or file, not both")
+            if text is not None and not isinstance(text, str):
+                raise ValueError("evidence text must be a string")
+            if file is not None and not isinstance(file, (str, PathLike)):
+                raise ValueError("evidence file must be a path")
         else:
-            raise ValueError("an evidence item is a string or a {label, url} mapping")
+            raise ValueError("an evidence item is a string or a {label, ...} mapping")
         label = label.strip()
         if not label:
             raise ValueError("an evidence item needs a label")
@@ -83,8 +140,39 @@ def normalize_evidence(items: Any) -> list[dict[str, str]]:
             raise ValueError(f"an evidence label or url is over {MAX_EVIDENCE_TEXT} characters")
         if url and not url.lower().startswith(("http://", "https://")):
             raise ValueError("an evidence url must start with http:// or https://")
-        result.append({"label": label, "url": url} if url else {"label": label})
+        entry: dict[str, Any] = {"label": label}
+        if url:
+            entry["url"] = url
+        if text is not None:
+            raw = text.encode("utf-8")
+            if len(raw) > MAX_FROZEN_COPY:
+                raise ValueError(
+                    f"evidence text is over {MAX_FROZEN_COPY // 1024} KB; pass it as a file"
+                )
+            entry.update(_freeze(raw, hashlib.sha256(raw).hexdigest(), len(raw)))
+        if file is not None:
+            path = Path(file)
+            digest, size, content = _fingerprint_file(path)
+            entry["file"] = path.name
+            entry.update(_freeze(content, digest, size))
+        copied += len(str(entry.get("text") or "").encode("utf-8"))
+        if copied > MAX_FROZEN_TOTAL:
+            raise ValueError(f"frozen evidence is over {MAX_FROZEN_TOTAL // 1024} KB in total")
+        result.append(entry)
     return result
+
+
+def evidence_copy_matches(item: Mapping[str, Any]) -> bool | None:
+    """Does a stored copy still match its fingerprint? None when there is nothing to compare.
+
+    A copy with secrets hidden cannot match the original's fingerprint, so it is
+    not compared either. This catches a copy changed after the approval; someone
+    who can edit the database can change both, so it is not a tamper-proof seal.
+    """
+    text, digest = item.get("text"), item.get("sha256")
+    if not isinstance(text, str) or not isinstance(digest, str) or item.get("redacted"):
+        return None
+    return hashlib.sha256(text.encode("utf-8")).hexdigest() == digest
 
 
 def payload_hash(action: str, arguments: dict[str, Any]) -> str:

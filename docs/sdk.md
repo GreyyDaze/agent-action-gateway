@@ -76,29 +76,52 @@ drop(table="users", approval_id=approval.approval_id)   # allowed
 
 #### Evidence for the reviewer
 
-Tell the person what to look at before they decide. Evidence is a list of links
-(a migration diff, a replay) or short notes:
+Tell the person what to look at before they decide, and keep exactly what they
+saw. Evidence is a list of items:
 
 ```python
 approval = ctx.request_approval(
     "db.run_migration",
     {"version": 42},
     evidence=[
-        {"label": "Migration 0042 diff", "url": "https://example.com/diff/42"},
-        "Checked on staging first",
+        {"label": "Migration 0042 diff", "text": diff_text},           # frozen copy
+        {"label": "Agent session replay", "file": "replays/run-7.webm"},  # frozen fingerprint
+        {"label": "Pull request", "url": "https://example.com/pr/42"},    # link only
+        "Checked on staging first",                                      # note
     ],
 )
 ```
 
-The dashboard shows the evidence on the waiting approval, on the held action
-that approval led to (with who approved it), and in the approval history. Limits:
+| Item | What is kept |
+|---|---|
+| `text` | a copy (up to 64 KB) and its SHA-256 |
+| `file` | read when the approval is asked for: the file name, size and SHA-256, plus a copy when it is text of at most 64 KB |
+| `url` | the link only (http or https). The page behind it can change or disappear |
+| a plain string | a note, or a link if it starts with `http://` or `https://` |
 
-- Only the reference is stored, never the file. Keep the diff or replay where it
-  already lives. Do not put a secret in a link.
-- At most 10 items, 300 characters each. A link must start with `http://` or
-  `https://`; anything else is refused.
+The evidence is frozen when the approval is asked for. A file edited later no
+longer matches its fingerprint: check it with `shasum -a 256 FILE`. A large or
+binary file (a video replay) keeps only its fingerprint, so keep the file
+itself; the fingerprint proves it is the one the approver saw.
+
+The dashboard shows the evidence on the waiting approval, on the held action
+that approval led to (with who approved it), and in the approval history. A
+frozen copy can be opened in place, and is marked **copy matches** when it still
+matches its fingerprint, or **copy changed since approval** when it does not.
+
+Limits:
+
+- Secrets in a copy are hidden, the same way records hide them. The fingerprint
+  is still the original's, so such a copy is not compared.
+- The check catches a copy changed after approval. It is not a tamper-proof
+  seal: someone who can edit the database can change the copy and the
+  fingerprint together.
+- At most 10 items, 300-character labels and links, 64 KB per copy and 256 KB of
+  copies per approval. Anything else is refused, not cut.
 - It is set by the code that requests the approval. An agent behind the MCP proxy
-  cannot add evidence to its own approvals, so the proxy creates none.
+  cannot add evidence to its own approvals, so the proxy creates none. The exact
+  arguments (for SQL, the statement itself) are always kept and bound to the
+  approval.
 
 ### Doing an effect once
 
