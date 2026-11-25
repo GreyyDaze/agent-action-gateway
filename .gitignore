@@ -61,3 +61,6 @@ demo/record/music/*.mp3
 # Demo videos are hosted on YouTube, not in git.
 videos/
 demo/record/*.log
+
+# How the demo videos are made stays private (local only).
+demo/record/
