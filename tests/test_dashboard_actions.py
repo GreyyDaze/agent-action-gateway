@@ -159,13 +159,15 @@ class DashboardActionsTest(unittest.TestCase):
 
     # -- settle -------------------------------------------------------------
 
-    def held_action(self) -> str:
+    def held_action(self, evidence: list | None = None) -> str:
         def restart(service: str, intent_key: str = "") -> dict:
             raise OutcomeUnknown("no answer")
 
         with session(store=TraceStore(self.db), environment="prod") as ctx:
             tool = ctx.tool(restart, action="service.restart", risk="write")
-            approval = ctx.request_approval("service.restart", {"service": "api"})
+            approval = ctx.request_approval(
+                "service.restart", {"service": "api"}, evidence=evidence
+            )
             ctx.approve(approval.approval_id, "reviewer")
             with self.assertRaises(OutcomeUnknown):
                 tool(service="api", approval_id=approval.approval_id)
@@ -204,6 +206,53 @@ class DashboardActionsTest(unittest.TestCase):
         view = build_run_view(TraceStore(self.db).dashboard_snapshot(), None)
         self.assertEqual(len(view["held"]), 1)
         self.assertNotEqual(view["held"][0]["run_id"], view["run_id"])
+
+    # -- evidence ------------------------------------------------------------
+
+    def test_a_waiting_approval_shows_its_evidence_links(self) -> None:
+        with session(store=TraceStore(self.db), environment="staging") as ctx:
+            ctx.request_approval(
+                "db.drop_table",
+                {"table": "users"},
+                evidence=[
+                    {"label": "Migration 0042 diff", "url": "https://example.com/diff/42"},
+                    "Checked on staging first",
+                ],
+            )
+        page = self.serve().open()
+        self.assertIn("Evidence:", page)
+        self.assertIn("href='https://example.com/diff/42'", page)
+        self.assertIn("rel='noopener noreferrer'", page)
+        self.assertIn("Checked on staging first", page)
+
+    def test_a_held_action_shows_who_approved_it_and_what_they_saw(self) -> None:
+        self.held_action(evidence=[{"label": "Replay", "url": "https://example.com/replay/9"}])
+        page = self.serve().open()
+        self.assertIn("Approved by reviewer", page)
+        self.assertIn("href='https://example.com/replay/9'", page)
+
+    def test_approval_history_lists_the_evidence(self) -> None:
+        self.held_action(evidence=["https://example.com/diff/7"])
+        page = self.serve().open()
+        self.assertIn("<th>Evidence</th>", page)
+        self.assertEqual(page.count("href='https://example.com/diff/7'"), 2)
+
+    def test_a_script_link_in_stored_evidence_is_never_made_clickable(self) -> None:
+        approval_id = self.pending_approval()
+        store = ApprovalStore(TraceStore(self.db))
+        with store.connection() as connection:
+            connection.execute(
+                "UPDATE approvals SET context_json=? WHERE approval_id=?",
+                (
+                    '{"risk": "destructive", "evidence": [{"label": "<b>x</b>", '
+                    '"url": "javascript:alert(1)"}]}',
+                    approval_id,
+                ),
+            )
+        page = self.serve().open()
+        self.assertNotIn("javascript:", page)
+        self.assertNotIn("<b>x</b>", page)
+        self.assertIn("&lt;b&gt;x&lt;/b&gt;", page)
 
     # -- accept a tool ------------------------------------------------------
 

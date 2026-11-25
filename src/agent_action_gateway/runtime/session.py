@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import contextvars
 import functools
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC
 from typing import Any
@@ -38,7 +38,12 @@ from agent_action_gateway.policy.fuses import (
     FuseLimits,
     FuseTrippedError,
 )
-from agent_action_gateway.policy.locks import Approval, ApprovalStore, RiskRegistry
+from agent_action_gateway.policy.locks import (
+    Approval,
+    ApprovalStore,
+    RiskRegistry,
+    normalize_evidence,
+)
 from agent_action_gateway.policy.stop_rules import (
     AmbiguityBlockedError,
     ClarificationState,
@@ -161,9 +166,18 @@ class SafetySession:
         *,
         expires_in_seconds: int = 900,
         approver: str = "pending",
+        evidence: Sequence[str | Mapping[str, str]] | None = None,
     ) -> Approval:
-        """Create a pending approval bound to this exact payload."""
+        """Create a pending approval bound to this exact payload.
+
+        `evidence` lists what the person should look at before deciding: links
+        (a migration diff, a replay) or notes. The dashboard shows them on the
+        approval and on the held action, and keeps them in the approval history.
+        Only the reference is stored, never the file. Do not put a secret in a link.
+        """
         from datetime import datetime, timedelta
+
+        references = normalize_evidence(evidence)
 
         # The tool's declared risk is kept. An action with none is already
         # treated as destructive.
@@ -175,6 +189,7 @@ class SafetySession:
                 "risk": self.registry.classify(action),
                 "environment": self.environment,
                 "run_id": self.run_id,
+                **({"evidence": references} if references else {}),
             },
         )
         if approver != "pending":

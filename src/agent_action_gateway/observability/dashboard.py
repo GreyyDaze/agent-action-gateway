@@ -392,6 +392,49 @@ def _name_field(field_id: str, placeholder: str = "Your name") -> str:
 # -- the "needs you" panels ---------------------------------------------------
 
 
+def _evidence_html(evidence: Any) -> str:
+    """Links and notes a person looked at. Only http(s) links become anchors."""
+    if not isinstance(evidence, list):
+        return ""
+    parts = []
+    for item in evidence[:10]:
+        if not isinstance(item, dict):
+            continue
+        label = escape(str(item.get("label") or "")[:300])
+        url = str(item.get("url") or "")
+        if url.lower().startswith(("http://", "https://")) and label:
+            parts.append(
+                f"<a href='{escape(url, quote=True)}' target='_blank' "
+                f"rel='noopener noreferrer'>{label}</a>"
+            )
+        elif label:
+            parts.append(f"<span>{label}</span>")
+    return " · ".join(parts)
+
+
+def _approved_with(receipt: dict, decided: list[Approval]) -> str:
+    """Who approved a held action, and what they were shown."""
+    for item in decided:
+        context = item.context or {}
+        if (
+            item.decision == "approved"
+            and context.get("run_id") == receipt.get("run_id")
+            and item.action == receipt.get("action")
+            and dict(item.arguments) == (receipt.get("arguments") or {})
+        ):
+            line = (
+                f"Approved by {escape(str(item.approver or '—'))} "
+                f"{escape(_when(item.decided_at))}"
+            )
+            evidence = _evidence_html(context.get("evidence"))
+            return (
+                f"<p class='meta'>{line}"
+                + (f" · Evidence: {evidence}" if evidence else "")
+                + "</p>"
+            )
+    return ""
+
+
 def _render_approvals(pending: list[Approval]) -> str:
     if not pending:
         return _empty("No approvals are waiting on a human.")
@@ -414,7 +457,12 @@ def _render_approvals(pending: list[Approval]) -> str:
             + _meta_item("clock", escape(_expires(item.expires_at)), _when(item.expires_at))
             + "</div>"
             f"<pre>{_args(redact(dict(item.arguments)))}</pre>"
-            "<form class='act' method='post' action='/approvals/approve'>"
+            + (
+                f"<p class='meta'>Evidence: {_evidence_html(context.get('evidence'))}</p>"
+                if context.get("evidence")
+                else ""
+            )
+            + "<form class='act' method='post' action='/approvals/approve'>"
             f"{_csrf_field()}<input type='hidden' name='approval_id' value='{aid}'>"
             f"{_name_field('ap-' + item.approval_id)}"
             f"<button class='primary' type='submit'>{_icon('check', 16)}Approve</button>"
@@ -424,7 +472,7 @@ def _render_approvals(pending: list[Approval]) -> str:
     return f"<div class='stack'>{''.join(cards)}</div>"
 
 
-def _render_held(view: dict) -> str:
+def _render_held(view: dict, decided: list[Approval] | None = None) -> str:
     held = view.get("held") or []
     if not held:
         return _empty("No held actions: every claimed action has a known outcome.")
@@ -444,7 +492,8 @@ def _render_held(view: dict) -> str:
             + _meta_item("clock", "since " + escape(_when(receipt.get('created_at'))))
             + "</div>"
             f"<pre>{_args(redact(receipt.get('arguments') or {}))}</pre>"
-            "<p class='meta'>Check the real system first. Then say what happened.</p>"
+            + _approved_with(receipt, decided or [])
+            + "<p class='meta'>Check the real system first. Then say what happened.</p>"
             "<form class='act' method='post' action='/receipts/settle'>"
             f"{_csrf_field()}<input type='hidden' name='intent_key' value='{escape(key)}'>"
             f"{_name_field('st-' + key)}"
@@ -603,11 +652,12 @@ def _render_history(decided: list[Approval]) -> str:
             f"<td>{escape(str(item.approver or '—'))}</td>"
             f"<td>{escape(_when(item.decided_at))}</td>"
             f"<td>{escape(used)}</td>"
+            f"<td>{_evidence_html(context.get('evidence')) or '—'}</td>"
             "</tr>"
         )
     return (
         "<div class='table-wrap'><table><thead><tr><th>Action</th><th>Decision</th>"
-        "<th>By (as typed)</th><th>When</th><th>Approval</th></tr></thead>"
+        "<th>By (as typed)</th><th>When</th><th>Approval</th><th>Evidence</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table></div>"
     )
 
@@ -895,7 +945,7 @@ class Handler(BaseHTTPRequestHandler):
     <h1>Needs you</h1>
     <p class="lede">The three moments a person is in the loop. Nothing here runs until you act.</p>
     <div class="group"><h2>{_icon('shield')}Approvals waiting {_count(len(pending))}</h2>{_render_approvals(pending)}</div>
-    <div class="group"><h2>{_icon('alert')}Held actions {_count(len(held))}</h2>{held_note}{_render_held(view)}</div>
+    <div class="group"><h2>{_icon('alert')}Held actions {_count(len(held))}</h2>{held_note}{_render_held(view, decided)}</div>
     <div class="group"><h2>{_icon('wrench')}Tools waiting {_count(len(tools or []))}</h2>{_render_tools(tools)}</div>
   </section>
 

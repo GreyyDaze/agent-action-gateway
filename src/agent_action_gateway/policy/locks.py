@@ -2,6 +2,7 @@
 import hashlib
 import json
 import sqlite3
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,6 +46,45 @@ class Approval:
     #: environment and the run that asked. Empty for approvals made before
     #: this was recorded.
     context: dict[str, Any] = field(default_factory=dict)
+
+
+MAX_EVIDENCE = 10
+MAX_EVIDENCE_TEXT = 300
+
+
+def normalize_evidence(items: Any) -> list[dict[str, str]]:
+    """Check the evidence a person should see before approving.
+
+    Each item is a link (`"https://..."`), a note (`"migration 0042 diff"`) or
+    `{"label": ..., "url": ...}`. A URL must be http or https. The product keeps
+    the reference, not the file, so a reviewer can open it later.
+    """
+    if items is None:
+        return []
+    if isinstance(items, (str, bytes, Mapping)) or not isinstance(items, Sequence):
+        raise ValueError("evidence must be a list of links, notes or {label, url} items")
+    if len(items) > MAX_EVIDENCE:
+        raise ValueError(f"at most {MAX_EVIDENCE} evidence items")
+    result: list[dict[str, str]] = []
+    for item in items:
+        if isinstance(item, str):
+            label, url = item, item if item.lower().startswith(("http://", "https://")) else ""
+        elif isinstance(item, Mapping):
+            raw_label, raw_url = item.get("label"), item.get("url") or ""
+            if not isinstance(raw_label, str) or not isinstance(raw_url, str):
+                raise ValueError("an evidence item needs a text label and an optional text url")
+            label, url = raw_label, raw_url
+        else:
+            raise ValueError("an evidence item is a string or a {label, url} mapping")
+        label = label.strip()
+        if not label:
+            raise ValueError("an evidence item needs a label")
+        if len(label) > MAX_EVIDENCE_TEXT or len(url) > MAX_EVIDENCE_TEXT:
+            raise ValueError(f"an evidence label or url is over {MAX_EVIDENCE_TEXT} characters")
+        if url and not url.lower().startswith(("http://", "https://")):
+            raise ValueError("an evidence url must start with http:// or https://")
+        result.append({"label": label, "url": url} if url else {"label": label})
+    return result
 
 
 def payload_hash(action: str, arguments: dict[str, Any]) -> str:

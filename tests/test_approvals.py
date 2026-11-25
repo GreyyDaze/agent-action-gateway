@@ -182,3 +182,56 @@ class ApprovalLockTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EvidenceTest(unittest.TestCase):
+    def test_links_notes_and_mappings_are_normalized(self) -> None:
+        from agent_action_gateway.policy.locks import normalize_evidence
+
+        self.assertEqual(
+            normalize_evidence(
+                ["https://a.example/x", "just a note", {"label": "Diff", "url": "http://b.example"}]
+            ),
+            [
+                {"label": "https://a.example/x", "url": "https://a.example/x"},
+                {"label": "just a note"},
+                {"label": "Diff", "url": "http://b.example"},
+            ],
+        )
+        self.assertEqual(normalize_evidence(None), [])
+
+    def test_bad_evidence_is_refused(self) -> None:
+        from agent_action_gateway.policy.locks import MAX_EVIDENCE, normalize_evidence
+
+        for bad in (
+            "https://a.example",  # a bare string, not a list
+            [{"label": "x", "url": "javascript:alert(1)"}],
+            [{"label": "x", "url": "file:///etc/passwd"}],
+            [{"url": "https://a.example"}],  # no label
+            [{"label": "  "}],
+            [123],
+            ["x" * 301],
+            ["note"] * (MAX_EVIDENCE + 1),
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                normalize_evidence(bad)
+
+    def test_the_session_keeps_evidence_in_the_approval_context(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from agent_action_gateway import session
+        from agent_action_gateway.storage.traces import TraceStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = TraceStore(Path(tmp) / "t.db")
+            with session(store=store) as ctx:
+                approval = ctx.request_approval(
+                    "db.migrate", {"v": 42}, evidence=["https://a.example/diff"]
+                )
+                plain = ctx.request_approval("db.migrate", {"v": 43})
+            self.assertEqual(
+                ApprovalStore(store).get(approval.approval_id).context["evidence"],
+                [{"label": "https://a.example/diff", "url": "https://a.example/diff"}],
+            )
+            self.assertNotIn("evidence", ApprovalStore(store).get(plain.approval_id).context)

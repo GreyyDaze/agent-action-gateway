@@ -74,6 +74,32 @@ drop(table="users", approval_id=approval.approval_id)   # allowed
 | Expires | after 15 minutes by default |
 | Single use | a second call with the same approval is refused |
 
+#### Evidence for the reviewer
+
+Tell the person what to look at before they decide. Evidence is a list of links
+(a migration diff, a replay) or short notes:
+
+```python
+approval = ctx.request_approval(
+    "db.run_migration",
+    {"version": 42},
+    evidence=[
+        {"label": "Migration 0042 diff", "url": "https://example.com/diff/42"},
+        "Checked on staging first",
+    ],
+)
+```
+
+The dashboard shows the evidence on the waiting approval, on the held action
+that approval led to (with who approved it), and in the approval history. Limits:
+
+- Only the reference is stored, never the file. Keep the diff or replay where it
+  already lives. Do not put a secret in a link.
+- At most 10 items, 300 characters each. A link must start with `http://` or
+  `https://`; anything else is refused.
+- It is set by the code that requests the approval. An agent behind the MCP proxy
+  cannot add evidence to its own approvals, so the proxy creates none.
+
 ### Doing an effect once
 
 Each destructive call gets an `intent_key`: a stable identifier for *what the
