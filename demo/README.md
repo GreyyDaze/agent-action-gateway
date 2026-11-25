@@ -15,12 +15,12 @@ installed with pip inside their containers, like any user would.
 | No way around | The agent's container has the task and one MCP address. It cannot reach Postgres, the gateway or the ops API. |
 | Reads run | The agent reads the schema and the migration log without approval. |
 | Environment | The session is staging; a call to prod is refused. |
-| Exact approval | The fix (a write) is held. A person approves that exact SQL in the dashboard; it runs once. |
+| Exact approval | The fix (a write) is blocked until a person approves that exact SQL in the dashboard; it then runs once. |
 | Key custody | The restart goes through the gateway, which adds the ops API key. The agent never sees it. |
 | Once only | Asked to restart again, and approved again, it answers with the first result. The restart count stays 1. |
 | Proof | The dashboard shows every call, refusal and approval. |
 
-Short clips (each set up on purpose): a loop is stopped; a changed tool is held
+Short clips (each set up on purpose): a loop is stopped; a changed tool is hidden
 until a person accepts it; a call that times out is held and settled by a
 person; `check --app` finds a direct call; the release gate fails a less safe
 version. The videos are not stored in this repository.
@@ -62,6 +62,11 @@ agent's words are not scripted, so each run differs.
 
 - The agent container also has a network for the model API (`model_net`). It
   cannot reach the tools that way, but it is not cut off from the internet.
+- The agent's own tools (Bash, Read, Write, Edit) are allowed in its workspace
+  (`agent/workspace/.claude/settings.json`). They only reach its own container,
+  but the gateway does not see them, so what the agent reads with them is not
+  shown as evidence on an approval. Evidence comes from the reads that went
+  through the proxy (the schema and the migration log).
 - Approvals in the recordings are sent through the dashboard's own form by a
   script (`approve.py`), as a person would click them.
 - Postgres MCP Pro does not mark its tools read-only, so `config/servers.json`

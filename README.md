@@ -46,9 +46,14 @@ tools like `execute_sql`, tool pinning, the bypass scanner) are explained in the
   destructive. Everything except `read` needs an approval.
 - **Exact approval:** bound to the action and its arguments, used once, expires
   after 15 minutes.
-- **Collected evidence:** the read results the agent got before asking are
-  frozen onto the approval by the checkpoint, not written by the model
-  ([details](docs/sdk.md#evidence-for-the-reviewer)).
+- **Waiting for approval vs held:** an action *waiting for approval* was blocked
+  and has not run; a person approves or denies it. A *held* action was approved
+  and sent, then got no answer (a timeout), so nobody knows if it happened. It is
+  not run again until a person checks the real system and settles it.
+- **Collected evidence:** the read results the agent got through the checkpoint
+  before asking are frozen onto the approval, not written by the model. It is a
+  copy of what the tools returned, not proof that it is true
+  ([details and limits](docs/sdk.md#evidence-for-the-reviewer)).
 - **Effect claim:** recorded *before* the action runs, keyed on what the action
   is. A retry finds it and gets the first result instead of acting again
   ([details](docs/receipt-guarantees.md)).
@@ -89,7 +94,7 @@ flowchart LR
 
     C --> R[("4. Records<br/>secrets hidden")]
     O --> R
-    R --> P["Person<br/>dashboard or CLI"]
+    R --> P["Person<br/>dashboard"]
     P -->|approves; agent<br/>tries again| A
 ```
 
@@ -129,7 +134,7 @@ flowchart TD
     end
 
     subgraph HU["Person"]
-        D["Dashboard or CLI<br/>approve or deny, settle held actions,<br/>accept changed tools, see runs"]
+        D["Dashboard<br/>approve or deny, settle held actions,<br/>accept changed tools, see runs<br/>(settle and accept also by CLI)"]
     end
 
     A -->|Python call| LIB
@@ -296,6 +301,14 @@ your systems ([setups](docs/gateway-deployment.md#choosing-a-setup)). The SQL ch
 your own database functions. "Once" needs a provider idempotency key or lookup.
 Not independently audited. ([full list](docs/gateway-deployment.md#known-limitations))
 
+**Limits of the evidence on an approval:** it is the newest 10 reads that went
+through the checkpoint, not only the ones about this action, and one proxy
+serving several agents mixes their reads. An agent's own tools (its file or shell
+tools) are not seen, so what it reads with them is not shown. There is no screen
+or browser recording of the agent: the run's timeline records every checked call.
+Without a read, there is no evidence. The dashboard shows it; `agent-gateway
+receipts list` does not.
+
 **Model usage (calls, tokens, cost):** the checkpoint sees tool calls, not the
 agent's model calls, so it shows usage only when the agent reports it:
 `record_model_exchange()` in the library, `POST /usage` on the proxy, or the
@@ -306,10 +319,11 @@ is the API list price; on a Claude subscription nothing is billed per token.
 
 ## 10. Testing
 
-- About 770 automated tests, plus lint and type checks, in CI.
+- About 760 automated tests, plus lint and type checks, in CI.
 - `make proof`: 1,000 crashed retries cause **1** side effect; **0** destructive
   actions run without a valid approval.
-- Tried once with Claude Code against the MCP proxy (test tools); not yet with
+- Run with Claude Code in the [demo](demo/README.md): the MCP proxy, a real
+  Postgres MCP server and the gateway, on test databases. Not yet run with
   Claude Desktop or Cursor. PostgreSQL tests need a test database.
 
 ## 11. Setup

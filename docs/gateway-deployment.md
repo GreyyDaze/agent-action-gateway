@@ -157,7 +157,7 @@ curl -X POST http://gateway:8080/deploy \
 | Header | Purpose |
 |---|---|
 | `Authorization: Bearer <virtual key>` | who is calling |
-| `X-Approval-Id` | the approval for a held destructive action |
+| `X-Approval-Id` | the approval for a destructive action that was blocked |
 | `Idempotency-Key` | identifies the effect, so a retry cannot repeat it |
 
 An agent with a key for `/deploy` gets `403` on `/rollback`. An unregistered
@@ -171,7 +171,7 @@ cannot tell which routes exist.
 | `400` | the body is not a JSON object | fix the request |
 | `401` | no key, unknown, expired or revoked | re-authenticate; do not retry blindly |
 | `403` | the route is not in this key's scope, or does not exist | request a key with that route |
-| `403` + `needs_approval: true` | held until a person approves | get an approval, then retry |
+| `403` + `needs_approval: true` | blocked until a person approves | get an approval, then retry |
 | `502` | the upstream could not be reached | retry later; the action did not happen |
 | `503` | the gateway cannot read the route's credential | the operator fixes the secret (`gateway doctor`); the reason is in the gateway's record, not the reply |
 
@@ -365,7 +365,8 @@ none:
 | In the same process, code can reach the database and the key directly | use the self-hosted gateway |
 | Custody depends on the deployment, not the code | follow a setup above, and run `make verify-boundary` |
 | Recorded prompts keep anything redaction does not recognise (names, free text) | prune with `agent-gateway prune`; nothing is deleted automatically |
-| Approval evidence (read results the gateway collected, the agent's claim) keeps what redaction does not recognise, and `prune` does not remove it | for a read tool that returns personal data, turn collection off (`auto_evidence=False`, or `"auto_evidence": false` in the proxy config) |
+| Approval evidence is the newest 10 reads through the library or proxy, so a proxy shared by several agents mixes their reads, and what an agent reads with its own tools is not seen | give each agent its own proxy if the evidence must be per agent; run the agent where the proxy is its only route |
+| Approval evidence keeps what redaction does not recognise, and `prune` does not remove it | for a read tool that returns personal data, turn collection off (`auto_evidence=False`, or `"auto_evidence": false` in the proxy config) |
 | No transport encryption is enforced | use `https` upstreams in production |
 | An approval is not tied to the session that asked for it | deliberate: it allows approving ahead of time; approvals are still single-use and payload-bound |
 | A failed action still uses up its approval | deliberate: a partial effect cannot always be ruled out, so the retry needs a fresh approval |

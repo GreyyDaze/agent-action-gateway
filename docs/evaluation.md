@@ -190,7 +190,7 @@ agent-gateway gate online --db data/runtime.db --sample 0.2 --seed 7
 |---|---|
 | Reports; does not block unless you pass `--promote` | a gate that fires on noise gets switched off within a week |
 | `--seed` selects the same runs every time | a report can be reproduced, not argued about |
-| `--held RUN_IDS` lists runs a person already held | the report compares its findings with yours |
+| `--held RUN_IDS` lists runs a person already blocked or flagged | the report compares its findings with yours |
 | A sample too small to conclude says so | too little data is neither a pass nor a fail |
 | Disagreements between the scorer and a human mark are listed | a judge that disagrees with people is broken |
 
@@ -208,7 +208,7 @@ It is a safety signal, not a quality score.
 
 | Signal | What it catches | Weight |
 |---|---|---|
-| Destructive action without approval | the agent reached for an action policy held | 3 |
+| Destructive action without approval | the agent reached for an action that policy blocked | 3 |
 | Required step skipped | an action you said the run must attempt (`--expect`) was never attempted | 2 |
 | Limit tripped | a budget or step limit fired | 2 |
 | No-progress loop | the same action and arguments repeated with the same result | 1 |

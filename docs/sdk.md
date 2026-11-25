@@ -75,6 +75,13 @@ drop(table="users", approval_id=approval.approval_id)   # allowed
 | Expires | after 15 minutes by default |
 | Single use | a second call with the same approval is refused |
 
+Two states are easy to mix up:
+
+| State | What happened | Where it shows | What a person does |
+|---|---|---|---|
+| **Waiting for approval** | the action was blocked and has not run | dashboard: Approvals waiting | approves or denies it |
+| **Held** | the action was approved and sent, then got no answer (a timeout), so nobody knows if it happened | dashboard: Held actions; `agent-gateway receipts list` | checks the real system, then marks it happened or not ([details](#doing-an-effect-once)) |
+
 #### Evidence for the reviewer
 
 An approval carries two kinds of context, each shown under its own name:
@@ -92,7 +99,7 @@ evidence because the agent read different things before asking.
 
 When a read tool returns, the session keeps a frozen copy of the result in
 memory. When an approval is asked for (by `ctx.request_approval`, or by the MCP
-proxy for a held call), the newest of those reads are stored with it. Nobody
+proxy when it blocks a call), the newest of those reads are stored with it. Nobody
 writes them by hand, and the model cannot change them: they are the tools' own
 output, taken by the gateway.
 
@@ -124,9 +131,25 @@ What this proves, and what it does not:
 - It does not prove the data is true. A monitoring tool that reports wrong
   numbers is copied faithfully. The source system is responsible for that.
 - It does not decide whether the data is enough. The person does.
-- It shows the session's newest reads, not only the ones about this action. The
-  label (action and arguments) tells them apart.
+- The copy check ("copy matches") catches a copy changed after the approval. It is
+  not a tamper-proof seal: someone who can edit the database can change the copy
+  and its fingerprint together.
+- It shows the session's newest 10 reads, not only the ones about this action. The
+  label (action and arguments) tells them apart. One MCP proxy is one session, so
+  a proxy serving several agents keeps one shared list: the reads on an approval
+  may belong to another agent's task.
 - If the agent read nothing before asking, the approval shows no evidence.
+- Only reads that go through the library or the proxy are collected. What an agent
+  reads with its own tools (a coding agent's file or shell tools) is not seen.
+- The age shown ("read 3 min before the request") is measured when the approval
+  was asked for, not when a person decides. An approval left for an hour shows
+  the same age.
+- The reads are kept in memory until an approval is asked for. If the process
+  stops first, they are gone.
+- There is no screen or browser recording of the agent. The run's timeline in the
+  dashboard records every checked call, in order.
+- The dashboard shows the evidence. `agent-gateway receipts list` does not, and
+  `agent-gateway prune` does not remove it.
 
 The **agent's claim** is the last completion given to `record_model_exchange`
 (secrets hidden, cut at 4,000 characters). The dashboard shows it apart, as
@@ -366,6 +389,7 @@ agent-gateway prune --db data/runtime.db --older-than 30 --keep-latest 10 --dry-
 | Discards prompt and completion text, keeps the row | the action, timing, cost and outcome stay as evidence |
 | Marks rows `exchange_state=pruned` | "discarded" stays distinguishable from "never recorded" |
 | Never touches receipts | they are the once-only guarantee |
+| Does not remove approval evidence | the read results and the agent's claim stay with the approval |
 | Never runs automatically, and refuses with no limit given | a silent retention policy is a silent deletion of evidence |
 
 ## Other ways in
@@ -520,8 +544,9 @@ Cursor use works as it is:
   arguments and works once. A client that wants to pass an id can put it in
   `params._meta["agent-action-gateway/approval_id"]`. Tool arguments are never
   read for checks, so any argument name is safe.
-- **Evidence.** The approval for a held call carries the newest read results the
-  proxy passed to the agent, frozen ([collected automatically](#collected-automatically)).
+- **Evidence.** The approval for a blocked call carries the newest read results the
+  proxy passed to its agents, frozen ([collected automatically](#collected-automatically)).
+  All agents on one proxy share one list.
   `"untrusted_output"` lists tool name patterns (like `rules`, on `server__tool`)
   whose results hold outside content; they are marked untrusted.
   `"auto_evidence": false` turns collection off. Both apply on a config reload.
@@ -612,8 +637,9 @@ Cursor use works as it is:
   numbers 0 or more). Apps such as Claude Desktop or Cursor do not expose their
   token counts, so with them the dashboard shows **not reported**.
 - **Tested with:** this project's tests, the official Python MCP SDK client (over
-  stdio, over HTTP, and through `mcp-connect`), and one run of Claude Code (with a
-  stand-in database tool). It has not been run with Claude Desktop or Cursor.
+  stdio, over HTTP, and through `mcp-connect`), and Claude Code in the
+  [demo](../demo/README.md) (a real Postgres MCP server on test databases). It has not been
+  run with Claude Desktop or Cursor.
 
 ### Gateway routes as MCP tools
 
@@ -699,5 +725,7 @@ front of it.
 | replace human approval | it enforces it |
 | control the agent's model calls | your application owns them |
 | keep a key from an agent in the same process | that needs the [self-hosted gateway](gateway-deployment.md) |
+| see what an agent does with its own tools (a coding agent's file or shell tools) | only calls through the library or the proxy are checked and collected as evidence |
+| record the agent's screen or browser | the timeline records each checked call, not a video |
 
 For the release gate and run scoring, see [evaluation.md](evaluation.md).

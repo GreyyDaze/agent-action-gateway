@@ -132,7 +132,8 @@ The dashboard offers the same, under **Needs you → Held actions**. The settlem
 who made it and any reference are recorded in the run's timeline
 (`receipt.settled`). A held action also shows who approved it and the evidence on that approval
 (the read results the gateway collected), frozen when the approval was asked
-for ([SDK guide](sdk.md#evidence-for-the-reviewer)).
+for ([SDK guide](sdk.md#evidence-for-the-reviewer), which also lists its limits).
+`agent-gateway receipts list` shows the held actions but not this evidence.
 
 ## Recovery by action type
 

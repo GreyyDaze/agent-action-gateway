@@ -85,7 +85,7 @@ flowchart TD
     end
 
     subgraph HU["Person"]
-        D["Dashboard or CLI<br/>approve or deny, settle held actions,<br/>accept changed tools, see runs"]
+        D["Dashboard<br/>approve or deny, settle held actions,<br/>accept changed tools, see runs<br/>(settle and accept also by CLI)"]
     end
 
     A -->|Python call| LIB
@@ -141,7 +141,7 @@ What each part does:
 | **Checks 1 to 6** | one code path, `engine.enforce()`, used by both the library and the proxy. |
 | **Gateway** | holds the real API key. The agent gets a virtual key that works only for its routes. Behind the proxy, it does not ask for a second approval. |
 | **Records** | approvals (with their frozen evidence), receipts (the claim made *before* running), run records with secrets hidden, and pinned tools. |
-| **Person** | decides in the dashboard or CLI. Only a person can approve, settle a held action or accept a changed tool. |
+| **Person** | approves or denies in the dashboard. Settling a held action and accepting a changed tool also work from the CLI. Only a person can do any of these. |
 
 Used **directly** (agent → gateway, no proxy), the gateway and its `/mcp`
 endpoint check routes, environment, key custody and approval, but not limits or
@@ -154,7 +154,7 @@ sequenceDiagram
     participant Agent
     participant CP as Checkpoint (library or proxy)
     participant Store as Records
-    participant Person as Person (dashboard or CLI)
+    participant Person as Person (dashboard)
     participant Tool as Tool or gateway
 
     Agent->>CP: delete_branch(name="old")
