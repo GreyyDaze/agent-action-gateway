@@ -25,6 +25,7 @@ decides what to do. The checkpoint decides if it runs, and records it either way
 | | The agent loops or runs too long | Limits on steps, time and cost stop the run. |
 | | The agent holds the real API key | With the gateway, it never sees the key. |
 | **Prove** | No record of what happened | Every checked action is recorded, with secrets hidden. A dashboard shows it, and is where a person approves, settles held actions and accepts changed tools. |
+| | A reviewer approves without seeing why | Each approval carries what the agent read before asking, taken by the gateway and frozen with SHA-256, kept apart from the agent's own words. |
 | | A new version may be less safe | A release gate tests it on your cases and fails if it got worse. |
 
 Smaller features (stop and ask for a missing value, risk decided per call for
@@ -45,6 +46,9 @@ tools like `execute_sql`, tool pinning, the bypass scanner) are explained in the
   destructive. Everything except `read` needs an approval.
 - **Exact approval:** bound to the action and its arguments, used once, expires
   after 15 minutes.
+- **Collected evidence:** the read results the agent got before asking are
+  frozen onto the approval by the checkpoint, not written by the model
+  ([details](docs/sdk.md#evidence-for-the-reviewer)).
 - **Effect claim:** recorded *before* the action runs, keyed on what the action
   is. A retry finds it and gets the first result instead of acting again
   ([details](docs/receipt-guarantees.md)).
@@ -302,7 +306,7 @@ is the API list price; on a Claude subscription nothing is billed per token.
 
 ## 10. Testing
 
-- About 730 automated tests, plus lint and type checks, in CI.
+- About 770 automated tests, plus lint and type checks, in CI.
 - `make proof`: 1,000 crashed retries cause **1** side effect; **0** destructive
   actions run without a valid approval.
 - Tried once with Claude Code against the MCP proxy (test tools); not yet with

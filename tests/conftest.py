@@ -19,6 +19,7 @@ INTEGRATION = {
     "test_effect_claims.py", "test_receipts.py", "test_guarded_receipts.py",
     "test_retention.py", "test_backend_agreement.py",
     "test_adoption_contract.py", "test_safety_invariants.py",
+    "test_auto_evidence.py",
 }
 EVALS = {
     "test_evaluation.py", "test_gate.py", "test_gemini_judge.py",

@@ -25,7 +25,7 @@ flowchart TD
 
 | Layer | Rule |
 |---|---|
-| `policy/` | pure decision logic, with no I/O |
+| `policy/` | decision logic. One exception holds state: `locks.py` keeps the approval store, and reads evidence files when an approval is asked for |
 | `engine/` | the checking pipeline; the library and the MCP proxy call it |
 | `credential/` | the only place real secrets are handled |
 | `storage/` | the leaf: imports nothing above it |
@@ -140,7 +140,7 @@ What each part does:
 | **MCP proxy** | sits between the agent and MCP servers; pins tool definitions, then runs the same checks. |
 | **Checks 1 to 6** | one code path, `engine.enforce()`, used by both the library and the proxy. |
 | **Gateway** | holds the real API key. The agent gets a virtual key that works only for its routes. Behind the proxy, it does not ask for a second approval. |
-| **Records** | approvals, receipts (the claim made *before* running), run records with secrets hidden, and pinned tools. |
+| **Records** | approvals (with their frozen evidence), receipts (the claim made *before* running), run records with secrets hidden, and pinned tools. |
 | **Person** | decides in the dashboard or CLI. Only a person can approve, settle a held action or accept a changed tool. |
 
 Used **directly** (agent → gateway, no proxy), the gateway and its `/mcp`
@@ -182,14 +182,18 @@ sequenceDiagram
 
 Measured with `python benchmarks/overhead.py` on an Apple M1, Python 3.12, SQLite
 on the local disk, with tools that do no work, so these are the cost of the checks
-alone (median of 400 calls; run it yourself, the numbers move from run to run):
+alone (median of 400 calls; run it yourself, the numbers move from run to run and
+roughly double on a busy machine, so the ranges below span both):
 
 | Call | Without the checks | With the checks |
 |---|---|---|
-| Library, read tool | under 0.01 ms | about 3 to 4 ms |
-| Library, destructive tool, approved (claim, receipt, record) | under 0.01 ms | about 13 to 17 ms |
-| MCP proxy, read tool | about 0.04 ms (straight to the server) | about 3 to 4 ms |
-| MCP proxy, destructive tool, approved | about 0.04 ms | about 13 to 15 ms |
+| Library, read tool | under 0.01 ms | about 3 to 7 ms |
+| Library, destructive tool, approved (claim, receipt, record) | under 0.01 ms | about 13 to 20 ms |
+| MCP proxy, read tool | about 0.04 ms (straight to the server) | about 3 to 7 ms |
+| MCP proxy, destructive tool, approved | about 0.04 ms | about 13 to 18 ms |
+
+Keeping a read result for [automatic evidence](sdk.md#collected-automatically)
+(one JSON encoding and one SHA-256, in memory) did not change these numbers.
 
 Nearly all of it is SQLite writes (the trace, the receipt, the approval). A real
 tool call (a network request, a database query) is usually far slower than this,
@@ -207,7 +211,7 @@ limits) and the gateway reads it. No live policy lives in this repository.
 | Command | Runs |
 |---|---|
 | `make verify` | lint, type check, full test suite |
-| `make test-unit` | fast tests with no I/O |
+| `make test-unit` | every test file not listed as integration, evals or live; fast, though some use a temporary SQLite file |
 | `make test-integration` | database, socket and server tests |
 | `make test-evals` | evaluation suites |
 | `make proof` | every guarantee suite, with the numbers the README quotes |

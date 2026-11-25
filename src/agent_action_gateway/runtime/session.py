@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import contextvars
 import functools
+import threading
+from collections import deque
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -39,9 +41,14 @@ from agent_action_gateway.policy.fuses import (
     FuseTrippedError,
 )
 from agent_action_gateway.policy.locks import (
+    DEFAULT_STALE_AFTER_SECONDS,
+    MAX_AUTO_EVIDENCE,
     Approval,
     ApprovalStore,
     RiskRegistry,
+    agent_claim,
+    collect_reads,
+    freeze_read,
     normalize_evidence,
 )
 from agent_action_gateway.policy.stop_rules import (
@@ -137,6 +144,8 @@ class SafetySession:
         registry: RiskRegistry | None = None,
         fuse: FuseController | None = None,
         batch: bool = False,
+        auto_evidence: bool = True,
+        evidence_stale_after: float = DEFAULT_STALE_AFTER_SECONDS,
     ) -> None:
         if environment not in VALID_ENVIRONMENTS:
             raise ValueError(
@@ -156,6 +165,15 @@ class SafetySession:
         self.clarification = _load_clarification(self.store, self.run_id)
         self._step = 0
         self.decisions: list[Decision] = []
+        #: Automatic evidence: the newest read results this session saw pass
+        #: through, frozen, held in memory only. They are stored when, and only
+        #: when, an approval is asked for.
+        self.auto_evidence = auto_evidence
+        self.evidence_stale_after = evidence_stale_after
+        self._reads: deque[dict[str, Any]] = deque(maxlen=MAX_AUTO_EVIDENCE)
+        self._reads_left_out = 0
+        self._last_claim: dict[str, Any] | None = None
+        self._evidence_lock = threading.Lock()
 
     # -- approvals --------------------------------------------------------
 
@@ -167,17 +185,26 @@ class SafetySession:
         expires_in_seconds: int = 900,
         approver: str = "pending",
         evidence: Sequence[str | Mapping[str, str]] | None = None,
+        auto_evidence: bool | None = None,
     ) -> Approval:
         """Create a pending approval bound to this exact payload.
 
-        `evidence` lists what the person should look at before deciding: links
-        (a migration diff, a replay) or notes. The dashboard shows them on the
-        approval and on the held action, and keeps them in the approval history.
-        Only the reference is stored, never the file. Do not put a secret in a link.
+        `evidence` lists what the person should look at before deciding: links,
+        notes, text or files (see `normalize_evidence`). The dashboard shows it on
+        the approval and on the held action, and keeps it in the approval history.
+
+        Unless `auto_evidence` (or the session's setting) is False, the approval
+        also carries what the gateway collected itself: the newest read results
+        of this session (at most 10, frozen with SHA-256) and, apart from them,
+        the last model text recorded with `record_model_exchange`, as the
+        agent's claim.
         """
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         references = normalize_evidence(evidence)
+        collected = self._collected_evidence() if (
+            self.auto_evidence if auto_evidence is None else auto_evidence
+        ) else {}
 
         # The tool's declared risk is kept. An action with none is already
         # treated as destructive.
@@ -190,11 +217,47 @@ class SafetySession:
                 "environment": self.environment,
                 "run_id": self.run_id,
                 **({"evidence": references} if references else {}),
+                **collected,
             },
         )
         if approver != "pending":
             return self.approvals.approve(approval.approval_id, approver)
         return approval
+
+    def _remember_read(
+        self, action: str, arguments: Mapping[str, Any], result: Any, untrusted: bool
+    ) -> None:
+        """Keep a frozen copy of one read result for a later approval."""
+        entry = freeze_read(
+            action, arguments, result, read_at=datetime.now(UTC), untrusted=untrusted
+        )
+        with self._evidence_lock:
+            # The same read with the same result is one piece of evidence:
+            # keep the newest only.
+            for old in list(self._reads):
+                if old["action"] == entry["action"] and old["label"] == entry["label"] \
+                        and old["sha256"] == entry["sha256"]:
+                    self._reads.remove(old)
+            if len(self._reads) == self._reads.maxlen:
+                self._reads_left_out += 1
+            self._reads.append(entry)
+
+    def _collected_evidence(self) -> dict[str, Any]:
+        """What the gateway collected itself, as approval context fields."""
+        with self._evidence_lock:
+            reads = list(self._reads)
+            left_out = self._reads_left_out
+            claim = self._last_claim
+        collected: dict[str, Any] = {}
+        if reads:
+            collected["auto_evidence"] = collect_reads(
+                reads, now=datetime.now(UTC), stale_after=self.evidence_stale_after
+            )
+            if left_out:
+                collected["auto_evidence_left_out"] = left_out
+        if claim is not None:
+            collected["agent_claim"] = claim
+        return collected
 
     def approve(self, approval_id: str, approver: str) -> Approval:
         return self.approvals.approve(approval_id, approver)
@@ -237,6 +300,9 @@ class SafetySession:
         if cost_usd:
             self.fuse.budget.record_spent(cost_usd)
             self._record_budget()
+        if completion:
+            with self._evidence_lock:
+                self._last_claim = agent_claim(completion, datetime.now(UTC))
         return self.store.append_trace(
             TraceEvent(
                 self.run_id,
@@ -348,6 +414,7 @@ class SafetySession:
         requires_approval: bool | None = None,
         effect_scope: str = "",
         identity_fields: tuple[str, ...] = (),
+        untrusted_output: bool = False,
     ) -> Callable[..., dict[str, Any]]:
         """Return a guarded callable that routes every call through `enforce`.
 
@@ -364,6 +431,11 @@ class SafetySession:
         identical effect -- a body that may be edited between retries, a
         timestamp that marks the attempt rather than the intent. Everything not
         named is excluded from the key.
+
+        `untrusted_output` marks a read tool whose results hold outside content
+        (email, web pages, tickets). Its results still become automatic
+        evidence, marked "untrusted content" on the dashboard, because text
+        from outside can carry instructions aimed at the agent.
         """
         resolved_risk = risk or "destructive"
         self.registry.register(action, resolved_risk)
@@ -463,6 +535,8 @@ class SafetySession:
                 self.store.mark_done(
                     decision.intent_key, describe(payload) if describe else None
                 )
+            if resolved_risk == "read" and self.auto_evidence:
+                self._remember_read(action, arguments, payload, untrusted_output)
             if isinstance(payload, Mapping) and (required_fields or high_stakes or cross_check):
                 validation = enforcement.validate_result(
                     self.store,

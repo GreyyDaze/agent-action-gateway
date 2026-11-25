@@ -35,10 +35,10 @@ with session(environment="prod") as ctx:
 
 | Method | Purpose |
 |---|---|
-| `session(store=..., environment=..., limits=..., run_id=..., batch=...)` | open a session; every argument has a safe default |
+| `session(store=..., environment=..., limits=..., run_id=..., batch=..., auto_evidence=..., evidence_stale_after=...)` | open a session; every argument has a safe default |
 | `ctx.tool(fn, action=..., risk=...)` | wrap a function so every call is checked |
 | `ctx.run(agent, task, tools=..., required_inputs=...)` | run an agent with the guarded tools it may use |
-| `ctx.request_approval(action, arguments)` | create an approval bound to those exact arguments |
+| `ctx.request_approval(action, arguments, evidence=..., auto_evidence=...)` | create an approval bound to those exact arguments, with [evidence](#evidence-for-the-reviewer) |
 | `ctx.approve(id, approver)` / `ctx.deny(id, approver)` | decide a pending approval |
 | `ctx.pending_approvals()` | list approvals waiting on a person |
 | `ctx.retrying(tool, attempts=...)` | retry transient failures, never refusals |
@@ -55,6 +55,7 @@ with session(environment="prod") as ctx:
 | `estimated_cost_usd` | `0.0` | counted against the cost limit |
 | `effect_scope` | `""` | keeps identical actions of different tenants apart |
 | `identity_fields` | all arguments | the arguments that define "the same effect" |
+| `untrusted_output` | `False` | a read tool whose results hold outside content (email, web pages, tickets); its [collected evidence](#collected-automatically) is marked untrusted |
 
 ## Control
 
@@ -76,8 +77,62 @@ drop(table="users", approval_id=approval.approval_id)   # allowed
 
 #### Evidence for the reviewer
 
-Tell the person what to look at before they decide, and keep exactly what they
-saw. Evidence is a list of items:
+An approval carries three kinds of context, each shown under its own name:
+
+| Kind | Who supplies it | Can the model write it? |
+|---|---|---|
+| **Collected by the gateway** | the gateway, from the read results it saw pass through | no |
+| **Evidence** | the code that asks for the approval (`evidence=`) | no |
+| **Agent's claim** | the model's last message, from `record_model_exchange` | yes, so it is never shown as evidence |
+
+##### Collected automatically
+
+When a read tool returns, the session keeps a frozen copy of the result in
+memory. When an approval is asked for (by `ctx.request_approval`, or by the MCP
+proxy for a held call), the newest of those reads are stored with it. Nobody
+writes them by hand, and the model cannot change them: they are the tools' own
+output, taken by the gateway.
+
+```python
+with session(environment="prod") as ctx:
+    errors = ctx.tool(get_error_rate, action="metrics.errors", risk="read")
+    logs = ctx.tool(get_logs, action="logs.read", risk="read")
+    errors(service="checkout")
+    logs(service="checkout", minutes=30)
+    # The approval carries both results, frozen, with no extra code:
+    ctx.request_approval("service.restart", {"service": "checkout"})
+```
+
+| What | Rule |
+|---|---|
+| Which calls | reads (`risk="read"`, and per-call reads in the proxy) that returned. A read that raised is not kept; writes and destructive calls never are. |
+| How many | the newest 10 of the session, newest first. Older ones are counted as left out. The same read with the same result is kept once. |
+| What is kept | the action and its arguments (secrets hidden), when it was read, the result's SHA-256 and size, and a copy when the result is at most 64 KB. Copies stop at 256 KB per approval; past that an item keeps its fingerprint only. |
+| Fingerprint | of the result as returned: text as is, anything else as JSON with sorted keys. Secrets are hidden in the copy, so such a copy is not compared. |
+| Stale | a read older than `evidence_stale_after` seconds (default 600) when the approval is asked for is marked **stale: check it again**. |
+| Untrusted | a tool made with `untrusted_output=True` (in the proxy: listed in `untrusted_output`) is marked **untrusted content**: text from outside can carry instructions aimed at the agent. |
+| Where it lives | in memory until an approval is asked for, then in that approval's record only. Reads that never reach an approval are not stored. |
+| Off | `session(auto_evidence=False)`, or `request_approval(..., auto_evidence=False)` for one approval. In the proxy: `"auto_evidence": false`. |
+
+What this proves, and what it does not:
+
+- It proves which data the tool returned to the agent before the action was
+  asked for. The gateway, not the model, took it.
+- It does not prove the data is true. A monitoring tool that reports wrong
+  numbers is copied faithfully. The source system is responsible for that.
+- It does not decide whether the data is enough. The person does.
+- It shows the session's newest reads, not only the ones about this action. The
+  label (action and arguments) tells them apart.
+
+The **agent's claim** is the last completion given to `record_model_exchange`
+(secrets hidden, cut at 4,000 characters). The dashboard shows it apart, as
+"model text, not evidence", so the person can check it against the reads. A
+session that does not record model exchanges has no claim; the proxy has none.
+
+##### Given by your code
+
+Tell the person what else to look at, such as a diff or a replay, and keep
+exactly what they saw. Evidence is a list of items:
 
 ```python
 approval = ctx.request_approval(
@@ -119,7 +174,8 @@ Limits:
 - At most 10 items, 300-character labels and links, 64 KB per copy and 256 KB of
   copies per approval. Anything else is refused, not cut.
 - It is set by the code that requests the approval. An agent behind the MCP proxy
-  cannot add evidence to its own approvals, so the proxy creates none. The exact
+  cannot add evidence to its own approvals, so the proxy gives none of this kind;
+  it attaches only what it [collected](#collected-automatically). The exact
   arguments (for SQL, the statement itself) are always kept and bound to the
   approval.
 
@@ -391,6 +447,7 @@ Cursor use works as it is:
   "require": [
     { "match": "db__run_*", "arguments": ["target_database"] }
   ],
+  "untrusted_output": ["tickets__*"],
   "limits": { "max_steps": 200 }
 }
 ```
@@ -411,7 +468,7 @@ Cursor use works as it is:
   token, reuses it until shortly before it expires, and fetches a new one if the
   server rejects it (once). The secret is never printed or kept in an error.
 - **Browser sign-in.** For a server that needs a person to sign in once (OAuth
-  authorization code with PKCE), use `"flow": "authorization_code"` with the
+  authorization code with PKCE), use `"flow": "authorization_code"` with
   a `token_file`, and the server's `authorization_url`, `token_url` and `client_id`
   (or leave those three out, see below; `client_secret` and `redirect_port` are
   optional):
@@ -509,6 +566,11 @@ Cursor use works as it is:
   arguments and works once. A client that wants to pass an id can put it in
   `params._meta["agent-action-gateway/approval_id"]`. Tool arguments are never
   read for checks, so any argument name is safe.
+- **Evidence.** The approval for a held call carries the newest read results the
+  proxy passed to the agent, frozen ([collected automatically](#collected-automatically)).
+  `"untrusted_output"` lists tool name patterns (like `rules`, on `server__tool`)
+  whose results hold outside content; they are marked untrusted.
+  `"auto_evidence": false` turns collection off. Both apply on a config reload.
 - **Repeats.** If the same action already ran, it is not run again. The agent gets
   a redacted copy of the first result (up to 16 KB), or a message saying it ran
   if the result was larger.
@@ -656,9 +718,9 @@ proxy or your sessions write to.
 
 | Section | Shows | A person can |
 |---|---|---|
-| **Needs you** | approvals waiting (action, exact arguments, risk, environment, the run that asked); held actions from every run; MCP tools waiting to be accepted | approve or deny; settle a held action ("it happened", with an optional reference, or "it did not happen"); accept a tool |
+| **Needs you** | approvals waiting (action, exact arguments, risk, environment, the run that asked, and their [evidence](#evidence-for-the-reviewer): what the gateway collected, what your code gave, and the agent's claim apart); held actions from every run, with who approved them and that evidence; MCP tools waiting to be accepted | approve or deny; settle a held action ("it happened", with an optional reference, or "it did not happen"); accept a tool |
 | **This run** | the newest run by default (pick another in the sidebar): steps, blocked steps, receipts, model calls, tokens, cost, the timeline, receipts, limits, gate verdicts | read the evidence |
-| **Approval history** | every approval given or denied, across runs: action, risk, environment, decision, who, when, and whether it was used | prove who let what run |
+| **Approval history** | every approval given or denied, across runs: action, risk, environment, decision, who, when, whether it was used, and a short summary of its evidence | prove who let what run |
 
 Names are typed, not verified: anyone with the dashboard token can type any
 name. With more than one operator, put sign-in in front of it (below).

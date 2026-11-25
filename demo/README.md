@@ -23,7 +23,7 @@ installed with pip inside their containers, like any user would.
 Short clips (each set up on purpose): a loop is stopped; a changed tool is held
 until a person accepts it; a call that times out is held and settled by a
 person; `check --app` finds a direct call; the release gate fails a less safe
-version. The videos are in [`../videos`](../videos).
+version. The videos are not stored in this repository.
 
 ## Parts
 
@@ -55,9 +55,8 @@ Needs Docker and a Claude account.
 In the agent, ask: `Read TASK.md and do the task.` Approve in the dashboard when
 it stops, then tell it to continue.
 
-`record/` holds the scripts that made the videos (`record_main.sh`,
-`record_clips.sh`; they need [VHS](https://github.com/charmbracelet/vhs), ffmpeg
-and Chrome). The agent's words are not scripted, so each recording differs.
+The scripts that recorded the videos are kept out of this repository. The
+agent's words are not scripted, so each run differs.
 
 ## Honest limits
 

@@ -240,6 +240,10 @@ class ProxyConfig:
     require: tuple[Requirement, ...] = ()
     environment: str = "dev"
     limits: FuseLimits = DEFAULT_LIMITS
+    #: Tools (patterns on `server__tool`) whose results hold outside content.
+    untrusted_output: tuple[str, ...] = ()
+    #: Attach the read results the proxy saw to each approval it asks for.
+    auto_evidence: bool = True
 
 
 def _expand(text: str, where: str) -> str:
@@ -322,7 +326,17 @@ def parse_proxy_config(raw: Any) -> ProxyConfig:
         except (TypeError, ValueError) as exc:
             raise ConfigError(f"limits: {exc}") from exc
 
-    return ProxyConfig(tuple(servers), tuple(rules), tuple(require), environment, limits)
+    untrusted = raw.get("untrusted_output", [])
+    if not isinstance(untrusted, list) or not all(isinstance(p, str) and p for p in untrusted):
+        raise ConfigError("'untrusted_output' must be a list of tool name patterns")
+    auto_evidence = raw.get("auto_evidence", True)
+    if not isinstance(auto_evidence, bool):
+        raise ConfigError("'auto_evidence' must be true or false")
+
+    return ProxyConfig(
+        tuple(servers), tuple(rules), tuple(require), environment, limits,
+        tuple(untrusted), auto_evidence,
+    )
 
 
 def _parse_server(name: str, entry: Any) -> ServerConfig:
@@ -1430,12 +1444,14 @@ class MCPProxy:
         require: Sequence[Requirement] = (),
         pins: PinStore | None = None,
         factory: Any = default_downstream,
+        untrusted_output: Sequence[str] = (),
     ) -> None:
         self.downstreams = dict(downstreams)
         self.session = session
         self.configs = dict(configs or {})
         self.rules = tuple(rules)
         self.require = tuple(require)
+        self.untrusted_output = tuple(untrusted_output)
         self.pins = pins
         self.factory = factory
         self.tools: dict[str, ProxiedTool] = {}
@@ -1475,8 +1491,10 @@ class MCPProxy:
                     held[name] = reason
                     continue
                 risk, source = classify(name, definition.get("annotations"), self.rules, trust)
+                untrusted = any(fnmatch.fnmatchcase(name, p) for p in self.untrusted_output)
                 guarded = self.session.tool(
-                    _never_called, action=name, risk=risk, target_environment=target_env
+                    _never_called, action=name, risk=risk, target_environment=target_env,
+                    untrusted_output=untrusted,
                 )
                 call_rule = self._call_rule(name)
                 read_guarded = None
@@ -1485,7 +1503,7 @@ class MCPProxy:
                     # its own name. It shows in the record as `<tool>:read`.
                     read_guarded = self.session.tool(
                         _never_called, action=f"{name}:read", risk="read",
-                        target_environment=target_env,
+                        target_environment=target_env, untrusted_output=untrusted,
                     )
                 public = dict(definition)
                 public["name"] = name
@@ -1602,6 +1620,8 @@ class MCPProxy:
             self.configs = dict(wanted)
             self.rules = config.rules
             self.require = config.require
+            self.untrusted_output = config.untrusted_output
+            self.session.auto_evidence = config.auto_evidence
             before = dict(self.held)
             changed = self._rebuild()
             self._announce_held(before)
@@ -1967,7 +1987,8 @@ def build_proxy(
             started[server.name] = downstream
             downstream.start()
         session = SafetySession(
-            TraceStore(db), environment=config.environment, limits=config.limits
+            TraceStore(db), environment=config.environment, limits=config.limits,
+            auto_evidence=config.auto_evidence,
         )
         return MCPProxy(
             started,
@@ -1977,6 +1998,7 @@ def build_proxy(
             require=config.require,
             pins=PinStore(db),
             factory=factory,
+            untrusted_output=config.untrusted_output,
         )
     except BaseException:
         for running in started.values():

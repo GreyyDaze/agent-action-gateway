@@ -356,6 +356,7 @@ none:
 | In the same process, code can reach the database and the key directly | use the self-hosted gateway |
 | Custody depends on the deployment, not the code | follow a setup above, and run `make verify-boundary` |
 | Recorded prompts keep anything redaction does not recognise (names, free text) | prune with `agent-gateway prune`; nothing is deleted automatically |
+| Approval evidence (read results the gateway collected, the agent's claim) keeps what redaction does not recognise, and `prune` does not remove it | for a read tool that returns personal data, turn collection off (`auto_evidence=False`, or `"auto_evidence": false` in the proxy config) |
 | No transport encryption is enforced | use `https` upstreams in production |
 | An approval is not tied to the session that asked for it | deliberate: it allows approving ahead of time; approvals are still single-use and payload-bound |
 | A failed action still uses up its approval | deliberate: a partial effect cannot always be ruled out, so the retry needs a fresh approval |

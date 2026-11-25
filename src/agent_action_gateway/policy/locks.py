@@ -162,6 +162,119 @@ def normalize_evidence(items: Any) -> list[dict[str, Any]]:
     return result
 
 
+#: Automatic evidence: at most this many read results go on one approval.
+MAX_AUTO_EVIDENCE = 10
+#: A read older than this when the approval is asked for is marked stale.
+DEFAULT_STALE_AFTER_SECONDS = 600.0
+#: The agent's last model text is kept up to this many characters.
+MAX_AGENT_CLAIM = 4000
+
+
+def _as_text(result: Any) -> str:
+    """A read result as text: itself when text, else sorted JSON."""
+    if isinstance(result, str):
+        return result
+    try:
+        return json.dumps(result, sort_keys=True, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return repr(result)
+
+
+def freeze_read(
+    action: str,
+    arguments: Mapping[str, Any],
+    result: Any,
+    *,
+    read_at: datetime,
+    untrusted: bool = False,
+) -> dict[str, Any]:
+    """Freeze one read result the gateway saw pass through.
+
+    This is the tool's own output, taken by the gateway, never text the model
+    wrote. The SHA-256 and size are of the original; the copy (kept when it is
+    UTF-8 text of at most 64 KB) has secrets hidden.
+    """
+    if isinstance(result, bytes):
+        raw = result
+        try:
+            copy = redact(result.decode("utf-8"))
+        except UnicodeDecodeError:
+            copy = None  # binary: fingerprint only
+    else:
+        original = _as_text(result)
+        raw = original.encode("utf-8")
+        # Redact the structure, not only the text, so a secret under a key such
+        # as "password" is hidden in the copy too.
+        copy = redact(result) if isinstance(result, str) else _as_text(redact(result))
+    label = f"{action} {json.dumps(redact(dict(arguments)), sort_keys=True, default=str)}"
+    if len(label) > MAX_EVIDENCE_TEXT:
+        label = label[: MAX_EVIDENCE_TEXT - 1] + "…"
+    entry: dict[str, Any] = {
+        "label": label,
+        "source": "read",
+        "action": action,
+        "read_at": read_at.isoformat(),
+    }
+    if untrusted:
+        entry["untrusted"] = True
+    entry["sha256"] = hashlib.sha256(raw).hexdigest()
+    entry["size"] = len(raw)
+    if copy is not None and len(copy.encode("utf-8")) <= MAX_FROZEN_COPY and len(raw) <= MAX_FROZEN_COPY:
+        entry["text"] = copy
+        if copy.encode("utf-8") != raw:
+            # The fingerprint is of the original; the stored copy hides secrets.
+            entry["redacted"] = True
+    return entry
+
+
+def collect_reads(
+    reads: Sequence[Mapping[str, Any]],
+    *,
+    now: datetime,
+    stale_after: float = DEFAULT_STALE_AFTER_SECONDS,
+) -> list[dict[str, Any]]:
+    """Order frozen reads for one approval: newest first, ages and staleness set.
+
+    At most `MAX_AUTO_EVIDENCE` items. Copies stop at `MAX_FROZEN_TOTAL` in all:
+    an item past that keeps its fingerprint and is marked `copy_left_out`.
+    """
+    items: list[dict[str, Any]] = []
+    copied = 0
+    for read in reversed(list(reads)[-MAX_AUTO_EVIDENCE:]):
+        item = dict(read)
+        try:
+            age = max(0.0, (now - datetime.fromisoformat(str(item["read_at"]))).total_seconds())
+        except (KeyError, ValueError):
+            age = None
+        if age is not None:
+            item["age_seconds"] = round(age, 1)
+            if age > stale_after:
+                item["stale"] = True
+        text = item.get("text")
+        if isinstance(text, str):
+            size = len(text.encode("utf-8"))
+            if copied + size > MAX_FROZEN_TOTAL:
+                item.pop("text")
+                item.pop("redacted", None)
+                item["copy_left_out"] = True
+            else:
+                copied += size
+        items.append(item)
+    return items
+
+
+def agent_claim(completion: str, recorded_at: datetime) -> dict[str, Any]:
+    """The agent's own words, kept apart from evidence: a model can be wrong."""
+    text = redact(completion)
+    claim: dict[str, Any] = {"recorded_at": recorded_at.isoformat()}
+    if len(text) > MAX_AGENT_CLAIM:
+        claim["text"] = text[:MAX_AGENT_CLAIM]
+        claim["cut"] = True
+    else:
+        claim["text"] = text
+    return claim
+
+
 def evidence_copy_matches(item: Mapping[str, Any]) -> bool | None:
     """Does a stored copy still match its fingerprint? None when there is nothing to compare.
 

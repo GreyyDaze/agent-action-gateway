@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import secrets
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -407,12 +408,26 @@ def _size(n: Any) -> str:
     return f"{n / (1024 * 1024):.1f} MB"
 
 
-def _evidence_html(evidence: Any, *, compact: bool = False) -> str:
+def _ago(seconds: Any) -> str:
+    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds < 0:
+        return ""
+    if seconds < 60:
+        return f"{int(seconds)} s"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} min"
+    return f"{seconds / 3600:.1f} h"
+
+
+def _evidence_html(
+    evidence: Any, *, compact: bool = False, title: str = "Evidence"
+) -> str:
     """Links, notes and frozen copies a person looked at.
 
     Only http(s) links become anchors. A frozen item shows its size and SHA-256
     fingerprint, whether the stored copy still matches it, and the copy itself
-    (folded) unless `compact`.
+    (folded) unless `compact`. An item the gateway collected (a read result)
+    also shows how long before the request it was read, and is marked stale or
+    untrusted when it is.
     """
     if not isinstance(evidence, list):
         return ""
@@ -436,6 +451,14 @@ def _evidence_html(evidence: Any, *, compact: bool = False) -> str:
             continue
         facts = [p for p in (escape(str(item.get("file") or "")), _size(item.get("size"))) if p]
         facts.append(f"<span class='mono' title='sha256 {escape(digest)}'>sha256 {escape(digest[:12])}</span>")
+        if item.get("source") == "read":
+            age = _ago(item.get("age_seconds"))
+            if age:
+                facts.append(f"read {age} before the request")
+            if item.get("stale"):
+                facts.append(_badge("stale: check it again", "wait"))
+            if item.get("untrusted"):
+                facts.append(_badge("untrusted content", "bad"))
         matches = evidence_copy_matches(item)
         if item.get("redacted"):
             facts.append("secrets hidden in the copy")
@@ -443,6 +466,8 @@ def _evidence_html(evidence: Any, *, compact: bool = False) -> str:
             facts.append(_badge("copy matches", "ok"))
         elif matches is False:
             facts.append(_badge("copy changed since approval", "bad"))
+        elif item.get("copy_left_out"):
+            facts.append("fingerprint only (copies over 256 KB in total)")
         elif "text" not in item:
             facts.append("fingerprint only")
         line = f"{name} · frozen · {' · '.join(facts)}"
@@ -458,7 +483,52 @@ def _evidence_html(evidence: Any, *, compact: bool = False) -> str:
     if compact:
         return "<br>".join(lines)
     rows = [line if line.startswith("<details") else f"<div class='meta'>{line}</div>" for line in lines]
-    return "<div class='meta'><b>Evidence</b></div>" + "".join(rows)
+    return f"<div class='meta'><b>{escape(title)}</b></div>" + "".join(rows)
+
+
+def _approval_evidence(context: Mapping[str, Any], *, compact: bool = False) -> str:
+    """Everything an approval carries for the person, each kind under its own name.
+
+    What the gateway collected (read results) comes first, then what the code
+    that asked attached, then the agent's own words, which are a claim and are
+    never shown as evidence.
+    """
+    auto = context.get("auto_evidence")
+    left_out = context.get("auto_evidence_left_out")
+    claim = context.get("agent_claim")
+    if compact:
+        parts = []
+        if isinstance(auto, list) and auto:
+            stale = sum(1 for i in auto if isinstance(i, dict) and i.get("stale"))
+            untrusted = sum(1 for i in auto if isinstance(i, dict) and i.get("untrusted"))
+            note = f"{len(auto)} read(s) collected"
+            if stale:
+                note += f", {stale} stale"
+            if untrusted:
+                note += f", {untrusted} untrusted"
+            parts.append(escape(note))
+        manual = _evidence_html(context.get("evidence"), compact=True)
+        if manual:
+            parts.append(manual)
+        if isinstance(claim, dict) and claim.get("text"):
+            parts.append("agent's claim kept")
+        return "<br>".join(parts)
+    html = _evidence_html(auto, title="Collected by the gateway: what the agent read")
+    if html and isinstance(left_out, int) and left_out > 0:
+        html += (
+            f"<div class='meta'>{left_out} older read(s) left out "
+            "(only the newest 10 are kept).</div>"
+        )
+    html += _evidence_html(context.get("evidence"))
+    if isinstance(claim, dict) and isinstance(claim.get("text"), str) and claim["text"]:
+        cut = " · cut to 4,000 characters" if claim.get("cut") else ""
+        html += (
+            "<div class='meta'><b>Agent's claim</b>"
+            f"<span>model text, not evidence: check it against the reads above{cut}</span></div>"
+            f"<details><summary class='meta'><u>show the agent's last message</u></summary>"
+            f"<pre>{escape(claim['text'])}</pre></details>"
+        )
+    return html
 
 
 def _approved_with(receipt: dict, decided: list[Approval]) -> str:
@@ -475,7 +545,7 @@ def _approved_with(receipt: dict, decided: list[Approval]) -> str:
                 f"Approved by {escape(str(item.approver or '—'))} "
                 f"{escape(_when(item.decided_at))}"
             )
-            return f"<p class='meta'>{line}</p>" + _evidence_html(context.get("evidence"))
+            return f"<p class='meta'>{line}</p>" + _approval_evidence(context)
     return ""
 
 
@@ -501,7 +571,7 @@ def _render_approvals(pending: list[Approval]) -> str:
             + _meta_item("clock", escape(_expires(item.expires_at)), _when(item.expires_at))
             + "</div>"
             f"<pre>{_args(redact(dict(item.arguments)))}</pre>"
-            + _evidence_html(context.get("evidence"))
+            + _approval_evidence(context)
             + "<form class='act' method='post' action='/approvals/approve'>"
             f"{_csrf_field()}<input type='hidden' name='approval_id' value='{aid}'>"
             f"{_name_field('ap-' + item.approval_id)}"
@@ -692,7 +762,7 @@ def _render_history(decided: list[Approval]) -> str:
             f"<td>{escape(str(item.approver or '—'))}</td>"
             f"<td>{escape(_when(item.decided_at))}</td>"
             f"<td>{escape(used)}</td>"
-            f"<td>{_evidence_html(context.get('evidence'), compact=True) or '—'}</td>"
+            f"<td>{_approval_evidence(context, compact=True) or '—'}</td>"
             "</tr>"
         )
     return (
