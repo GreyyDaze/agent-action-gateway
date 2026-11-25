@@ -25,7 +25,7 @@ flowchart TD
 
 | Layer | Rule |
 |---|---|
-| `policy/` | decision logic. One exception holds state: `locks.py` keeps the approval store, and reads evidence files when an approval is asked for |
+| `policy/` | decision logic. One exception holds state: `locks.py` keeps the approval store (SQLite) |
 | `engine/` | the checking pipeline; the library and the MCP proxy call it |
 | `credential/` | the only place real secrets are handled |
 | `storage/` | the leaf: imports nothing above it |

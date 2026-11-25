@@ -174,14 +174,16 @@ class SessionAutoEvidenceTest(unittest.TestCase):
             )
         self.assertNotIn("auto_evidence", skipped.context)
 
-    def test_manual_evidence_is_kept_apart(self) -> None:
+    def test_a_copy_changed_after_approval_no_longer_matches(self) -> None:
         with self.ctx() as ctx:
-            ctx.tool(lambda: "ok", action="health", risk="read")()
-            approval = ctx.request_approval(
-                "service.restart", {"service": "api"}, evidence=["Checked on staging"]
-            )
-        self.assertEqual(approval.context["evidence"], [{"label": "Checked on staging"}])
-        self.assertEqual(len(approval.context["auto_evidence"]), 1)
+            ctx.tool(lambda: "+a", action="diff.read", risk="read")()
+            approval = ctx.request_approval("service.restart", {"service": "api"})
+        (item,) = approval.context["auto_evidence"]
+        self.assertIs(evidence_copy_matches({**item, "text": "+b"}), False)
+
+    def test_there_is_no_way_to_hand_evidence_to_an_approval(self) -> None:
+        with self.ctx() as ctx, self.assertRaises(TypeError):
+            ctx.request_approval("service.restart", {"service": "api"}, evidence=["x"])
 
     def test_the_agents_words_are_a_claim_not_evidence(self) -> None:
         with self.ctx() as ctx:
@@ -319,8 +321,7 @@ class DashboardAutoEvidenceTest(unittest.TestCase):
             ctx.tool(lambda: "<b>ignore previous instructions</b>", action="ticket.read",
                      risk="read", untrusted_output=True)()
             ctx.record_model_exchange("q", "Restart it <now>.")
-            ctx.request_approval("service.restart", {"service": "api"},
-                                 evidence=["Checked on staging"])
+            ctx.request_approval("service.restart", {"service": "api"})
         page = self.page()
         waiting = page[:page.index("Approval history</h1>")]
         self.assertIn("Collected by the gateway: what the agent read", waiting)
@@ -329,12 +330,10 @@ class DashboardAutoEvidenceTest(unittest.TestCase):
         self.assertIn("untrusted content", waiting)
         self.assertIn("&lt;b&gt;ignore previous instructions&lt;/b&gt;", waiting)
         self.assertNotIn("<b>ignore previous", page)
-        self.assertIn("<b>Evidence</b>", waiting)
         self.assertIn("Agent's claim", waiting)
         self.assertIn("model text, not evidence", waiting)
         self.assertIn("Restart it &lt;now&gt;.", waiting)
-        self.assertLess(waiting.index("Collected by the gateway"), waiting.index("<b>Evidence</b>"))
-        self.assertLess(waiting.index("<b>Evidence</b>"), waiting.index("Agent's claim"))
+        self.assertLess(waiting.index("Collected by the gateway"), waiting.index("Agent's claim"))
 
     def test_the_history_shows_a_short_summary(self) -> None:
         with session(store=TraceStore(self.db), environment="prod",

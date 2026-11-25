@@ -159,15 +159,17 @@ class DashboardActionsTest(unittest.TestCase):
 
     # -- settle -------------------------------------------------------------
 
-    def held_action(self, evidence: list | None = None) -> str:
+    def held_action(self, reads: dict[str, object] | None = None) -> str:
+        """A held action whose approval was asked for after the agent read `reads`."""
+
         def restart(service: str, intent_key: str = "") -> dict:
             raise OutcomeUnknown("no answer")
 
         with session(store=TraceStore(self.db), environment="prod") as ctx:
             tool = ctx.tool(restart, action="service.restart", risk="write")
-            approval = ctx.request_approval(
-                "service.restart", {"service": "api"}, evidence=evidence
-            )
+            for name, result in (reads or {}).items():
+                ctx.tool(lambda result=result: result, action=name, risk="read")()
+            approval = ctx.request_approval("service.restart", {"service": "api"})
             ctx.approve(approval.approval_id, "reviewer")
             with self.assertRaises(OutcomeUnknown):
                 tool(service="api", approval_id=approval.approval_id)
@@ -209,43 +211,31 @@ class DashboardActionsTest(unittest.TestCase):
 
     # -- evidence ------------------------------------------------------------
 
-    def test_a_waiting_approval_shows_its_evidence_links(self) -> None:
+    def test_a_waiting_approval_shows_what_the_agent_read(self) -> None:
         with session(store=TraceStore(self.db), environment="staging") as ctx:
-            ctx.request_approval(
-                "db.drop_table",
-                {"table": "users"},
-                evidence=[
-                    {"label": "Migration 0042 diff", "url": "https://example.com/diff/42"},
-                    "Checked on staging first",
-                ],
-            )
+            ctx.tool(lambda: "2 OOMKilled", action="logs.read", risk="read")()
+            ctx.request_approval("db.drop_table", {"table": "users"})
         page = self.serve().open()
-        self.assertIn("<b>Evidence</b>", page)
-        self.assertIn("href='https://example.com/diff/42'", page)
-        self.assertIn("rel='noopener noreferrer'", page)
-        self.assertIn("Checked on staging first", page)
+        self.assertIn("Collected by the gateway: what the agent read", page)
+        self.assertIn("logs.read", page)
+        self.assertIn("2 OOMKilled", page)
 
     def test_a_held_action_shows_who_approved_it_and_what_they_saw(self) -> None:
-        self.held_action(evidence=[{"label": "Replay", "url": "https://example.com/replay/9"}])
+        self.held_action({"metrics.errors": {"rate": 0.31}})
         page = self.serve().open()
-        self.assertIn("Approved by reviewer", page)
-        self.assertIn("href='https://example.com/replay/9'", page)
+        held = page[page.index("Held actions"):page.index("Tools waiting")]
+        self.assertIn("Approved by reviewer", held)
+        self.assertIn("metrics.errors", held)
 
-    def test_approval_history_lists_the_evidence(self) -> None:
-        self.held_action(evidence=["https://example.com/diff/7"])
+    def test_approval_history_summarises_the_evidence(self) -> None:
+        self.held_action({"metrics.errors": {"rate": 0.31}, "logs.read": "x"})
         page = self.serve().open()
         self.assertIn("<th>Evidence</th>", page)
-        self.assertEqual(page.count("href='https://example.com/diff/7'"), 2)
+        history = page[page.index("Approval history</h1>"):]
+        self.assertIn("2 read(s) collected", history)
 
     def test_a_held_action_shows_the_frozen_copy_and_fingerprint(self) -> None:
-        replay = self.db.parent / "replay.webm"
-        replay.write_bytes(b"\x00" * 200_000)
-        self.held_action(
-            evidence=[
-                {"label": "0042 diff", "text": "+dirty = false\n<script>x</script>"},
-                {"label": "Replay", "file": str(replay)},
-            ]
-        )
+        self.held_action({"logs.read": "+dirty = false\n<script>x</script>"})
         page = self.serve().open()
         held = page[page.index("Held actions"):page.index("Tools waiting")]
         self.assertIn("frozen", held)
@@ -253,12 +243,16 @@ class DashboardActionsTest(unittest.TestCase):
         self.assertIn("+dirty = false", held)
         self.assertIn("&lt;script&gt;x&lt;/script&gt;", held)
         self.assertNotIn("<script>x", page)
-        self.assertIn("replay.webm", held)
+
+    def test_a_large_read_shows_its_size_and_fingerprint_only(self) -> None:
+        self.held_action({"logs.dump": "x" * 200_000})
+        page = self.serve().open()
+        held = page[page.index("Held actions"):page.index("Tools waiting")]
         self.assertIn("195.3 KB", held)
         self.assertIn("fingerprint only", held)
 
     def test_a_frozen_copy_edited_in_the_database_is_flagged(self) -> None:
-        self.held_action(evidence=[{"label": "0042 diff", "text": "+dirty = false"}])
+        self.held_action({"logs.read": "+dirty = false"})
         store = ApprovalStore(TraceStore(self.db))
         with store.connection() as connection:
             (raw,) = connection.execute("SELECT context_json FROM approvals").fetchone()
@@ -269,21 +263,23 @@ class DashboardActionsTest(unittest.TestCase):
         page = self.serve().open()
         self.assertIn("copy changed since approval", page)
 
-    def test_a_script_link_in_stored_evidence_is_never_made_clickable(self) -> None:
+    def test_stored_evidence_is_escaped_and_never_clickable(self) -> None:
         approval_id = self.pending_approval()
         store = ApprovalStore(TraceStore(self.db))
         with store.connection() as connection:
             connection.execute(
                 "UPDATE approvals SET context_json=? WHERE approval_id=?",
                 (
-                    '{"risk": "destructive", "evidence": [{"label": "<b>x</b>", '
-                    '"url": "javascript:alert(1)"}]}',
+                    '{"risk": "destructive", "auto_evidence": [{"label": "<b>x</b>", '
+                    '"sha256": "ab12", "url": "javascript:alert(1)", '
+                    '"text": "<i>y</i>", "source": "read"}]}',
                     approval_id,
                 ),
             )
         page = self.serve().open()
         self.assertNotIn("javascript:", page)
         self.assertNotIn("<b>x</b>", page)
+        self.assertNotIn("<i>y</i>", page)
         self.assertIn("&lt;b&gt;x&lt;/b&gt;", page)
 
     # -- accept a tool ------------------------------------------------------

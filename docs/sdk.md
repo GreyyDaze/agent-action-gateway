@@ -38,7 +38,7 @@ with session(environment="prod") as ctx:
 | `session(store=..., environment=..., limits=..., run_id=..., batch=..., auto_evidence=..., evidence_stale_after=...)` | open a session; every argument has a safe default |
 | `ctx.tool(fn, action=..., risk=...)` | wrap a function so every call is checked |
 | `ctx.run(agent, task, tools=..., required_inputs=...)` | run an agent with the guarded tools it may use |
-| `ctx.request_approval(action, arguments, evidence=..., auto_evidence=...)` | create an approval bound to those exact arguments, with [evidence](#evidence-for-the-reviewer) |
+| `ctx.request_approval(action, arguments, auto_evidence=...)` | create an approval bound to those exact arguments, with [evidence](#evidence-for-the-reviewer) |
 | `ctx.approve(id, approver)` / `ctx.deny(id, approver)` | decide a pending approval |
 | `ctx.pending_approvals()` | list approvals waiting on a person |
 | `ctx.retrying(tool, attempts=...)` | retry transient failures, never refusals |
@@ -77,13 +77,16 @@ drop(table="users", approval_id=approval.approval_id)   # allowed
 
 #### Evidence for the reviewer
 
-An approval carries three kinds of context, each shown under its own name:
+An approval carries two kinds of context, each shown under its own name:
 
 | Kind | Who supplies it | Can the model write it? |
 |---|---|---|
 | **Collected by the gateway** | the gateway, from the read results it saw pass through | no |
-| **Evidence** | the code that asks for the approval (`evidence=`) | no |
 | **Agent's claim** | the model's last message, from `record_model_exchange` | yes, so it is never shown as evidence |
+
+Nobody attaches anything by hand: the code that asks for an approval passes no
+evidence, and the reviewer does not upload any. Each request gets different
+evidence because the agent read different things before asking.
 
 ##### Collected automatically
 
@@ -123,61 +126,12 @@ What this proves, and what it does not:
 - It does not decide whether the data is enough. The person does.
 - It shows the session's newest reads, not only the ones about this action. The
   label (action and arguments) tells them apart.
+- If the agent read nothing before asking, the approval shows no evidence.
 
 The **agent's claim** is the last completion given to `record_model_exchange`
 (secrets hidden, cut at 4,000 characters). The dashboard shows it apart, as
 "model text, not evidence", so the person can check it against the reads. A
 session that does not record model exchanges has no claim; the proxy has none.
-
-##### Given by your code
-
-Tell the person what else to look at, such as a diff or a replay, and keep
-exactly what they saw. Evidence is a list of items:
-
-```python
-approval = ctx.request_approval(
-    "db.run_migration",
-    {"version": 42},
-    evidence=[
-        {"label": "Migration 0042 diff", "text": diff_text},           # frozen copy
-        {"label": "Agent session replay", "file": "replays/run-7.webm"},  # frozen fingerprint
-        {"label": "Pull request", "url": "https://example.com/pr/42"},    # link only
-        "Checked on staging first",                                      # note
-    ],
-)
-```
-
-| Item | What is kept |
-|---|---|
-| `text` | a copy (up to 64 KB) and its SHA-256 |
-| `file` | read when the approval is asked for: the file name, size and SHA-256, plus a copy when it is text of at most 64 KB |
-| `url` | the link only (http or https). The page behind it can change or disappear |
-| a plain string | a note, or a link if it starts with `http://` or `https://` |
-
-The evidence is frozen when the approval is asked for. A file edited later no
-longer matches its fingerprint: check it with `shasum -a 256 FILE`. A large or
-binary file (a video replay) keeps only its fingerprint, so keep the file
-itself; the fingerprint proves it is the one the approver saw.
-
-The dashboard shows the evidence on the waiting approval, on the held action
-that approval led to (with who approved it), and in the approval history. A
-frozen copy can be opened in place, and is marked **copy matches** when it still
-matches its fingerprint, or **copy changed since approval** when it does not.
-
-Limits:
-
-- Secrets in a copy are hidden, the same way records hide them. The fingerprint
-  is still the original's, so such a copy is not compared.
-- The check catches a copy changed after approval. It is not a tamper-proof
-  seal: someone who can edit the database can change the copy and the
-  fingerprint together.
-- At most 10 items, 300-character labels and links, 64 KB per copy and 256 KB of
-  copies per approval. Anything else is refused, not cut.
-- It is set by the code that requests the approval. An agent behind the MCP proxy
-  cannot add evidence to its own approvals, so the proxy gives none of this kind;
-  it attaches only what it [collected](#collected-automatically). The exact
-  arguments (for SQL, the statement itself) are always kept and bound to the
-  approval.
 
 ### Doing an effect once
 
@@ -718,7 +672,7 @@ proxy or your sessions write to.
 
 | Section | Shows | A person can |
 |---|---|---|
-| **Needs you** | approvals waiting (action, exact arguments, risk, environment, the run that asked, and their [evidence](#evidence-for-the-reviewer): what the gateway collected, what your code gave, and the agent's claim apart); held actions from every run, with who approved them and that evidence; MCP tools waiting to be accepted | approve or deny; settle a held action ("it happened", with an optional reference, or "it did not happen"); accept a tool |
+| **Needs you** | approvals waiting (action, exact arguments, risk, environment, the run that asked, and their [evidence](#evidence-for-the-reviewer): what the gateway collected, and the agent's claim apart); held actions from every run, with who approved them and that evidence; MCP tools waiting to be accepted | approve or deny; settle a held action ("it happened", with an optional reference, or "it did not happen"); accept a tool |
 | **This run** | the newest run by default (pick another in the sidebar): steps, blocked steps, receipts, model calls, tokens, cost, the timeline, receipts, limits, gate verdicts | read the evidence |
 | **Approval history** | every approval given or denied, across runs: action, risk, environment, decision, who, when, whether it was used, and a short summary of its evidence | prove who let what run |
 

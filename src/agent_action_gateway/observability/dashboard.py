@@ -418,47 +418,33 @@ def _ago(seconds: Any) -> str:
     return f"{seconds / 3600:.1f} h"
 
 
-def _evidence_html(
-    evidence: Any, *, compact: bool = False, title: str = "Evidence"
-) -> str:
-    """Links, notes and frozen copies a person looked at.
+def _reads_html(reads: Any) -> str:
+    """The read results the gateway collected for an approval.
 
-    Only http(s) links become anchors. A frozen item shows its size and SHA-256
-    fingerprint, whether the stored copy still matches it, and the copy itself
-    (folded) unless `compact`. An item the gateway collected (a read result)
-    also shows how long before the request it was read, and is marked stale or
-    untrusted when it is.
+    Each item shows what was called, its size and SHA-256 fingerprint, how long
+    before the request it was read, whether the stored copy still matches the
+    fingerprint, and the copy itself (folded). It is marked stale or untrusted
+    when it is. Everything is escaped, and nothing here is made clickable.
     """
-    if not isinstance(evidence, list):
+    if not isinstance(reads, list):
         return ""
-    lines = []
-    for item in evidence[:10]:
+    rows = []
+    for item in reads[:10]:
         if not isinstance(item, dict):
             continue
         label = escape(str(item.get("label") or "")[:300])
-        if not label:
-            continue
-        url = str(item.get("url") or "")
-        name = (
-            f"<a href='{escape(url, quote=True)}' target='_blank' "
-            f"rel='noopener noreferrer'>{label}</a>"
-            if url.lower().startswith(("http://", "https://"))
-            else f"<span>{label}</span>"
-        )
         digest = str(item.get("sha256") or "")
-        if not digest:
-            lines.append(name)
+        if not label or not digest:
             continue
-        facts = [p for p in (escape(str(item.get("file") or "")), _size(item.get("size"))) if p]
+        facts = [_size(item.get("size"))]
         facts.append(f"<span class='mono' title='sha256 {escape(digest)}'>sha256 {escape(digest[:12])}</span>")
-        if item.get("source") == "read":
-            age = _ago(item.get("age_seconds"))
-            if age:
-                facts.append(f"read {age} before the request")
-            if item.get("stale"):
-                facts.append(_badge("stale: check it again", "wait"))
-            if item.get("untrusted"):
-                facts.append(_badge("untrusted content", "bad"))
+        age = _ago(item.get("age_seconds"))
+        if age:
+            facts.append(f"read {age} before the request")
+        if item.get("stale"):
+            facts.append(_badge("stale: check it again", "wait"))
+        if item.get("untrusted"):
+            facts.append(_badge("untrusted content", "bad"))
         matches = evidence_copy_matches(item)
         if item.get("redacted"):
             facts.append("secrets hidden in the copy")
@@ -470,28 +456,24 @@ def _evidence_html(
             facts.append("fingerprint only (copies over 256 KB in total)")
         elif "text" not in item:
             facts.append("fingerprint only")
-        line = f"{name} · frozen · {' · '.join(facts)}"
-        if compact or not isinstance(item.get("text"), str):
-            lines.append(line)
-        else:
-            lines.append(
+        line = f"<span>{label}</span> · frozen · {' · '.join(p for p in facts if p)}"
+        if isinstance(item.get("text"), str):
+            rows.append(
                 f"<details><summary class='meta'>{line} · <u>show copy</u></summary>"
                 f"<pre>{escape(item['text'])}</pre></details>"
             )
-    if not lines:
+        else:
+            rows.append(f"<div class='meta'>{line}</div>")
+    if not rows:
         return ""
-    if compact:
-        return "<br>".join(lines)
-    rows = [line if line.startswith("<details") else f"<div class='meta'>{line}</div>" for line in lines]
-    return f"<div class='meta'><b>{escape(title)}</b></div>" + "".join(rows)
+    return "<div class='meta'><b>Collected by the gateway: what the agent read</b></div>" + "".join(rows)
 
 
 def _approval_evidence(context: Mapping[str, Any], *, compact: bool = False) -> str:
     """Everything an approval carries for the person, each kind under its own name.
 
-    What the gateway collected (read results) comes first, then what the code
-    that asked attached, then the agent's own words, which are a claim and are
-    never shown as evidence.
+    What the gateway collected (read results) comes first, then the agent's own
+    words, which are a claim and are never shown as evidence.
     """
     auto = context.get("auto_evidence")
     left_out = context.get("auto_evidence_left_out")
@@ -507,19 +489,15 @@ def _approval_evidence(context: Mapping[str, Any], *, compact: bool = False) -> 
             if untrusted:
                 note += f", {untrusted} untrusted"
             parts.append(escape(note))
-        manual = _evidence_html(context.get("evidence"), compact=True)
-        if manual:
-            parts.append(manual)
         if isinstance(claim, dict) and claim.get("text"):
             parts.append("agent's claim kept")
         return "<br>".join(parts)
-    html = _evidence_html(auto, title="Collected by the gateway: what the agent read")
+    html = _reads_html(auto)
     if html and isinstance(left_out, int) and left_out > 0:
         html += (
             f"<div class='meta'>{left_out} older read(s) left out "
             "(only the newest 10 are kept).</div>"
         )
-    html += _evidence_html(context.get("evidence"))
     if isinstance(claim, dict) and isinstance(claim.get("text"), str) and claim["text"]:
         cut = " · cut to 4,000 characters" if claim.get("cut") else ""
         html += (

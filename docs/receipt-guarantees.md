@@ -131,8 +131,8 @@ agent-gateway receipts settle --db data/runtime.db --key KEY --done    # or --fa
 The dashboard offers the same, under **Needs you → Held actions**. The settlement,
 who made it and any reference are recorded in the run's timeline
 (`receipt.settled`). A held action also shows who approved it and the evidence on that approval
-(the read results the gateway collected, and any your code gave), frozen when
-the approval was asked for ([SDK guide](sdk.md#evidence-for-the-reviewer)).
+(the read results the gateway collected), frozen when the approval was asked
+for ([SDK guide](sdk.md#evidence-for-the-reviewer)).
 
 ## Recovery by action type
 

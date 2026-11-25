@@ -23,7 +23,7 @@ import contextvars
 import functools
 import threading
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -49,7 +49,6 @@ from agent_action_gateway.policy.locks import (
     agent_claim,
     collect_reads,
     freeze_read,
-    normalize_evidence,
 )
 from agent_action_gateway.policy.stop_rules import (
     AmbiguityBlockedError,
@@ -184,24 +183,19 @@ class SafetySession:
         *,
         expires_in_seconds: int = 900,
         approver: str = "pending",
-        evidence: Sequence[str | Mapping[str, str]] | None = None,
         auto_evidence: bool | None = None,
     ) -> Approval:
         """Create a pending approval bound to this exact payload.
 
-        `evidence` lists what the person should look at before deciding: links,
-        notes, text or files (see `normalize_evidence`). The dashboard shows it on
-        the approval and on the held action, and keeps it in the approval history.
-
         Unless `auto_evidence` (or the session's setting) is False, the approval
-        also carries what the gateway collected itself: the newest read results
-        of this session (at most 10, frozen with SHA-256) and, apart from them,
-        the last model text recorded with `record_model_exchange`, as the
-        agent's claim.
+        carries what the gateway collected itself: the newest read results of
+        this session (at most 10, frozen with SHA-256) and, apart from them, the
+        last model text recorded with `record_model_exchange`, as the agent's
+        claim. The dashboard shows both on the approval and on the held action,
+        and keeps them in the approval history.
         """
         from datetime import timedelta
 
-        references = normalize_evidence(evidence)
         collected = self._collected_evidence() if (
             self.auto_evidence if auto_evidence is None else auto_evidence
         ) else {}
@@ -216,7 +210,6 @@ class SafetySession:
                 "risk": self.registry.classify(action),
                 "environment": self.environment,
                 "run_id": self.run_id,
-                **({"evidence": references} if references else {}),
                 **collected,
             },
         )
