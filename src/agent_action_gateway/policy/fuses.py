@@ -93,6 +93,21 @@ class FuseBudget:
             if self.limits.max_dollars is not None and self._dollars_used > self.limits.max_dollars:
                 self._trip_locked("spend budget exhausted")
 
+    def record_spent(self, dollars: float) -> None:
+        """Add money that was already spent, such as a reported model call.
+
+        Unlike `consume_step` it never raises: the money is gone, and refusing
+        to record it would hide it. If it goes over the cost limit, the budget
+        trips, so the next checked call is refused.
+        """
+        if dollars < 0:
+            raise ValueError("dollars must be >= 0")
+        with self._lock:
+            self._dollars_used += dollars
+            limit = self.limits.max_dollars
+            if limit is not None and self._dollars_used > limit and self._tripped_reason is None:
+                self._tripped_reason = "spend budget exhausted"
+
     def trip(self, reason: str) -> None:
         """Record a refusal reason without raising.
 

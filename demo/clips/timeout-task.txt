@@ -1,0 +1,1 @@
+Run exactly this SQL on staging with the execute_sql tool, nothing else: UPDATE tickets SET status = 'closed' WHERE id = 7; SELECT pg_sleep(30);

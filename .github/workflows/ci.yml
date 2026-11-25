@@ -71,6 +71,11 @@ jobs:
           ):
               if expected not in names:
                   sys.exit(f"missing from wheel: {expected}")
+          # The demo and the videos live in the repo, never in the package.
+          leaked = [n for n in names if n.split("/")[0] in ("demo", "videos")
+                    or "/demo/" in n or n.startswith("agent_action_gateway/demo")]
+          if leaked:
+              sys.exit(f"demo files in the wheel: {leaked[:5]}")
           print("wheel contents verified")
           PY
 

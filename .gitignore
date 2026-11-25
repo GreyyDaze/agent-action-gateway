@@ -47,3 +47,17 @@ mutants/
 PROJECT_CONTEXT.md
 VIDEO_PLAN.md
 PROBLEMS_SOLVED.md
+
+# Demo: local tokens, test keys, recordings in progress
+demo/secrets/
+
+# Demo recording scratch files
+demo/record/.work/
+demo/clips/gate/gate.db
+demo/record/node_modules/
+demo/record/package-lock.json
+demo/record/music/*.mp3
+
+# Demo videos are hosted on YouTube, not in git.
+videos/
+demo/record/*.log

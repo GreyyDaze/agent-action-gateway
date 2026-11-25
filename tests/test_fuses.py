@@ -354,5 +354,25 @@ class FuseTest(unittest.TestCase):
             self.assertIn("wall-clock", result["error"])
 
 
+
+class RecordSpentTest(unittest.TestCase):
+    def test_spent_money_is_added_without_raising(self) -> None:
+        budget = FuseBudget(FuseLimits(max_dollars=1.0))
+        budget.record_spent(0.4)
+        self.assertAlmostEqual(budget.snapshot().dollars_used, 0.4)
+        self.assertFalse(budget.snapshot().tripped)
+
+    def test_going_over_the_limit_trips_the_next_call(self) -> None:
+        budget = FuseBudget(FuseLimits(max_dollars=0.5))
+        budget.record_spent(0.6)  # recorded, not refused: the money is already spent
+        self.assertTrue(budget.snapshot().tripped)
+        with self.assertRaises(FuseTrippedError):
+            budget.check()
+
+    def test_negative_spend_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            FuseBudget().record_spent(-1)
+
+
 if __name__ == "__main__":
     unittest.main()

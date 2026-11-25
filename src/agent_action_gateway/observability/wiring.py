@@ -180,6 +180,8 @@ def _collect_wrapped_ids(tree: ast.AST) -> set[int]:
 
 
 def _iter_python_files(root: Path) -> list[Path]:
+    if root.is_file():
+        return [root] if root.suffix == ".py" else []
     return sorted(
         path
         for path in root.rglob("*.py")

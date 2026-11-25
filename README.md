@@ -292,6 +292,14 @@ your systems ([setups](docs/gateway-deployment.md#choosing-a-setup)). The SQL ch
 your own database functions. "Once" needs a provider idempotency key or lookup.
 Not independently audited. ([full list](docs/gateway-deployment.md#known-limitations))
 
+**Model usage (calls, tokens, cost):** the checkpoint sees tool calls, not the
+agent's model calls, so it shows usage only when the agent reports it:
+`record_model_exchange()` in the library, `POST /usage` on the proxy, or the
+[Claude Code hook](integrations/claude-code/report_usage.mjs). Apps that do not
+share their usage (Claude Desktop, Cursor) show "not reported". A reported cost
+also counts as budget spend, so the cost limit covers model calls. The hook's cost
+is the API list price; on a Claude subscription nothing is billed per token.
+
 ## 10. Testing
 
 - About 730 automated tests, plus lint and type checks, in CI.
@@ -315,7 +323,7 @@ There is no hosted version. Everything runs on your machines, and nothing is sen
 pip install agent-action-gateway
 ```
 
-Or the Docker image (amd64 and arm64): `docker pull ghcr.io/greyydaze/agent-action-gateway:0.2.0`.
+Or the Docker image (amd64 and arm64): `docker pull ghcr.io/greyydaze/agent-action-gateway:0.3.0`.
 
 | To | Run |
 |---|---|
@@ -326,6 +334,7 @@ Or the Docker image (amd64 and arm64): `docker pull ghcr.io/greyydaze/agent-acti
 | settle actions held with an unknown outcome | `agent-gateway receipts list` |
 | find calls that skip the checkpoint | `agent-gateway check --app your_agent.py` (`--format json` for CI) |
 | test a new agent version | `agent-gateway gate check --cases your-cases.json ...` ([guide](docs/evaluation.md)) |
+| show Claude Code's tokens and cost | add [`report_usage.mjs`](integrations/claude-code/report_usage.mjs) as a `Stop` hook; set `AGENT_GATEWAY_USAGE_URL` and `AGENT_GATEWAY_PROXY_TOKEN` |
 
 Secrets come from environment variables: the upstream keys named in the route
 file, `AGENT_GATEWAY_MASTER_KEY`, `AGENT_GATEWAY_DASHBOARD_TOKEN`,
@@ -337,6 +346,19 @@ their keys, config or approvals (separate user, container or host).
 [gateway guide](docs/gateway-deployment.md).
 
 Develop: `pip install -e ".[dev]"`, then `make verify` and `make proof`.
+
+## 12. Future direction
+
+- **More usage adapters:** small hooks like the Claude Code one for other agents
+  that keep a usage record, all sending to the same `POST /usage`.
+- **A model proxy (only if asked for):** routing the agent's model traffic
+  through the checkpoint would show usage for any agent that lets you set its
+  API address, with no help from the agent. It makes the checkpoint a model
+  proxy too, so it waits for real demand.
+- **Verified approvers:** approver names are typed today; sign-in through your
+  own identity provider would tie each approval to a real person.
+- **More MCP clients tested:** Claude Desktop and Cursor, not only Claude Code.
+- **An independent security review.**
 
 ## Documentation
 

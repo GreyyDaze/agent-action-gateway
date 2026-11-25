@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gateway": {
+      "type": "http",
+      "url": "http://proxy:8090/mcp",
+      "headers": { "Authorization": "Bearer ${AGENT_GATEWAY_PROXY_TOKEN}" }
+    }
+  }
+}

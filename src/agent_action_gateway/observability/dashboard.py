@@ -161,7 +161,8 @@ h2{font-size:17px;font-weight:600;margin:0 0 12px;color:var(--text-main);display
 .b-bad{background:var(--bad-bg);color:var(--bad)}
 
 pre{background:#FAFAFB;border:1px solid var(--border-layout);border-radius:8px;padding:12px;
-  overflow:auto;max-height:22rem;font-size:13px;margin:8px 0 0;color:var(--text-body)}
+  overflow:auto;max-height:22rem;font-size:13px;margin:8px 0 0;color:var(--text-body);
+  white-space:pre-wrap;overflow-wrap:anywhere}
 details > summary{cursor:pointer;list-style:none}
 details > summary::-webkit-details-marker{display:none}
 details.step > summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
@@ -263,6 +264,21 @@ def _json(value: object) -> str:
     return escape(json.dumps(value, indent=2, sort_keys=True, default=str))
 
 
+def _args(value: dict) -> str:
+    """Arguments for a person to read: multi-line text (such as SQL) keeps its
+    real line breaks instead of showing as one long line with \\n."""
+    if not any(isinstance(v, str) and "\n" in v for v in value.values()):
+        return _json(value)
+    parts = []
+    for key in sorted(value):
+        v = value[key]
+        if isinstance(v, str) and "\n" in v:
+            parts.append(f"{key}:\n{v}")
+        else:
+            parts.append(f"{key}: {json.dumps(v, default=str)}")
+    return escape("\n\n".join(parts))
+
+
 #: The icon follows the state, so a badge reads the same without colour.
 _BADGE_ICONS = {"ok": "check", "wait": "clock", "bad": "x"}
 
@@ -338,10 +354,10 @@ def _protection_pill(protected: bool) -> str:
 
 
 def _spend(value: Any) -> str:
-    """Budget spend. Zero means no step reported a cost, so say that."""
+    """Budget spend. Zero means no step or model call reported a cost, so say that."""
     amount = float(value or 0.0)
     if amount == 0:
-        return "<span class='none' title='No step reported a cost (estimated_cost_usd)'>not reported</span>"
+        return "<span class='none' title='No step or model call reported a cost (estimated_cost_usd, cost_usd)'>not reported</span>"
     return f"${amount:.4f}"
 
 
@@ -397,7 +413,7 @@ def _render_approvals(pending: list[Approval]) -> str:
             + _meta_item("hash", _run_link(run_id))
             + _meta_item("clock", escape(_expires(item.expires_at)), _when(item.expires_at))
             + "</div>"
-            f"<pre>{_json(redact(dict(item.arguments)))}</pre>"
+            f"<pre>{_args(redact(dict(item.arguments)))}</pre>"
             "<form class='act' method='post' action='/approvals/approve'>"
             f"{_csrf_field()}<input type='hidden' name='approval_id' value='{aid}'>"
             f"{_name_field('ap-' + item.approval_id)}"
@@ -427,7 +443,7 @@ def _render_held(view: dict) -> str:
             + _meta_item("hash", _run_link(run_id))
             + _meta_item("clock", "since " + escape(_when(receipt.get('created_at'))))
             + "</div>"
-            f"<pre>{_json(redact(receipt.get('arguments') or {}))}</pre>"
+            f"<pre>{_args(redact(receipt.get('arguments') or {}))}</pre>"
             "<p class='meta'>Check the real system first. Then say what happened.</p>"
             "<form class='act' method='post' action='/receipts/settle'>"
             f"{_csrf_field()}<input type='hidden' name='intent_key' value='{escape(key)}'>"
@@ -820,6 +836,18 @@ class Handler(BaseHTTPRequestHandler):
         else:
             budget_block = _empty("No budget recorded for this run.")
 
+        # An empty section only says "nothing here"; leave it out instead.
+        budget_group = (
+            f"<div class='group'><h2>{_icon('gauge')}Budget</h2>{budget_block}</div>"
+            if budget
+            else ""
+        )
+        gate_group = (
+            f"<div class='group'><h2>{_icon('flag')}Gate history</h2>{gate_block}</div>"
+            if gates
+            else ""
+        )
+
         protected = view["enforcement"] == "enforced"
         run_id = str(view["run_id"] or "no run selected")
 
@@ -887,8 +915,8 @@ class Handler(BaseHTTPRequestHandler):
     </div>
     <div class="group" id="timeline"><h2>{_icon('activity')}Timeline</h2>{_render_traces(view)}</div>
     <div class="group" id="receipts"><h2>{_icon('receipt')}Side-effect receipts</h2>{_render_receipts(view)}</div>
-    <div class="group"><h2>{_icon('gauge')}Budget</h2>{budget_block}</div>
-    <div class="group"><h2>{_icon('flag')}Gate history</h2>{gate_block}</div>
+    {budget_group}
+    {gate_group}
   </section>
 
   <section class="section" id="history">

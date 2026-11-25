@@ -101,6 +101,15 @@ class StaticScanTest(unittest.TestCase):
         locations = [loc for f in report.findings for loc in f.locations]
         self.assertTrue(any("agent.py:" in loc for loc in locations), locations)
 
+    def test_a_single_file_is_scanned(self) -> None:
+        report = scan_code(write_app(BYPASSES_LAYER) / "agent.py")
+        self.assertIs(report.status, Status.FAIL, report.render())
+
+    def test_a_single_non_python_file_is_inconclusive(self) -> None:
+        path = write_app(GUARDED) / "notes.txt"
+        path.write_text("not code", encoding="utf-8")
+        self.assertIs(scan_code(path).status, Status.INCONCLUSIVE)
+
     def test_empty_directory_is_inconclusive_not_a_pass(self) -> None:
         directory = Path(tempfile.mkdtemp())
         report = scan_code(directory)

@@ -53,7 +53,7 @@ class MCPServer:
             return self._result(request_id, {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "agent-action-gateway", "version": "0.2.0"},
+                "serverInfo": {"name": "agent-action-gateway", "version": "0.3.0"},
             })
         if method == "notifications/initialized":
             return None

@@ -1,0 +1,16 @@
+# The agent: Claude Code, a real LLM agent, in a container that holds only an
+# empty task folder. No repo, no proxy config, no database, no keys.
+FROM node:22-slim
+
+RUN npm install -g @anthropic-ai/claude-code@2.1.331 \
+ && apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --uid 1002 --create-home --shell /bin/bash agent \
+ && mkdir -p /workspace && chown agent:agent /workspace
+
+COPY --chown=agent:agent agent/workspace/ /workspace/
+USER agent
+WORKDIR /workspace
+# Only the proxy: --strict-mcp-config ignores the MCP servers of the signed-in
+# account (claude.ai connectors), so the agent has no other way to act.
+CMD ["claude", "--mcp-config", "/workspace/.mcp.json", "--strict-mcp-config"]

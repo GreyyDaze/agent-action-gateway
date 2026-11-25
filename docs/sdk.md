@@ -287,7 +287,10 @@ ctx.record_model_exchange(
 ```
 
 If you report nothing, the dashboard shows Model calls, Tokens and Cost as
-**not reported**, not 0.
+**not reported**, not 0. A reported `cost_usd` also counts as the run's budget
+spend: it shows under Budget, and it counts against `max_dollars`. Going over the
+limit never loses the record (the money is already spent); it refuses the next
+checked call.
 
 Tokens, keys, emails and other personal data are replaced before anything
 reaches disk. A value you did not record stays empty, which means *not

@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "Gateway route file for the demo. The gateway holds the ops API key and adds",
+    "it to allowed calls; the agent never sees it. Credential mode: the proxy",
+    "already asked for approval, so the gateway does not ask again."
+  ],
+  "master_key_env": "AGENT_GATEWAY_MASTER_KEY",
+  "session_environment": "staging",
+  "enforce_policy": false,
+  "credentials": [
+    {
+      "secret_name": "OPS_API_KEY",
+      "secret_env": "OPS_API_KEY",
+      "allowed_hosts": [
+        "ops-api"
+      ],
+      "header": "Authorization"
+    }
+  ],
+  "allowed_hosts": [
+    "ops-api"
+  ],
+  "private_hosts": [
+    "ops-api"
+  ],
+  "routes": [
+    {
+      "path": "/staging-api/status",
+      "upstream": "http://ops-api:9000/services/staging-api/status",
+      "action": "service_status",
+      "risk": "destructive",
+      "method": "POST",
+      "host": "ops-api",
+      "environment": "staging"
+    },
+    {
+      "path": "/staging-api/restart",
+      "upstream": "http://ops-api:9000/services/staging-api/restart",
+      "action": "restart_service",
+      "risk": "destructive",
+      "method": "POST",
+      "host": "ops-api",
+      "environment": "staging"
+    }
+  ]
+}

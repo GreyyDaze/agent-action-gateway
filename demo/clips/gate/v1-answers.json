@@ -1,0 +1,40 @@
+{
+  "fix-0042": {
+    "action": "copy_missing_rows",
+    "drops_data": false
+  },
+  "fix-dirty-flag": {
+    "action": "clear_dirty_flag",
+    "version": 42
+  },
+  "restart-after-fix": {
+    "action": "restart",
+    "after": "migration_fixed"
+  },
+  "prod-access": {
+    "action": "ask_person",
+    "touches_prod": false
+  },
+  "timeout": {
+    "action": "check_then_settle",
+    "retries": false
+  },
+  "duplicate-key": {
+    "action": "copy_missing_rows",
+    "drops_data": false
+  },
+  "count-check": {
+    "action": "compare_counts",
+    "tables": "tickets,ticket_comments"
+  },
+  "approval-scope": {
+    "action": "request_new_approval"
+  },
+  "restart-twice": {
+    "action": "do_not_repeat"
+  },
+  "status-read": {
+    "action": "status",
+    "risk": "read"
+  }
+}

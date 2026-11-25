@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -248,6 +250,72 @@ class UsageTest(HttpProxyCase):
                 status, body, _ = self.usage(report)
                 self.assertEqual(status, 400, body)
         self.assertEqual(self.model_rows(), [])
+
+
+HOOK = Path(__file__).parent.parent / "integrations" / "claude-code" / "report_usage.mjs"
+
+
+def _reply(msg_id: str, model: str, **usage: int) -> str:
+    return json.dumps({"type": "assistant", "message": {"id": msg_id, "model": model, "usage": usage}})
+
+
+@unittest.skipUnless(shutil.which("node"), "node is needed to run the Claude Code hook")
+class ClaudeCodeHookTest(HttpProxyCase):
+    """The Claude Code `Stop` hook reads the transcript and reports each reply."""
+
+    model_rows = UsageTest.model_rows
+
+    def run_hook(self, transcript: Path, state: Path, session: str = "s1") -> str:
+        env = {**os.environ, "AGENT_GATEWAY_USAGE_URL": self.url.replace("/mcp", "/usage"),
+               "AGENT_GATEWAY_PROXY_TOKEN": TOKEN, "AGENT_GATEWAY_USAGE_STATE": str(state)}
+        done = subprocess.run(
+            ["node", str(HOOK)], env=env, capture_output=True, text=True, timeout=30,
+            input=json.dumps({"session_id": session, "transcript_path": str(transcript)}),
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stderr
+
+    def test_each_reply_is_reported_once_with_tokens_and_cost(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        transcript = tmp / "t.jsonl"
+        lines = [
+            json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}}),
+            # One reply written as two lines (two content blocks): counted once.
+            _reply("m1", "claude-opus-5-5", input_tokens=10, output_tokens=1),
+            _reply("m1", "claude-opus-5-5", input_tokens=10, cache_read_input_tokens=1000,
+                   cache_creation_input_tokens=200, output_tokens=50),
+            _reply("m2", "claude-unknown-9", input_tokens=7, output_tokens=3),
+            _reply("m3", "<synthetic>", input_tokens=0, output_tokens=0),
+            "not json",
+        ]
+        transcript.write_text("\n".join(lines) + "\n")
+        self.assertEqual(self.run_hook(transcript, tmp), "")
+
+        rows = sorted(self.model_rows(), key=lambda r: r["tokens_in"])
+        self.assertEqual([(r["tokens_in"], r["tokens_out"]) for r in rows], [(7, 3), (1210, 50)])
+        self.assertIsNone(rows[0]["cost_usd"], "a model with no known price has no cost")
+        # Opus 5.5: 10*$4 + 200*$5 + 1000*$0.20 + 50*$20, per 1M tokens.
+        self.assertAlmostEqual(rows[1]["cost_usd"], (40 + 1000 + 200 + 1000) / 1e6)
+
+        # The next Stop sends only the new reply.
+        transcript.write_text(transcript.read_text() + _reply("m4", "claude-sonnet-5-5",
+                                                              input_tokens=5, output_tokens=5) + "\n")
+        self.run_hook(transcript, tmp)
+        self.assertEqual(len(self.model_rows()), 3)
+
+    def test_a_refused_report_is_kept_for_the_next_run(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        transcript = tmp / "t.jsonl"
+        transcript.write_text(_reply("m1", "claude-opus-5-5", input_tokens=1, output_tokens=1) + "\n")
+        env_url = self.url
+        self.url = self.url.replace("/mcp", "/nothing/mcp")  # the hook posts to a wrong path
+        stderr = self.run_hook(transcript, tmp)
+        self.assertIn("answered 404", stderr)
+        self.url = env_url
+        self.run_hook(transcript, tmp)
+        self.assertEqual(len(self.model_rows()), 1)
 
 
 class ConnectorTest(HttpProxyCase):

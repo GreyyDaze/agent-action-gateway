@@ -1,0 +1,18 @@
+# The MCP proxy, with Postgres MCP Pro installed next to it so the proxy can
+# start it over stdio. Built from the repo root:
+#   docker build -f demo/Dockerfile.proxy .
+FROM crystaldba/postgres-mcp:latest
+
+# agent-action-gateway goes in its own virtualenv, installed with pip like any
+# user would; postgres-mcp keeps its own (/app/.venv).
+COPY pyproject.toml README.md /src/
+COPY src /src/src
+RUN python -m venv /opt/aag \
+ && /opt/aag/bin/pip install --no-cache-dir /src \
+ && rm -rf /src \
+ && groupadd --gid 1001 aag && useradd --uid 1001 --gid 1001 --no-create-home aag \
+ && mkdir -p /var/lib/agent-action-gateway && chown 1001:1001 /var/lib/agent-action-gateway
+
+ENV PATH="/opt/aag/bin:/app/.venv/bin:${PATH}"
+USER 1001:1001
+ENTRYPOINT ["agent-gateway"]

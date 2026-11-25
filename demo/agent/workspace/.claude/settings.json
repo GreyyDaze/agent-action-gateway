@@ -1,0 +1,19 @@
+{
+  "enableAllProjectMcpServers": true,
+  "permissions": {
+    "allow": [
+      "mcp__gateway",
+      "Bash",
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node /opt/agw/report_usage.mjs" }] }
+    ]
+  }
+}

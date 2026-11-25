@@ -215,7 +215,13 @@ class SafetySession:
         Redaction is applied on write like every other field, so a caller may
         pass a raw prompt without pre-sanitising it. Omitted values stay NULL,
         which means "not captured" rather than "empty".
+
+        A reported `cost_usd` also counts as budget spend, so the dashboard's
+        Budget shows it and the cost limit covers model calls too.
         """
+        if cost_usd:
+            self.fuse.budget.record_spent(cost_usd)
+            self._record_budget()
         return self.store.append_trace(
             TraceEvent(
                 self.run_id,
@@ -485,7 +491,16 @@ class SafetySession:
                     call_kwargs.setdefault("intent_key", intent_key)
                 return _invoke(fn, args, call_kwargs)
 
-            return execute(arguments, approval_id, actual_cost, call, None)
+            return recorded(arguments, approval_id, actual_cost, call, None)
+
+        def recorded(*parts: Any) -> dict[str, Any]:
+            # Save the budget after every call, not only when `run()` ends. An
+            # MCP proxy never calls `run()`, so without this its dashboard
+            # showed no budget although the limits were enforced.
+            try:
+                return execute(*parts)
+            finally:
+                self._record_budget()
 
         def call_with(
             arguments: Mapping[str, Any],
@@ -499,7 +514,7 @@ class SafetySession:
             `describe` turns the result into the text stored with the receipt, so
             a later repeat of the same action can show what the first one did.
             """
-            return execute(dict(arguments), approval_id, None, call, describe)
+            return recorded(dict(arguments), approval_id, None, call, describe)
 
         guarded.call_with = call_with  # type: ignore[attr-defined]
         guarded.__name__ = f"guarded_{action}"

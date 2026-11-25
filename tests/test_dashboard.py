@@ -126,10 +126,30 @@ class DashboardRenderTest(unittest.TestCase):
             "side-effect receipts",
             "approvals waiting",
             "budget",
-            "gate history",
             "runs",
         ):
             self.assertIn(heading, text, f"missing section: {heading}")
+
+    def test_budget_is_recorded_without_run(self) -> None:
+        """Guarded calls alone (the MCP proxy's path) save the budget."""
+        self._populate()
+        budgets = TraceStore(self.db).dashboard_snapshot()["budgets"]
+        self.assertEqual(len(budgets), 1, "no budget recorded for tool calls made without run()")
+        self.assertGreaterEqual(int(budgets[0]["steps_used"]), 3)
+
+    def test_reported_model_cost_counts_as_budget_spend(self) -> None:
+        """A cost sent with record_model_exchange (or the proxy's /usage) shows in Budget."""
+        self._populate()
+        budgets = TraceStore(self.db).dashboard_snapshot()["budgets"]
+        self.assertAlmostEqual(float(budgets[0]["dollars_used"]), 0.0041, places=6)
+        self.assertIn("$0.0041", self._get())
+
+    def test_an_empty_section_is_left_out(self) -> None:
+        """No gate verdicts: the Gate history section is not shown at all."""
+        self._populate()
+        text = _soup(self._get())
+        self.assertNotIn("gate history", text)
+        self.assertNotIn("no gate verdicts", text)
 
     def test_a_refused_action_is_visible_with_its_reason(self) -> None:
         """The whole point of the page: what was refused, and why."""
@@ -165,11 +185,13 @@ class DashboardRenderTest(unittest.TestCase):
         text = _soup(html)
         self.assertIn("no runs recorded", text)
         self.assertIn("no approvals are waiting", text)
-        self.assertIn("no gate verdicts", text)
-        # A blank page is indistinguishable from a crash. Every panel must say
-        # something.
-        for panel in ("timeline", "side-effect receipts", "budget"):
+        # A blank page is indistinguishable from a crash. Every core panel must
+        # say something.
+        for panel in ("timeline", "side-effect receipts"):
             self.assertIn(panel, text)
+        # Optional sections with no data are left out, not shown empty.
+        self.assertNotIn("gate history", text)
+        self.assertNotIn("no budget recorded", text)
 
     def test_unreported_model_usage_says_so_instead_of_zero(self) -> None:
         from agent_action_gateway.observability.view import _spent
@@ -339,3 +361,12 @@ class ReceiptStateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_multi_line_sql_keeps_its_line_breaks() -> None:
+    from agent_action_gateway.observability.dashboard import _args
+
+    shown = _args({"sql": "BEGIN;\nDELETE FROM t WHERE id = 1;\nCOMMIT;"})
+    assert "sql:\nBEGIN;\nDELETE FROM t WHERE id = 1;\nCOMMIT;" in shown
+    assert "\\n" not in shown
+    assert _args({"id": 7}) == '{\n  &quot;id&quot;: 7\n}'

@@ -1,0 +1,75 @@
+{
+  "_comment": [
+    "MCP proxy config for the demo. The session is staging.",
+    "staging and prod: Postgres MCP Pro (crystaldba), one per TEST database.",
+    "execute_sql is one tool for every statement, so its risk is decided per",
+    "call from the SQL: reads run, anything that writes needs an approval for",
+    "that exact statement. Listing tools are reads. explain_query and the",
+    "index tools are left needing approval: explain_query can run the query",
+    "(analyze) and the index tools can create an extension.",
+    "ops: the gateway's MCP endpoint (holds the key)."
+  ],
+  "environment": "staging",
+  "servers": {
+    "staging": {
+      "command": "postgres-mcp",
+      "args": [
+        "--access-mode=unrestricted"
+      ],
+      "env": {
+        "DATABASE_URI": "postgresql://demo:${PG_PASSWORD}@postgres:5432/staging"
+      },
+      "environment": "staging",
+      "timeout": 20
+    },
+    "prod": {
+      "command": "postgres-mcp",
+      "args": [
+        "--access-mode=unrestricted"
+      ],
+      "env": {
+        "DATABASE_URI": "postgresql://demo:${PG_PASSWORD}@postgres:5432/prod"
+      },
+      "environment": "prod",
+      "timeout": 20
+    },
+    "ops": {
+      "url": "http://gateway:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${GATEWAY_VIRTUAL_KEY}"
+      },
+      "environment": "staging"
+    }
+  },
+  "rules": [
+    {
+      "match": "*__execute_sql",
+      "argument": "sql",
+      "check": "sql"
+    },
+    {
+      "match": "*__list_schemas",
+      "risk": "read"
+    },
+    {
+      "match": "*__list_objects",
+      "risk": "read"
+    },
+    {
+      "match": "*__get_object_details",
+      "risk": "read"
+    },
+    {
+      "match": "*__get_top_queries",
+      "risk": "read"
+    },
+    {
+      "match": "*__analyze_db_health",
+      "risk": "read"
+    },
+    {
+      "match": "ops__staging-api/status",
+      "risk": "read"
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+# Demo: a real Claude Code agent fixes a failed migration on a TEST database,
+# through the MCP proxy. Start it with ./run.sh (it makes the tokens and keys).
+#
+#   agent_net   internal. The agent and the proxy. Nothing else.
+#   tools_net   internal. The proxy, Postgres, the gateway.
+#   ops_net     internal. The gateway and the ops API (the gateway's only way out).
+#   review_net  the dashboard, published to this machine only (127.0.0.1:8765).
+#   model_net   the agent's way to the model API, and nothing on it but the agent.
+
+x-image: &aag
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile.gateway
+  image: agent-action-gateway-gateway:local
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: aag-demo-agent:local
+    profiles: ["agent"]
+    environment:
+      AGENT_GATEWAY_PROXY_TOKEN: ${AGENT_GATEWAY_PROXY_TOKEN:?run ./run.sh}
+      # The Stop hook (workspace/.claude/settings.json) reports token use here.
+      AGENT_GATEWAY_USAGE_URL: http://proxy:8090/usage
+      # The image pins Claude Code; an update attempt only prints an error.
+      DISABLE_AUTOUPDATER: "1"
+    volumes:
+      # The Claude login lives here, in a Docker volume, never in the repo.
+      - agent-home:/home/agent
+      - ../integrations/claude-code/report_usage.mjs:/opt/agw/report_usage.mjs:ro
+    stdin_open: true
+    tty: true
+    networks: [agent_net, model_net]
+
+  # Test harness for ./run.sh check: plays the agent (on agent_net) and the
+  # person (on review_net) to check every scene before recording. Not the agent.
+  check:
+    image: python:3.12-slim
+    profiles: ["check"]
+    environment:
+      AGENT_GATEWAY_PROXY_TOKEN: ${AGENT_GATEWAY_PROXY_TOKEN:?run ./run.sh}
+      AGENT_GATEWAY_DASHBOARD_TOKEN: ${AGENT_GATEWAY_DASHBOARD_TOKEN:?run ./run.sh}
+    volumes:
+      - ./check_scenes.py:/check/check_scenes.py:ro
+    command: [python, -u, /check/check_scenes.py]
+    networks: [agent_net, review_net]
+
+  proxy:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.proxy
+    image: aag-demo-proxy:local
+    environment:
+      AGENT_GATEWAY_PROXY_TOKEN: ${AGENT_GATEWAY_PROXY_TOKEN:?run ./run.sh}
+      GATEWAY_VIRTUAL_KEY: ${GATEWAY_VIRTUAL_KEY:?run ./run.sh}
+      PG_PASSWORD: ${PG_PASSWORD:?run ./run.sh}
+    volumes:
+      # A folder, not a file: an edited file is a new file, and a file mount
+      # would keep showing the old one (the proxy reloads its config on change).
+      - ./config:/etc/agent-action-gateway:ro
+      - proxy-state:/var/lib/agent-action-gateway
+    command: [mcp-proxy, --config, /etc/agent-action-gateway/servers.json,
+              --db, /var/lib/agent-action-gateway/proxy.db,
+              --http, --host, "0.0.0.0", --port, "8090"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      gateway: { condition: service_started }
+    networks: [agent_net, tools_net]
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?run ./run.sh}
+      POSTGRES_DB: demo
+    volumes:
+      - ./seed:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d staging"]
+      interval: 2s
+      retries: 30
+    networks: [tools_net]
+
+  gateway:
+    <<: *aag
+    user: "1001:1001"
+    environment:
+      AGENT_GATEWAY_MASTER_KEY: ${AGENT_GATEWAY_MASTER_KEY:?run ./run.sh}
+      # The test ops API key. Only the gateway and the ops API get it.
+      OPS_API_KEY: ${OPS_API_KEY:?run ./run.sh}
+    volumes:
+      - ./config:/etc/agent-action-gateway:ro
+      - gateway-state:/var/lib/agent-action-gateway
+    command: [gateway, --config, /etc/agent-action-gateway/routes.json,
+              --db, /var/lib/agent-action-gateway/gateway.db, --host, "0.0.0.0"]
+    networks: [tools_net, ops_net]
+
+  ops-api:
+    image: python:3.12-slim
+    environment:
+      OPS_API_KEY: ${OPS_API_KEY:?run ./run.sh}
+    volumes:
+      - ./ops_api.py:/app/ops_api.py:ro
+    command: [python, -u, /app/ops_api.py]
+    networks: [ops_net]
+
+  dashboard:
+    <<: *aag
+    user: "1001:1001"
+    environment:
+      AGENT_GATEWAY_DASHBOARD_TOKEN: ${AGENT_GATEWAY_DASHBOARD_TOKEN:?run ./run.sh}
+    volumes:
+      - proxy-state:/var/lib/agent-action-gateway
+    command: [dashboard, --db, /var/lib/agent-action-gateway/proxy.db,
+              --host, "0.0.0.0", --port, "8765",
+              --allow-origin, http://127.0.0.1:8765, --allow-origin, http://localhost:8765]
+    ports: ["127.0.0.1:8765:8765"]
+    networks: [review_net]
+
+volumes:
+  agent-home:
+  proxy-state:
+  gateway-state:
+
+networks:
+  agent_net: { internal: true }
+  tools_net: { internal: true }
+  ops_net: { internal: true }
+  review_net: {}
+  model_net: {}
