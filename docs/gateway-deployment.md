@@ -161,17 +161,19 @@ curl -X POST http://gateway:8080/deploy \
 | `Idempotency-Key` | identifies the effect, so a retry cannot repeat it |
 
 An agent with a key for `/deploy` gets `403` on `/rollback`. An unregistered
-path is refused the same way, so the gateway does not reveal which routes
-exist.
+path gets the same answer (`route not available for this key`), so a scoped key
+cannot tell which routes exist.
 
 ### Status codes
 
 | Status | Meaning | Client should |
 |---|---|---|
+| `400` | the body is not a JSON object | fix the request |
 | `401` | no key, unknown, expired or revoked | re-authenticate; do not retry blindly |
-| `403` | the route is not in this key's scope | request a key with that route |
+| `403` | the route is not in this key's scope, or does not exist | request a key with that route |
 | `403` + `needs_approval: true` | held until a person approves | get an approval, then retry |
 | `502` | the upstream could not be reached | retry later; the action did not happen |
+| `503` | the gateway cannot read the route's credential | the operator fixes the secret (`gateway doctor`); the reason is in the gateway's record, not the reply |
 
 ### Behind the MCP proxy
 
@@ -206,7 +208,8 @@ adds the real credential and makes the call.
 
 `--unix-socket PATH` is the one mode where the kernel backs the custody claim
 directly: the gateway reads the caller's user id and refuses a caller running
-as its own user, whatever key they present. Verified on Linux:
+as its own user, whatever key they present. Checked by hand in a Linux container
+(no automated test covers it, because `SO_PEERCRED` is Linux-only):
 
 | Caller user | Gateway user | Result |
 |---|---|---|
@@ -315,10 +318,16 @@ imports this project could not tell this project's code from an attacker's. It
 exits **2 when it cannot run**, never 0: "could not check" is not "passed".
 
 ```text
+   FAIL  A  no route to a provider
+         REACHABLE api.github.com:443 from the agent's network. An upstream key
+         that leaked for any reason would be usable from here, so this barrier
+         is absent. ...
+
 BOUNDARY NOT HELD: 1 check(s) failed: A  no route to a provider
-  REACHABLE api.github.com:443 from the agent's network. A bypass would
-  succeed here, so no credential boundary exists.
 ```
+
+It exits 0 when every check passes, 1 when one fails, and 2 when any could not
+run.
 
 ### What a green result means
 

@@ -323,7 +323,7 @@ class CallerAuthTest(unittest.TestCase):
         )
         code, body = self._call(policy, "/rollback", "k")
         self.assertEqual(code, 403)
-        self.assertIn("not authorized for route", body)
+        self.assertIn("route not available for this key", body)
 
     def test_unregistered_path_is_refused_before_route_scoping(self) -> None:
         """A path that does not exist must not be distinguishable from one the
@@ -332,7 +332,13 @@ class CallerAuthTest(unittest.TestCase):
         policy.virtual_keys["k"] = VirtualKey(
             key="k", name="limited", routes=frozenset({"/deploy"})
         )
-        code, body = self._call(policy, "/admin", "k")
+        missing = self._call(policy, "/admin", "k")
+        out_of_scope = self._call(policy, "/rollback", "k")
+        self.assertEqual(missing[0], 403)
+        self.assertEqual(missing, out_of_scope)
+
+    def test_an_unscoped_token_is_told_the_route_is_not_registered(self) -> None:
+        code, body = self._call(self._policy(), "/admin", "master-value")
         self.assertEqual(code, 403)
         self.assertIn("route not registered", body)
 

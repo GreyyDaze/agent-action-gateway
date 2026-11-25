@@ -571,12 +571,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
         # An unregistered path is refused outright. A scoped key that is valid
         # for other routes must not be told whether this one exists.
+        # The two refusals give a scoped key the same answer, or the gateway
+        # would tell it which of the paths it may not use really exist.
         route = self.policy.resolve(parsed.path)
+        if virtual_key is not None and (route is None or route.path not in virtual_key.routes):
+            self._denied(403, "route not available for this key")
+            return
         if route is None:
             self._denied(403, "route not registered")
-            return
-        if virtual_key is not None and route.path not in virtual_key.routes:
-            self._denied(403, f"virtual key not authorized for route: {parsed.path}")
             return
 
         try:
