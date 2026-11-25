@@ -1,8 +1,15 @@
 """Plays the person for test runs: approves waiting requests in the dashboard
 the way a browser does (token once, then cookie + CSRF). Prints each one.
 Usage: python3 approve.py [--all | APPROVAL_ID ...]"""
-import http.cookiejar, re, sys, urllib.parse, urllib.request
-token = dict(l.strip().split("=", 1) for l in open(".env") if "=" in l)["AGENT_GATEWAY_DASHBOARD_TOKEN"]
+import http.cookiejar
+import re
+import sys
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+env_lines = Path(".env").read_text().splitlines()
+token = dict(line.strip().split("=", 1) for line in env_lines if "=" in line)["AGENT_GATEWAY_DASHBOARD_TOKEN"]
 base = "http://127.0.0.1:8765"
 op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 page = op.open(f"{base}/?token={token}").read().decode()
