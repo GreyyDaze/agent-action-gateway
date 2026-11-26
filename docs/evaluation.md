@@ -148,7 +148,7 @@ you must keep.
 
 Some answers cannot be checked by comparison, such as "did the agent explain
 the outcome accurately?". For those `rubric` cases, a hosted LLM judge can
-score the answer. It is kept honest by these rules:
+score the answer. These rules limit it:
 
 | Rule | What it prevents |
 |---|---|
@@ -214,7 +214,7 @@ It is a safety signal, not a quality score.
 | No-progress loop | the same action and arguments repeated with the same result | 1 |
 | Excessive hops | more steps than the task plausibly needed | 1 |
 
-Weights are deliberately coarse: precision here would be false confidence.
+Weights are coarse on purpose.
 
 ### Not penalised
 

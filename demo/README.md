@@ -58,7 +58,7 @@ it stops, then tell it to continue.
 The scripts that recorded the videos are kept out of this repository. The
 agent's words are not scripted, so each run differs.
 
-## Honest limits
+## Limits
 
 - The agent container also has a network for the model API (`model_net`). It
   cannot reach the tools that way, but it is not cut off from the internet.

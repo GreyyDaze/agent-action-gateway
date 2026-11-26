@@ -61,8 +61,8 @@ the key, or one that can reach the provider with it. You need both of these:
 | Launched as root | **Enforced**: drops to a service account first |
 | Caller runs as the gateway's own user (Linux, unix socket) | **Enforced**: rejected using the kernel's `SO_PEERCRED` |
 | Embedded in an agent's script | **Signalled**, not guaranteed: an embed through `python -c`, `exec()` or a REPL is not detected |
-| Agent cannot reach a provider | **Not checkable here**: it is a network fact; run `make verify-boundary` |
-| Agent actually uses the gateway | **Not checkable here**: run `agent-gateway check --app` |
+| Agent cannot reach a provider | **Not checked by the gateway**: it is a network fact, so test it from the agent's side ([how](#checking-your-deployment)) |
+| Agent actually uses the gateway | **Not checked by the gateway**: run `agent-gateway check --app` |
 
 ## Choosing a setup
 
@@ -103,7 +103,7 @@ Plain Compose cannot allow one host and block the rest, so there are two files:
 |---|---|---|
 | Agent reaches a model API | no | yes |
 | A leaked key is usable from the agent | no | **yes** |
-| `make verify-boundary` | `BOUNDARY HELD` | fails, correctly |
+| `verify-boundary` | `BOUNDARY HELD` | fails, correctly |
 
 The default fails closed on purpose. Turning egress on is legitimate, but the
 guarantee then rests on your credentials and provider settings, not on the
@@ -309,13 +309,16 @@ Two commands, answering different questions:
 | Command | Runs from | Checks | Cannot check |
 |---|---|---|---|
 | `agent-gateway gateway doctor --config routes.json` | the gateway host | its user, the owner and mode of every secret file (routes and the `credentials` block), master key, bind address (beyond this machine is a warning) | whether the agent can reach a provider; the MCP proxy |
-| `make verify-boundary` | the agent's network | can it reach a provider, read the secret, or call without a key? | whether the agent behaves correctly |
-| `make verify-proxy-boundary` | the agent's network | the same for the proxy: can it skip the proxy, call it without a token, or read its config and database? | whether the agent behaves correctly |
+| `agent-gateway verify-boundary --gateway URL --key KEY` | the agent's machine or network | can it reach a provider, read the secret, or call without a key? | whether the agent behaves correctly |
+| `agent-gateway verify-boundary --target proxy --proxy URL --token TOKEN` | the agent's machine or network | the same for the proxy: can it skip the proxy, call it without a token, or read its config and database? | whether the agent behaves correctly |
 
-`make verify-boundary` attaches a temporary container to your agent's network
-and tries to escape. It uses only the standard library, because a probe that
-imports this project could not tell this project's code from an attacker's. It
-exits **2 when it cannot run**, never 0: "could not check" is not "passed".
+Run the probe where the agent runs, because the result describes the network it
+runs on. It tries to reach a provider and the secret from there. It uses only
+the standard library, and its file imports nothing from this package, so it also
+runs as a single file in a bare Python container. It exits **2 when it cannot
+run**, never 0: "could not check" is not "passed". In the repository,
+`make verify-boundary` and `make verify-proxy-boundary` run it from a container
+on the Compose setup's agent network.
 
 ```text
    FAIL  A  no route to a provider
@@ -333,7 +336,7 @@ run.
 
 | Result | Proves | Does **not** prove |
 |---|---|---|
-| `make verify-boundary` passes | the network blocks direct provider access | that the agent uses the gateway |
+| `verify-boundary` passes | the network blocks direct provider access | that the agent uses the gateway |
 | `agent-gateway check --app` passes | the agent's code routes through the gateway | that the network holds |
 | **Both pass** | boundary **and** wiring | — |
 
@@ -354,20 +357,17 @@ The gateway's own attack surface is where it holds authority:
 
 ## Known limitations
 
-Stated plainly, because a security tool that overstates itself is worse than
-none:
-
 | Limitation | What to do |
 |---|---|
 | Only tools obtained from a `session()` are checked | run `agent-gateway check --app` to find direct calls |
 | A record cannot show an action that never reached the gateway | use `check --app` (static); `check --db` reports `INCONCLUSIVE` on an empty database |
 | Bypass detection covers known provider clients and direct network calls | an unusual call shape may go unnoticed |
 | In the same process, code can reach the database and the key directly | use the self-hosted gateway |
-| Custody depends on the deployment, not the code | follow a setup above, and run `make verify-boundary` |
+| Custody depends on the deployment, not the code | follow a setup above, and run `agent-gateway verify-boundary` |
 | Recorded prompts keep anything redaction does not recognise (names, free text) | prune with `agent-gateway prune`; nothing is deleted automatically |
-| Approval evidence is the newest 10 reads through the library or proxy, so a proxy shared by several agents mixes their reads, and what an agent reads with its own tools is not seen | give each agent its own proxy if the evidence must be per agent; run the agent where the proxy is its only route |
+| Approval evidence is the newest 10 reads through the library or proxy, so a proxy shared by several agents mixes their reads, and what an agent reads with its own tools is not seen | give each agent its own proxy if the evidence must be per agent; run the agent where the proxy is its only route. Planned: [named agents](sdk.md#planned-named-agents) |
 | Approval evidence keeps what redaction does not recognise, and `prune` does not remove it | for a read tool that returns personal data, turn collection off (`auto_evidence=False`, or `"auto_evidence": false` in the proxy config) |
 | No transport encryption is enforced | use `https` upstreams in production |
-| An approval is not tied to the session that asked for it | deliberate: it allows approving ahead of time; approvals are still single-use and payload-bound |
+| An approval is not tied to the session that asked for it | deliberate: it allows approving ahead of time; approvals are still single-use and payload-bound. On a shared proxy any agent can use it; planned: [tie it to the agent](sdk.md#planned-named-agents) |
 | A failed action still uses up its approval | deliberate: a partial effect cannot always be ruled out, so the retry needs a fresh approval |
 | Not independently audited | the evidence is automated: `make proof`, `agent-gateway check`, and CI on Python 3.11 to 3.13 |

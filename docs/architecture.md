@@ -36,7 +36,7 @@ flowchart TD
 |---|---|
 | `policy/` | rules: risk, approval, limits, stop-and-ask, effect fingerprints |
 | `engine/` | `enforce()`, the checking pipeline |
-| `guards/` | redaction, capture policy, honest run status, the SQL read check |
+| `guards/` | redaction, capture policy, run status, the SQL read check |
 | `runtime/` | `session()`, records, lower-level dispatch helpers |
 | `credential/` | placeholder vault, secret resolvers, outbound host checks |
 | `integrations/` | MCP proxy (stdio, or HTTP with `mcp-connect`), HTTP gateway, route-based MCP server, provider interface |

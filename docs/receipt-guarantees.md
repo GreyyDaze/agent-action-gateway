@@ -64,9 +64,9 @@ flowchart TD
 | `resolved` | settled by `resolve_unknown()`: it had landed | gets the recorded result |
 | `failed` | the effect did not land | may run, reusing this receipt |
 
-A receipt left `pending` is the honest state after a crash: nobody knows
-whether the action landed. Running it again risks a duplicate, and reporting
-success risks a lie, so the gateway refuses both until it is resolved.
+A receipt left `pending` after a crash means nobody knows whether the action
+landed. Running it again risks a duplicate and reporting success may be wrong, so
+the gateway refuses both until a person resolves it.
 
 ## Resolving an unknown outcome
 
@@ -79,7 +79,7 @@ using the intent key it was sent with:
 | Lookup by key, no idempotency | at most once: checked before any retry |
 | Neither | no automatic retry; a person resolves it |
 
-We do not claim exactly-once execution when the external system cannot support
+Exactly-once execution is not possible when the external system cannot support
 or verify it. A receipt with no persisted target cannot be replayed; the
 resolver raises `UnresolvableReceiptError` and asks for manual review rather
 than guessing.

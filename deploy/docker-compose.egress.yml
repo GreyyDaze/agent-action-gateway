@@ -31,9 +31,8 @@
 # that a leaked key would work from where your agent sits. A green run means the
 # default is in place.
 #
-# The honest summary: this file moves the burden from the network to your
-# credentials and your provider configuration. That is a legitimate design. It is
-# not the same guarantee, and it should not be described as one.
+# This file moves the protection from the network to your credentials and your
+# provider configuration. It is not the same guarantee.
 
 services: {}
 

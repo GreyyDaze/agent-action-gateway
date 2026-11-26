@@ -13,6 +13,7 @@ records what happened.
 - [Recording](#recording)
 - [Other ways in](#other-ways-in)
 - [Storage and dashboard](#storage-and-dashboard)
+- [Planned: named agents](#planned-named-agents)
 - [Limits of the SDK](#limits-of-the-sdk)
 
 ## Sessions
@@ -716,6 +717,18 @@ Restarting the dashboard invalidates open forms, and a printed token, on purpose
 To share it beyond one machine, put a TLS reverse proxy with its own sign-in in
 front of it.
 
+## Planned: named agents
+
+Not built. One MCP proxy is one session, so agents on it share one budget, one
+list of read results and the approvals: an approval can show another agent's
+reads, and any agent can use an approval given for the same action and arguments.
+
+The idea is to give each agent a name and a token in the proxy config, keep the
+reads per agent, make an approval work only for the agent it was asked for, and
+show the agent's name on the approval card. The budget and the dashboard would
+stay shared. It would tell agents apart only by their token, which does not prove
+who an agent is. Until then, run one proxy per agent.
+
 ## Limits of the SDK
 
 | It does not | Because |
@@ -726,6 +739,7 @@ front of it.
 | control the agent's model calls | your application owns them |
 | keep a key from an agent in the same process | that needs the [self-hosted gateway](gateway-deployment.md) |
 | see what an agent does with its own tools (a coding agent's file or shell tools) | only calls through the library or the proxy are checked and collected as evidence |
+| tell agents apart on one shared proxy | all agents on a proxy share one budget, one list of reads and the approvals (planned: [named agents](#planned-named-agents)); run one proxy per agent until then |
 | record the agent's screen or browser | the timeline records each checked call, not a video |
 
 For the release gate and run scoring, see [evaluation.md](evaluation.md).
