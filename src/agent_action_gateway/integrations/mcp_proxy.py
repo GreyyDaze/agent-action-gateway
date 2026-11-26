@@ -499,7 +499,7 @@ class StdioDownstream:
             {
                 "protocolVersion": SUPPORTED_PROTOCOLS[-2],
                 "capabilities": {},
-                "clientInfo": {"name": "agent-action-gateway-proxy", "version": "0.3.0"},
+                "clientInfo": {"name": "agent-action-gateway-proxy", "version": "0.4.0"},
             },
         )
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -663,7 +663,7 @@ class HttpDownstream:
             {
                 "protocolVersion": self._protocol,
                 "capabilities": {},
-                "clientInfo": {"name": "agent-action-gateway-proxy", "version": "0.3.0"},
+                "clientInfo": {"name": "agent-action-gateway-proxy", "version": "0.4.0"},
             },
         )
         negotiated = result.get("protocolVersion") if isinstance(result, dict) else None
@@ -1852,7 +1852,7 @@ class ProxyServer:
             return _rpc(request_id, {
                 "protocolVersion": version,
                 "capabilities": {"tools": {"listChanged": True}},
-                "serverInfo": {"name": "agent-action-gateway", "version": "0.3.0"},
+                "serverInfo": {"name": "agent-action-gateway", "version": "0.4.0"},
             })
         if method == "notifications/initialized":
             self._initialized = True

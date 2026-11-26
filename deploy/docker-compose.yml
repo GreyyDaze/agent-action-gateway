@@ -30,7 +30,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.gateway
-    image: ghcr.io/greyydaze/agent-action-gateway:0.3.0
+    image: ghcr.io/greyydaze/agent-action-gateway:0.4.0
     restart: unless-stopped
     # Non-root, so the process that would have to be compromised is not root.
     # The gateway also refuses to read a world-readable secret.

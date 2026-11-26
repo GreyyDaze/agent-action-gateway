@@ -338,7 +338,7 @@ There is no hosted version. Everything runs on your machines, and nothing is sen
 pip install agent-action-gateway
 ```
 
-Or the Docker image (amd64 and arm64): `docker pull ghcr.io/greyydaze/agent-action-gateway:0.3.0`.
+Or the Docker image (amd64 and arm64): `docker pull ghcr.io/greyydaze/agent-action-gateway:0.4.0`.
 
 | To | Run |
 |---|---|
