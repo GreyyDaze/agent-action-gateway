@@ -1,10 +1,8 @@
 """A stable identity for an effect, independent of run and attempt.
 
-The receipt key used to be `{run_id}:{step_id}`, which makes it unique per run
-and therefore useless for deduplication: a retry after a crash gets a new run,
-a second worker gets a new run, and the same action issued twice gets two
-different keys. Nothing collides, so `ON CONFLICT` never fires and the action
-runs again.
+A key built from the run and step (`{run_id}:{step_id}`) is unique per run, so it
+cannot deduplicate: a retry after a crash or a second worker gets a new run and
+a different key.
 
 This module produces a key from what the action *is* rather than when it was
 attempted. Two claims of the same effect produce the same key, on any host, in

@@ -1,8 +1,6 @@
 """The golden set loader must accept an adopter's own data, not just ours.
 
-The loader previously required exactly the number of cases in the shipped
-example file. That number described the example, not a requirement of the
-evaluation method, so it made an adopter's own set unloadable.
+The loader does not require the number of cases in the shipped example file.
 
 These tests pin the behaviour that matters: any sufficiently large set loads,
 and the floor exists to protect the baseline comparison rather than to

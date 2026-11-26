@@ -10,7 +10,7 @@ Layout:
 
     policy/        pure decisions: risk, approval, budgets, stop rules, hashes
     engine/        the one enforcement pipeline
-    guards/        redaction, capture policy, honest status
+    guards/        redaction, capture policy, run status
     runtime/       run orchestration
     credential/    key custody and outbound host checks
     integrations/  MCP proxy, HTTP gateway, in-process adapters

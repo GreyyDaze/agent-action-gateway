@@ -1,12 +1,9 @@
 """Online eval is report-only unless someone explicitly promotes it.
 
-The failure this guards against is specific and common: an online judge starts
-failing CI on noise, the team switches it off, and the signal is gone. So the
-default has to be incapable of blocking, and the guarantee is tested rather than
-asserted in a docstring.
+An online judge that fails CI on noise gets switched off, so the default must be
+incapable of blocking. That is tested here.
 
-Determinism matters too. A report you cannot reproduce is an argument, not
-evidence.
+The report must also be reproducible.
 """
 
 from __future__ import annotations
@@ -130,7 +127,7 @@ class HumanDisagreementTest(unittest.TestCase):
         self.assertIn("disagreement", render(report, promote=False).lower())
 
 
-class HonestyTest(unittest.TestCase):
+class SmallSampleTest(unittest.TestCase):
     def test_too_small_a_sample_says_so_and_does_not_fail(self) -> None:
         runs = {f"r{i:02d}": clean_run(f"r{i:02d}") for i in range(12)}
         report = assess(runs, sample=0.05, seed=0)

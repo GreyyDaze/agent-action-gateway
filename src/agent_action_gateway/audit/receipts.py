@@ -23,10 +23,9 @@ class UnresolvableReceiptError(RuntimeError):
 class EffectInFlight(RuntimeError):
     """The effect was claimed by another attempt that has not finished.
 
-    This is the honest state. A crash between claiming and completing leaves
-    the receipt `pending`, and whether the action landed is genuinely unknown.
-    Raising is correct: executing again risks a duplicate, and reporting
-    success risks a lie. A person settles it with `agent-gateway receipts
+    A crash between claiming and completing leaves the receipt `pending`, and
+    whether the action landed is unknown. Executing again risks a duplicate, and
+    reporting success may be wrong. A person settles it with `agent-gateway receipts
     settle`, or `resolve_unknown()` asks a provider that can look it up.
     """
 

@@ -1,8 +1,8 @@
 """Retention: discarding a payload must never look like never having had one.
 
 Prompts and completions are several times larger than the rest of a trace row,
-so a system recording exchanges grows fast. That is a real problem. Deleting an
-audit trail by surprise is a worse one.
+so a system recording exchanges grows fast. Retention bounds that without
+losing track of what was discarded.
 
 The contract these tests hold:
 

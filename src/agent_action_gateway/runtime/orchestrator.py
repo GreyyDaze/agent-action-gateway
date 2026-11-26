@@ -9,7 +9,7 @@ from typing import Any
 
 from agent_action_gateway.engine.enforcement import EnforcementContext, enforce
 from agent_action_gateway.guards.capture import suspicious_flags
-from agent_action_gateway.guards.status import honest_status
+from agent_action_gateway.guards.status import run_status
 from agent_action_gateway.integrations.adapters.base import ExternalActionProvider
 from agent_action_gateway.policy.cross_check import CrossCheckSpec, perform_cross_check
 from agent_action_gateway.policy.fuses import FuseController, FuseTrippedError
@@ -201,7 +201,7 @@ def execute_tool(
         cross_check=cross_check,
     )
     trace_flags = suspicious_flags(empty_result=not bool(result))
-    evidence_status = honest_status(
+    evidence_status = run_status(
         blocked=result_decision.decision != "CONTINUE",
         suspicious=bool(trace_flags),
     )

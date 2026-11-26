@@ -4,8 +4,7 @@ The crash-safety proof exercises `dispatch_external_action` directly. This
 file proves the adopter-facing path - a guarded tool obtained from a session -
 survives the same crashes without duplicating a side effect.
 
-If this ever fails, the adoption path has diverged from the proven one, which
-is the exact failure this feature exists to prevent.
+If this fails, the adoption path has diverged from the proven one.
 """
 
 from __future__ import annotations

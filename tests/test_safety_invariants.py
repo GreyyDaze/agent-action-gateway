@@ -32,8 +32,7 @@ from agent_action_gateway.storage.traces import TraceStore
 class ReceiptRecoveryTargetTest(unittest.TestCase):
     """An uncertain side effect must be resolvable, never a KeyError.
 
-    The resolver previously read `arguments["deployment_id"]`, so any approved
-    payload that did not literally carry a deployment_id crashed crash recovery.
+    The resolver must not require a `deployment_id` in the approved payload.
     """
 
     def test_recovery_works_for_payload_without_a_target(self) -> None:
@@ -104,9 +103,8 @@ class RedactionPreservesEvidenceTest(unittest.TestCase):
 class DashboardApprovalBoundaryTest(unittest.TestCase):
     """The approval queue is the human trust boundary; POSTs must not be forgeable.
 
-    Any website the operator visits could previously POST an approval form and
-    authorize a destructive action, because the endpoints had no CSRF token, no
-    origin check, and no security headers.
+    The endpoints need a CSRF token, an origin check and security headers, so a
+    website the operator visits cannot POST an approval.
     """
 
     def setUp(self) -> None:

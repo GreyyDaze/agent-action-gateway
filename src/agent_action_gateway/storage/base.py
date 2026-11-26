@@ -1,11 +1,7 @@
 """Shared persistence base, for SQLite and PostgreSQL alike.
 
-Four stores previously duplicated connection setup, schema creation and
-hand-rolled `PRAGMA table_info` migration loops. That produced four migration
-strategies, twelve tables with no version marker, and a connection lifecycle
-that relied on CPython reference counting to close handles.
-
-This module centralizes all three concerns:
+Connection setup, schema creation and migrations are shared by every store.
+This module provides all three:
 
 - one connection policy (WAL, busy timeout) applied once;
 - connections that are always closed, via `closing()` rather than the bare

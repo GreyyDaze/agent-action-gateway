@@ -97,7 +97,7 @@ class BudgetTest(unittest.TestCase):
 
     def test_a_fuse_is_not_double_counted_as_a_refused_action(self) -> None:
         """A tripped loop budget and a held destructive action are different
-        failures. Conflating them overstates what happened."""
+        failures."""
         result = score(
             [step("enforcement.fuse", status="blocked", payload="rollback", result="loop detected")]
         )
@@ -126,7 +126,7 @@ class RequiredStepTest(unittest.TestCase):
 
 
 class NotPenalisedTest(unittest.TestCase):
-    """The negative cases. These keep the score honest."""
+    """The negative cases: behaviour that must not lower the score."""
 
     def test_verbosity_alone_is_not_a_signal(self) -> None:
         rows = [decision(f"act-{i}", step_no=i, args={"n": i}) for i in range(10)]

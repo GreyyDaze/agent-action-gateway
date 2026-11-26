@@ -152,7 +152,7 @@ class DashboardRenderTest(unittest.TestCase):
         self.assertNotIn("no gate verdicts", text)
 
     def test_a_refused_action_is_visible_with_its_reason(self) -> None:
-        """The whole point of the page: what was refused, and why."""
+        """The page shows what was refused, and why."""
         self._populate()
         text = _soup(self._get())
         self.assertIn("patch.deployment", text)
@@ -274,9 +274,6 @@ class ViewModelTest(unittest.TestCase):
     def test_a_run_reports_its_worst_step_not_its_last(self) -> None:
         """A run that blocked something and then finished is not 'completed'.
 
-        Reporting it as completed is the sort of tidy lie this project exists
-        to prevent, and it is the one most likely to be introduced by a
-        well-meaning refactor of the status logic.
         """
         store = TraceStore(self.db)
         with session(store=store) as ctx:

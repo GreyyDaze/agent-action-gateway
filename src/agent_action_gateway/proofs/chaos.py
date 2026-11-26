@@ -217,7 +217,7 @@ def run_dedupe_proof(jobs: int) -> tuple[int, int]:
     The result is the number of provider actions taken. One effect claimed a
     thousand times must produce exactly one action, whatever the crash
     distribution and whatever the per-attempt key would have been -- and
-    per-attempt keys are all different here, which is the point.
+    per-attempt keys are all different here.
     """
     context = multiprocessing.get_context("spawn")
 

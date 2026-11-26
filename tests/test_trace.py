@@ -4,7 +4,7 @@ from pathlib import Path
 
 from agent_action_gateway.guards.capture import classify_capture, suspicious_flags
 from agent_action_gateway.guards.redaction import redact
-from agent_action_gateway.guards.status import honest_status
+from agent_action_gateway.guards.status import run_status
 from agent_action_gateway.runtime.records import TraceEvent
 from agent_action_gateway.storage.traces import TraceStore
 
@@ -139,11 +139,11 @@ class TraceEvidenceTests(unittest.TestCase):
             self.assertEqual(replay["replay_of_trace_id"], original_id)
             self.assertNotEqual(replay["id"], original_id)
 
-    def test_honest_status_never_uses_agent_success_claim(self) -> None:
-        self.assertEqual(honest_status(), "ok")
-        self.assertEqual(honest_status(suspicious=True), "degraded")
-        self.assertEqual(honest_status(blocked=True), "blocked")
-        self.assertEqual(honest_status(error=True), "degraded")
+    def test_run_status_never_uses_agent_success_claim(self) -> None:
+        self.assertEqual(run_status(), "ok")
+        self.assertEqual(run_status(suspicious=True), "degraded")
+        self.assertEqual(run_status(blocked=True), "blocked")
+        self.assertEqual(run_status(error=True), "degraded")
 
 
 

@@ -4,10 +4,8 @@ This file is the definition of done for the Enforcement Integration feature. It
 drives only the documented public API and asserts that an agent acting against
 its own interest is stopped by the safety layer.
 
-The failure this file exists to prevent: every enforcement primitive worked, and
-none of them sat on the path an adopter's agent actually takes. Phase proofs
-drove `dispatch_external_action` directly and were green, while
-`run(agent, task)` enforced nothing.
+These tests go through `run(agent, task)`, the path an adopter's agent takes,
+not the enforcement functions directly.
 
 Rules that shape these tests:
 
@@ -192,7 +190,7 @@ class AdoptionContractTest(unittest.TestCase):
         self.assertEqual(outcome["decision"], "ENVIRONMENT")
         self.assertEqual(self.provider.call_count, 0)
 
-    # -- 6. honest status --------------------------------------------------
+    # -- 6. run status --------------------------------------------------
 
     def test_6_blocked_run_is_not_reported_as_clean_completion(self) -> None:
         """The agent saying 'done' must not override a blocked step."""

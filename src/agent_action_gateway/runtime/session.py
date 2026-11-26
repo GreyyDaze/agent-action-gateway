@@ -13,8 +13,7 @@ The contract is deliberately small:
 
 Everything is on by default. A caller who passes nothing still gets budgets,
 approval on every action except reads, receipts and cross-environment blocking. Opting
-out has to be explicit, because a silent default is the failure this project
-exists to prevent.
+out has to be explicit.
 """
 
 from __future__ import annotations
@@ -501,8 +500,8 @@ class SafetySession:
             # effect claim blocks the second call either way.
             if decision.deduplicated:
                 # The effect already landed in an earlier run. The recorded
-                # outcome is the answer; calling the function again is the
-                # duplicate this whole path exists to prevent.
+                # outcome is the answer; calling the function again would
+                # run it twice.
                 return {
                     "status": "allowed",
                     "decision": "DEDUPLICATED",

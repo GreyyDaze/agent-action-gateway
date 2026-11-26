@@ -8,8 +8,7 @@ This module samples completed runs from a live trace database and reports what
 it finds. It is deliberately **report-only**:
 
 - It never blocks by default. An online judge is stochastic and unproven
-  against a human, and a gate that fires on noise gets switched off within a
-  week -- which is worse than no gate.
+  against a human, and a gate that fires on noise gets switched off.
 - Promotion is an explicit flag, so turning it on is a visible decision someone
   made rather than a default nobody chose.
 - Every judge/human disagreement is reported rather than averaged away. A judge

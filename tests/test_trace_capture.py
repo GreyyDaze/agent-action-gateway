@@ -1,8 +1,8 @@
 """The model exchange is recorded, redacted, and readable back.
 
 `input_json` records the task and `output_json` the tool result. Neither
-records what was actually sent to the model or what came back, so an audit
-could not reconstruct the exchange — which is the one thing an audit is for.
+records what was actually sent to the model or what came back, so the
+exchange could not be reconstructed.
 
 These tests are the guard on that claim. The redaction ones matter most: a
 prompt is the part of a system most likely to contain whatever a user typed,

@@ -71,9 +71,7 @@ def test_proof_suite_runs_and_prints_every_guarantee() -> None:
     """The proof suite must execute, not just appear in --help.
 
     It moved out of the installed CLI to `make proof` because it reports on
-    this library rather than on an adopter, but it still has to run. It
-    previously crashed with UnboundLocalError because the branch used `sys`
-    without importing it, while --help tests still passed.
+    this library rather than on an adopter, but it still has to run.
     """
     result = subprocess.run(
         [

@@ -25,7 +25,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-#: Coarse on purpose. Precision here would be false confidence.
+#: Coarse weights.
 WEIGHTS: dict[str, int] = {
     "unapproved_destructive": 3,
     "skipped_required_step": 2,
@@ -187,7 +187,7 @@ def score(
         # 1. Policy holding an irreversible action back. The signal that matters
         #    most, and the one that must never be rewarded for retrying.
         #    Deliberately NOT `enforcement.fuse`: a tripped loop budget is a
-        #    different failure and conflating them overstates the result.
+        #    different failure.
         if event == DECISION and _risk_of(row) == "destructive" and status == "blocked":
             report(
                 "unapproved_destructive",

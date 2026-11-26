@@ -158,9 +158,7 @@ class GatewayTest(unittest.TestCase):
         """A secret that cannot be read must produce a reply, not a dead socket.
 
         `credential()` still raises, which is what the store-level tests assert;
-        what changed is that `handle` answers with a refusal. Previously the
-        exception escaped into the HTTP handler thread and the caller received
-        nothing, so an unreadable secret looked like a dropped connection.
+        `handle` answers with a refusal instead of letting the exception escape.
         """
         gateway = self._gateway()
         approval, payload = self._approve(gateway)

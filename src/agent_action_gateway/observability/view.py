@@ -107,8 +107,7 @@ def build_run_view(snapshot: Mapping[str, Any], run_id: str | None) -> dict[str,
             run_index.append({"run_id": rid, "status": str(trace.get("status") or "")})
 
     # A run's status is its worst step, not its last. A run that blocked an
-    # action and then finished cleanly is a blocked run, and reporting it as
-    # completed would be the sort of tidy lie this project exists to prevent.
+    # action and then finished cleanly is a blocked run.
     by_run: dict[str, list[dict[str, Any]]] = _group_by_run(all_traces)
     for entry in run_index:
         steps = by_run.get(entry["run_id"], [])

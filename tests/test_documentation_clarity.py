@@ -1,6 +1,6 @@
 """Documentation and packaging clarity.
 
-Two failure modes are checked here, both of which have already happened once:
+Two things are checked here:
 
 1. Internal identifiers leaking into files a reader outside the project sees.
    The proof output was labelled `P1`-`P6`, which meant nothing until you read

@@ -1,7 +1,7 @@
 """The MCP surface must not be a second, weaker policy path.
 
-The whole point of routing MCP calls through `SafetyGateway.handle` is that
-arriving over MCP instead of HTTP buys the caller nothing. These tests assert
+MCP calls go through `SafetyGateway.handle`, so arriving over MCP instead of
+HTTP buys the caller nothing. These tests assert
 that property directly by performing the same action through both doors and
 comparing what was written.
 
@@ -195,11 +195,7 @@ class ParityTest(BridgeTestBase):
                 self.assertEqual(row["enforcement"], "enforced")
 
     def test_a_held_action_is_recorded_over_both_doors(self) -> None:
-        """The gateway used to refuse an approval-required action in silence.
-
-        An operator asking whether anything tried to deploy got an empty
-        answer. Both doors must now leave the same evidence of the hold.
-        """
+        """Both doors leave the same record of a held action."""
         self._via_http("/deploy", {"revision": 100})
         store2 = TraceStore(Path(self._tmp.name) / "second.db")
         bridge = MCPToolBridge.from_policy(store2, self.policy)

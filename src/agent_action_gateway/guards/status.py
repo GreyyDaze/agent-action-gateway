@@ -1,11 +1,11 @@
-"""Honest run status derived from evidence.
+"""Run status derived from evidence.
 
 A provider or agent success claim is not proof of a correct result, so status
 is computed from recorded evidence rather than from what the agent reported.
 """
 
 
-def honest_status(
+def run_status(
     *,
     blocked: bool = False,
     suspicious: bool = False,

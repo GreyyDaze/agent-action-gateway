@@ -1,9 +1,7 @@
 """The single enforcement pipeline.
 
 Every guarded action, whichever adapter or interface it arrives through, crosses
-this function exactly once. That is the whole point: the primitives were correct
-but each caller assembled them differently, so enforcement existed without being
-on anyone's path.
+this function exactly once.
 
 Ordering is deliberate and load-bearing:
 
@@ -13,7 +11,7 @@ Ordering is deliberate and load-bearing:
 4. approval             - bound to exact arguments, expiring, single use
 5. dispatch             - receipt write-before, provider call, write-after
 6. result validation    - check what came back against the stop rules
-7. evidence             - trace and honest status
+7. evidence             - trace and run status
 
 Steps 1-4 never call the provider. A failure at any of them means zero side
 effects, which is what makes the pipeline safe to fail closed.
@@ -32,7 +30,7 @@ from agent_action_gateway.audit.receipts import (
     outcome_is_unknown,
 )
 from agent_action_gateway.guards.capture import suspicious_flags
-from agent_action_gateway.guards.status import honest_status
+from agent_action_gateway.guards.status import run_status
 from agent_action_gateway.integrations.adapters.base import ExternalActionProvider
 from agent_action_gateway.policy.fuses import FuseController, FuseTrippedError
 from agent_action_gateway.policy.locks import (
@@ -124,9 +122,8 @@ class Decision:
     needs_approval: bool = False
     #: True when the result was empty or contradicted and needs a second source.
     cross_check_required: bool = False
-    #: The original refusal, so an adapter that previously raised a specific
-    #: exception type keeps raising it. Flattening these would change the
-    #: documented contract for every existing caller.
+    #: The original refusal, so an adapter can raise the same exception type
+    #: it always has.
     exc: BaseException | None = None
 
     @property
@@ -201,7 +198,7 @@ def enforce(ctx: EnforcementContext) -> Decision:
         except FuseTrippedError as exc:
             _trace(ctx, "enforcement.fuse", str(exc), BLOCKED)
             return Decision(BLOCKED, "FUSE", error=str(exc), risk=risk, exc=exc,
-                            evidence_status=honest_status(blocked=True))
+                            evidence_status=run_status(blocked=True))
 
     # 3. Environment, before authorization or dispatch.
     try:
@@ -212,7 +209,7 @@ def enforce(ctx: EnforcementContext) -> Decision:
     except CrossEnvironmentError as exc:
         _trace(ctx, "enforcement.environment", str(exc), BLOCKED)
         return Decision(BLOCKED, "ENVIRONMENT", error=str(exc), risk=risk, exc=exc,
-                        evidence_status=honest_status(blocked=True))
+                        evidence_status=run_status(blocked=True))
 
     # 4. Approval, bound to exact arguments, consumed on use.
     if ctx.approval_store is not None and risk != "read":
@@ -244,7 +241,7 @@ def enforce(ctx: EnforcementContext) -> Decision:
                 # The refusal is actionable: the agent can request an approval.
                 needs_approval=ctx.approval_id is None,
                 exc=blocked,
-                evidence_status=honest_status(blocked=True),
+                evidence_status=run_status(blocked=True),
             )
 
     # 5. dispatch. The provider is unreachable until every check above passes.
@@ -302,7 +299,7 @@ def enforce(ctx: EnforcementContext) -> Decision:
             return Decision(
                 BLOCKED, "DEDUPLICATED", error=str(exc), risk=risk,
                 flags=("effect-already-claimed",),
-                evidence_status=honest_status(blocked=True),
+                evidence_status=run_status(blocked=True),
             )
 
     if ctx.provider is not None and ctx.target is not None and ctx.records_receipt:
@@ -323,7 +320,7 @@ def enforce(ctx: EnforcementContext) -> Decision:
             _trace(ctx, "enforcement.fuse", str(exc), BLOCKED)
             return Decision(BLOCKED, "FUSE", error=str(exc), risk=risk, exc=exc,
                             provider_ref=provider_ref,
-                            evidence_status=honest_status(blocked=True))
+                            evidence_status=run_status(blocked=True))
 
     # 6/7. evidence. A provider reference is evidence, not a validated result:
     # stop rules apply to data the agent will act on, so a dispatched side
@@ -343,7 +340,7 @@ def enforce(ctx: EnforcementContext) -> Decision:
         flags=flags,
         provider_ref=provider_ref,
         _intent_key=intent_key,
-        evidence_status=honest_status(suspicious=bool(flags)),
+        evidence_status=run_status(suspicious=bool(flags)),
     )
 
 
@@ -415,5 +412,5 @@ def validate_result(
         flags=tuple(outcome.flags),
         missing=tuple(outcome.missing),
         cross_check_required=outcome.cross_check_required,
-        evidence_status=honest_status(blocked=blocked, suspicious=bool(flags)),
+        evidence_status=run_status(blocked=blocked, suspicious=bool(flags)),
     )

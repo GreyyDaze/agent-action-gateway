@@ -344,10 +344,7 @@ class SafetyGateway:
                 # indistinguishable from "your key is invalid", and a real client
                 # cannot tell whether to request an approval or re-authenticate.
                 #
-                # Traced before returning. This branch used to return silently,
-                # so an action held here left no evidence at all -- an operator
-                # asking "did anything try to deploy?" got an empty answer, which
-                # is the exact failure this project exists to prevent.
+                # Traced before returning, so an action held here leaves a record.
                 self._trace(
                     "gateway.held",
                     {
@@ -425,7 +422,7 @@ class SafetyGateway:
         self, route: Route, arguments: dict[str, Any], key: str, approval_id: str | None
     ) -> Decision:
         """Run policy only. The upstream call happens after this returns."""
-        from agent_action_gateway.guards.status import honest_status
+        from agent_action_gateway.guards.status import run_status
 
         risk = self.registry.classify(route.action)
         if risk == "read":
@@ -447,7 +444,7 @@ class SafetyGateway:
             approval_id=approval_id,
         )
         return Decision("allowed", "ALLOW", risk=risk,
-                         evidence_status=honest_status())
+                         evidence_status=run_status())
 
     def _trace(self, event: str, payload: Mapping[str, Any], decision: Any = None) -> None:
         output: dict[str, Any] = dict(payload)

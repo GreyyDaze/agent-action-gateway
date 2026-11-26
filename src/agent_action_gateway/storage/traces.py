@@ -154,9 +154,8 @@ class TraceStore(SqliteStore):
         # v6: when an exchange was pruned, and when the row was written at all.
         #
         # `exchange_pruned_at` records that a payload was discarded, so it stays
-        # distinguishable from one that never had one -- "we do not have it and
-        # cannot say why" is the failure this project exists to prevent, and a
-        # bare NULL cannot express it.
+        # distinguishable from one that never had one -- a bare NULL cannot
+        # tell the two apart.
         #
         # `created_at` existed because retention needed it: `trace_events` had no
         # timestamp of any kind, so "prune anything older than 30 days" had
@@ -681,8 +680,7 @@ class TraceStore(SqliteStore):
 
         # Outside the transaction above, because SQLite refuses to VACUUM from
         # within one. Clearing a column frees pages for reuse but does not return
-        # them to the filesystem, so the file keeps its old size and a prune
-        # that shrinks nothing reads as a no-op that reported success.
+        # them to the filesystem, so the file keeps its old size.
         # PostgreSQL reclaims space on its own; this is SQLite-only.
         if not dry_run and selected and self.backend == "sqlite":
             with closing(self._connect()) as connection, connection:

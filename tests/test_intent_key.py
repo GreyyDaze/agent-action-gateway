@@ -1,7 +1,7 @@
 """A destructive tool receives `intent_key` only if it can accept it.
 
-A tool written without an `intent_key` parameter used to fail with a TypeError
-the first time it was approved. Accepting the key is how a tool passes an
+A tool written without an `intent_key` parameter must not fail when it is
+approved. Accepting the key is how a tool passes an
 idempotency key to its provider; not accepting it must not crash, and must not
 weaken the once-only guarantee.
 """
