@@ -18,6 +18,7 @@ from agent_action_gateway.integrations.mcp_proxy import load_proxy_config
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy"
+PROBE = ROOT / "src" / "agent_action_gateway" / "verify_boundary.py"
 COMPOSE = DEPLOY / "docker-compose.proxy.yml"
 
 try:
@@ -91,11 +92,11 @@ class ProxyExampleConfigTest(unittest.TestCase):
         self.assertIn("docker-compose.proxy.yml", makefile)
 
 
-class ProxyProbeHonestyTest(unittest.TestCase):
+class ProxyProbeInconclusiveTest(unittest.TestCase):
     def test_an_unreachable_proxy_is_inconclusive_not_a_pass(self) -> None:
         result = subprocess.run(
             [
-                sys.executable, str(DEPLOY / "verify_boundary.py"),
+                sys.executable, str(PROBE),
                 "--target", "proxy",
                 "--proxy", "http://127.0.0.1:9/mcp",
                 "--gateway", "http://127.0.0.1:9",

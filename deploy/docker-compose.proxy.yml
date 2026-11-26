@@ -125,7 +125,7 @@ services:
     image: python:3.12-slim
     restart: "no"
     volumes:
-      - ./verify_boundary.py:/probe/verify_boundary.py:ro
+      - ../src/agent_action_gateway/verify_boundary.py:/probe/verify_boundary.py:ro
     environment:
       AGENT_GATEWAY_PROXY_TOKEN: ${AGENT_GATEWAY_PROXY_TOKEN:-}
     command:

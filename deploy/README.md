@@ -13,7 +13,6 @@ document is what the topology buys.
 | `routes.example.json` | the route table for `docker-compose.yml` |
 | `routes.credentials.example.json` | the route table for `docker-compose.proxy.yml` (the gateway holds the key, the proxy asks for approval) |
 | `servers.proxy.example.json` | the proxy's server list for `docker-compose.proxy.yml` |
-| `verify_boundary.py` | the probe that tests either setup from the agent's side |
 
 One image (`Dockerfile.gateway`) runs every service; the command picks gateway,
 proxy or dashboard.
@@ -83,9 +82,8 @@ docker compose up -d gateway
 docker compose -f docker-compose.yml -f docker-compose.egress.yml up -d
 ```
 
-The override exists because the common case needs it. It says plainly what it
-gives up, and `make verify-boundary` will fail its egress check when it is in
-use — which is correct, and is the point.
+The override is there because the common case needs it. `make verify-boundary`
+fails its egress check while it is in use.
 
 ## The MCP proxy
 

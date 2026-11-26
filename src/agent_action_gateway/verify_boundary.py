@@ -1,25 +1,21 @@
-#!/usr/bin/env python3
 """Adversarial probe: run from the agent's position and try to escape.
 
 This tests the DEPLOYMENT, not the library. It is written against the Python
 standard library on purpose: if it imported agent_action_gateway, a bug in our own code
-could satisfy it, and a check that cannot distinguish our code from the
-adversary's is not a check.
+could make it pass.
 
-Run it inside a container attached to `agent_net` — the network an agent
-occupies, and the only one it is meant to reach:
+Run it from where the agent runs, so it sees the agent's network:
 
-    docker compose run --rm --no-deps \
-        --network agent_net -v "$PWD/verify_boundary.py:/probe.py:ro" \
-        python:3.12-slim python /probe.py --gateway http://gateway:8080
+    agent-gateway verify-boundary --gateway http://gateway:8080 --key <virtual key>
 
-With `--target proxy` it probes docker-compose.proxy.yml instead: the agent
-must reach the MCP proxy (with its token) and nothing else -- not the gateway,
-not a provider -- and must not be able to read the proxy's config or database.
-`make verify-proxy-boundary` runs it that way.
+Where the package is not installed, this single file also runs on its own, because it
+imports nothing from the package, so it can be copied into a bare Python container.
 
-Each check states what it proves and what it does not, because a probe that
-overstates itself is the failure mode this project exists to prevent.
+With `--target proxy` it probes an MCP proxy setup instead: the agent must reach
+the proxy (with its token) and nothing else -- not the gateway, not a provider --
+and must not be able to read the proxy's config or database.
+
+Each check states what it proves and what it does not.
 
 Exit codes: 0 all checks passed, 1 a boundary failed, 2 could not determine.
 """
@@ -86,7 +82,7 @@ def check_egress_blocked() -> tuple[bool, str]:
             "upstream key that leaked for any reason would be usable from here, "
             "so this barrier is absent. If you turned egress on deliberately, "
             "carry the guarantee on scoped short-lived credentials or provider-"
-            "side key restrictions instead -- see docker-compose.egress.yml."
+            "side key restrictions instead -- see https://github.com/GreyyDaze/agent-action-gateway/blob/main/docs/gateway-deployment.md."
         )
     return True, (
         f"no route to {PROVIDER_HOST}:443 from the agent's network, so a leaked "
@@ -272,8 +268,11 @@ def main_proxy(args: argparse.Namespace) -> int:
     ]))
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="agent-gateway verify-boundary", description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--gateway", default="http://gateway:8080")
     parser.add_argument(
         "--key",
@@ -303,7 +302,7 @@ def main() -> int:
         default=None,
         help="a proxy file the agent must not read (repeatable)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.target == "proxy":
         args.private_path = args.private_path or [
             "/etc/agent-action-gateway/servers.json",
@@ -323,7 +322,7 @@ def main() -> int:
         ("D  upstream secret unreadable here", None, ""),
     ]
 
-    def record(index: int, ok: bool, detail: str) -> None:
+    def record(index: int, ok: bool | None, detail: str) -> None:
         checks[index] = (checks[index][0], ok, detail)
 
     for index, run in (

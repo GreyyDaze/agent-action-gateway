@@ -87,7 +87,7 @@ services:
     image: python:3.12-slim
     working_dir: /probe
     volumes:
-      - ./verify_boundary.py:/probe/verify_boundary.py:ro
+      - ../src/agent_action_gateway/verify_boundary.py:/probe/verify_boundary.py:ro
     environment:
       AGENT_GATEWAY_PROBE_KEY: ${AGENT_GATEWAY_PROBE_KEY:-}
     command:

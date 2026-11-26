@@ -32,6 +32,7 @@ from agent_action_gateway.storage.traces import TraceStore
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "deploy"
+PROBE = ROOT / "src" / "agent_action_gateway" / "verify_boundary.py"
 
 
 class ShippedExamplesTest(unittest.TestCase):
@@ -78,8 +79,8 @@ class ShippedExamplesTest(unittest.TestCase):
         self.assertIn("agent_net", compose)
 
     def test_probe_is_named_for_what_it_is(self) -> None:
-        """A probe, not an agent. The name is the claim."""
-        self.assertTrue((DEPLOY / "verify_boundary.py").exists())
+        """It is a probe, not an agent."""
+        self.assertTrue(PROBE.exists())
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertIn("verify-boundary", makefile)
         self.assertNotIn("verify-agent", makefile)
@@ -97,8 +98,8 @@ class ShippedExamplesTest(unittest.TestCase):
         """An override that only relaxes a control is a trap if it is quiet.
 
         Most real agents do need egress -- a deployment agent also calls a model
-        API. So the override has to exist, and it has to say plainly that
-        turning egress on means a leaked key becomes usable.
+        API. So the override has to exist, and it has to say that turning egress
+        on means a leaked key becomes usable.
         """
         override = (DEPLOY / "docker-compose.egress.yml").read_text(encoding="utf-8")
         self.assertIn("internal: false", override)
@@ -237,16 +238,38 @@ class EmbeddedLaunchRefusalTest(unittest.TestCase):
         self.assertTrue(hasattr(handler, "access_token"))
 
 
-class ProbeHonestyTest(unittest.TestCase):
-    """A check that cannot run must never report success.
+class ProbeShippedWithThePackageTest(unittest.TestCase):
+    """The probe is a command of the installed package, and stays standalone."""
 
-    The failure this prevents is specific: a green `verify-boundary` on a
-    machine where Docker was unavailable, read as "the boundary holds".
-    """
+    def test_the_command_runs_the_probe(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "agent_action_gateway.cli", "verify-boundary",
+             "--gateway", "http://127.0.0.1:9", "--key", "unused"],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("INCONCLUSIVE", result.stdout)
+
+    def test_the_file_imports_nothing_from_the_package(self) -> None:
+        """If it imported our code, a bug in our code could make it pass."""
+        import ast
+
+        tree = ast.parse(PROBE.read_text(encoding="utf-8"))
+        imported = [
+            alias.name for node in ast.walk(tree) if isinstance(node, ast.Import)
+            for alias in node.names
+        ] + [
+            node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+        ]
+        self.assertFalse([name for name in imported if "agent_action_gateway" in name])
+
+
+class ProbeInconclusiveTest(unittest.TestCase):
+    """A check that cannot run must never report success."""
 
     def _probe(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, str(DEPLOY / "verify_boundary.py"), *args],
+            [sys.executable, str(PROBE), *args],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -259,7 +282,7 @@ class ProbeHonestyTest(unittest.TestCase):
         self.assertNotIn("BOUNDARY HELD", result.stdout)
 
     def test_it_states_what_it_does_not_prove(self) -> None:
-        """Overstating the check is the failure mode this project exists to avoid."""
+        """The output says what the probe does not prove."""
         result = self._probe("--gateway", "http://127.0.0.1:9")
         self.assertIn("Does NOT prove", result.stdout)
 
@@ -268,7 +291,7 @@ class DoctorScopeTest(unittest.TestCase):
     """The doctor reports this host, and says so.
 
     It cannot observe the agent's network -- a different machine, namespace or
-    container -- so reporting on that would be inventing evidence.
+    container.
     """
 
     def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
@@ -281,7 +304,7 @@ class DoctorScopeTest(unittest.TestCase):
 
     def test_it_declares_the_scope_it_can_actually_check(self) -> None:
         result = self._run("--config", str(DEPLOY / "routes.example.json"))
-        self.assertIn("verify-boundary", result.stdout)
+        self.assertIn("agent-gateway verify-boundary", result.stdout)
 
     def test_a_missing_secret_file_is_reported_as_a_problem(self) -> None:
         result = self._run("--config", str(DEPLOY / "routes.example.json"))
@@ -296,7 +319,7 @@ class DoctorScopeTest(unittest.TestCase):
     def test_it_says_it_does_not_cover_the_proxy(self) -> None:
         result = self._run("--config", str(DEPLOY / "routes.example.json"))
         self.assertIn("not the MCP proxy", result.stdout)
-        self.assertIn("verify-proxy-boundary", result.stdout)
+        self.assertIn("agent-gateway verify-boundary", result.stdout)
 
 
 class DoctorCredentialsBlockTest(unittest.TestCase):

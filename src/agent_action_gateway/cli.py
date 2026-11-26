@@ -31,11 +31,7 @@ def _duration_seconds(text: str) -> int:
 
 
 def announce(scope: str) -> None:
-    """State what a command is about, before its output.
-
-    Without this, a green result reads as a verdict on the reader's agent when
-    it is only ever a statement about a database, a config or a demo.
-    """
+    """State what a command is about, before its output."""
     print(f"SCOPE: {scope}")
 
 
@@ -69,6 +65,14 @@ def build_parser() -> argparse.ArgumentParser:
         add_help=False,
     )
     gate.add_argument("args", nargs=argparse.REMAINDER)
+
+    # Same pass-through as `gate`: every flag belongs to the probe's own parser.
+    verify = sub.add_parser(
+        "verify-boundary",
+        help="from the agent's side, try to reach a provider or the secret; try `verify-boundary --help`",
+        add_help=False,
+    )
+    verify.add_argument("args", nargs=argparse.REMAINDER)
 
     wall = sub.add_parser(
         "wall",
@@ -694,10 +698,9 @@ def gateway_doctor(args: argparse.Namespace) -> int:
     gateway can genuinely observe: the uid it is running as, the owner and mode
     of each secret file, whether a master key is configured, what it binds to.
 
-    What it deliberately does NOT check is whether the agent can reach a
-    provider. That is a different machine, namespace or container, and reporting
-    on it from here would be inventing evidence. Run `make verify-boundary` for
-    that half -- it attaches to the agent's network and tries to escape.
+    It does not check whether the agent can reach a provider, because that is a
+    different machine, namespace or container. Run
+    `agent-gateway verify-boundary` from where the agent runs for that.
     """
     import pwd
     import stat
@@ -706,8 +709,7 @@ def gateway_doctor(args: argparse.Namespace) -> int:
 
     print("SCOPE: this host's gateway configuration only (not the MCP proxy).")
     print("Does NOT report whether your agent can reach a provider -- that needs")
-    print("`make verify-boundary` (or `make verify-proxy-boundary` for the proxy),")
-    print("which runs from the agent's position.\n")
+    print("`agent-gateway verify-boundary`, run from where the agent runs.\n")
 
     findings: list[tuple[str, str, str]] = []  # (status, label, detail)
 
@@ -795,7 +797,7 @@ def gateway_doctor(args: argparse.Namespace) -> int:
             "WARN",
             "bind address",
             f"{args.host}:{args.port} is reachable beyond this machine; keep it on a "
-            "network only your agents can reach (see deploy/docker-compose.yml)",
+            "network only your agents can reach (see https://github.com/GreyyDaze/agent-action-gateway/blob/main/deploy/docker-compose.yml)",
         )
 
     # 5. The rest of the file (routes, hosts, methods). A secret problem is
@@ -817,7 +819,7 @@ def gateway_doctor(args: argparse.Namespace) -> int:
         print(f"{len(failed)} problem(s) would stop the gateway from starting correctly.")
         return EXIT_FAIL
     if warned:
-        print(f"{len(warned)} warning(s). The gateway will run, but see docs/gateway-deployment.md.")
+        print(f"{len(warned)} warning(s). The gateway will run, but see https://github.com/GreyyDaze/agent-action-gateway/blob/main/docs/gateway-deployment.md.")
     else:
         print("This host's configuration is consistent. This does not verify the topology.")
     return EXIT_PASS
@@ -945,6 +947,11 @@ def main(argv: list[str] | None = None) -> int:
         return _delegate(
             "agent-gateway gate", raw[1:], "agent_action_gateway.gate_cli", "main"
         )
+
+    if raw and raw[0] == "verify-boundary":
+        from agent_action_gateway.verify_boundary import main as probe_main
+
+        return probe_main(raw[1:])
 
     parser = build_parser()
     args = parser.parse_args(raw)

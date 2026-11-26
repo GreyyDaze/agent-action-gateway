@@ -98,7 +98,7 @@ def run_proofs(jobs: int, *, root: Path | None = None) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="make proof",
+        prog="python -m agent_action_gateway.proofs.proof",
         description="Run this library's own verification suites (repo tests, not an adopter's integration).",
     )
     parser.add_argument("--jobs", type=int, default=1000)
